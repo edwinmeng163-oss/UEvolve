@@ -1,0 +1,42 @@
+# Unreal generated directories
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+
+# Plugin generated directories
+Plugins/*/Binaries/
+Plugins/*/Intermediate/
+Plugins/*/Saved/
+
+# IDE / editor generated files
+.vs/
+.vscode/
+.idea/
+Config/DefaultEditorPerProjectUserSettings.ini
+*.sln
+*.suo
+*.xcodeproj/
+*.xcworkspace/
+
+# macOS
+.DS_Store
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Local user/developer content
+Content/Developers/
+
+# MCP smoke-test assets generated during local verification
+Content/ImperialTavern_MCP_ScaffoldSmoke_C/
+Content/__ExternalActors__/ImperialTavern_MCP_ScaffoldSmoke_C/
+Content/__ExternalObjects__/ImperialTavern_MCP_ScaffoldSmoke_C/
+Content/ImperialTavern/Blueprints/Core/BP_MCP_BPGraphSmokeTest_*.uasset
+Content/ImperialTavern/Blueprints/UI/WBP_MCP_WidgetSmokeTest_*.uasset
+
+# Logs and crash dumps
+*.log
+*.dmp
+*.tmp

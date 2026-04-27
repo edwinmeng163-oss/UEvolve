@@ -1,0 +1,24 @@
+{
+	"FileVersion": 3,
+	"Version": 14,
+	"VersionName": "0.10.4",
+	"FriendlyName": "Unreal MCP",
+	"Description": "Runs an MCP server inside the Unreal Editor, exposes editor automation, batch editing, Python scripting, debugging, and AI-assisted tool use over localhost, and includes an in-editor copilot-style command and chat window.",
+	"Category": "AI",
+	"CreatedBy": "OpenAI Codex",
+	"CanContainContent": false,
+	"IsBetaVersion": true,
+	"Modules": [
+		{
+			"Name": "UnrealMcp",
+			"Type": "Editor",
+			"LoadingPhase": "PostEngineInit"
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "PythonScriptPlugin",
+			"Enabled": true
+		}
+	]
+}
