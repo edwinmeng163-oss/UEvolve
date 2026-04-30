@@ -65,6 +65,7 @@ Editor action tools:
 - `unreal.scaffold_economy_system`
 - `unreal.scaffold_autobattler_ai`
 - `unreal.scaffold_result_ui`
+- `unreal.scaffold_mcp_tool`
 - `unreal.save_dirty_packages`
 
 ## Endpoint
@@ -245,6 +246,14 @@ Playable system scaffold examples:
 ```text
 /tool unreal.scaffold_result_ui {"rootPath":"/Game/MCPDemo","compile":true,"savePackage":true,"replaceWidgetRoot":true}
 ```
+
+MCP tool extension scaffold example:
+
+```text
+/tool unreal.scaffold_mcp_tool {"toolName":"unreal.my_custom_tool","title":"My Custom Tool","description":"Creates scaffold files for a custom MCP tool.","argumentSchemaJson":"{\"type\":\"object\",\"properties\":{\"message\":{\"type\":\"string\"}}}","exampleArgumentsJson":"{\"message\":\"hello\"}","overwrite":false}
+```
+
+This generates reviewable C++ snippets, a test request, and an integration checklist under `Tools/UnrealMcpToolScaffolds`. It does not hot-load C++ into the running editor; integrate the snippets, rebuild `MyProjectEditor`, and reopen the editor if needed.
 
 ## Quick Test
 

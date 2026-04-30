@@ -88,6 +88,8 @@ Unreal MCP currently supports:
   - `unreal.scaffold_economy_system`
   - `unreal.scaffold_autobattler_ai`
   - `unreal.scaffold_result_ui`
+- MCP extension scaffolding:
+  - `unreal.scaffold_mcp_tool`
 - Saving dirty packages.
 
 ## In-Editor Chat Usage
@@ -119,6 +121,33 @@ AI-assisted request example:
 ```text
 inspect the current project and summarize the maps, selected actors, and available Blueprint assets
 ```
+
+## Chat-Driven MCP Extension Workflow
+
+The chat panel can already call existing MCP tools directly through natural language or `/tool`.
+
+For extending MCP itself, use:
+
+```text
+/tool unreal.scaffold_mcp_tool {"toolName":"unreal.my_custom_tool","title":"My Custom Tool","description":"Scaffold a new MCP tool.","exampleArgumentsJson":"{\"message\":\"hello\"}"}
+```
+
+This generates reviewable files under:
+
+```text
+Tools/UnrealMcpToolScaffolds
+```
+
+Generated output includes:
+
+- C++ tool definition snippet.
+- C++ `ExecuteTool` handler snippet.
+- Optional direct Chat slash-command snippet.
+- Test JSON request.
+- Integration checklist.
+- Per-tool README.
+
+Current boundary: generated MCP tool snippets still need to be reviewed, integrated into the plugin source, compiled, and loaded by Unreal Editor. The project does not hot-load arbitrary new C++ tools into a running editor session.
 
 ## Opening The Project
 
