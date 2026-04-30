@@ -67,6 +67,8 @@ Editor action tools:
 - `unreal.scaffold_result_ui`
 - `unreal.scaffold_mcp_tool`
 - `unreal.mcp_validate_tool_schema`
+- `unreal.mcp_apply_scaffold`
+- `unreal.mcp_rollback_last_extension`
 - `unreal.mcp_tool_audit`
 - `unreal.project_memory_write`
 - `unreal.project_memory_read`
@@ -263,6 +265,18 @@ MCP extension safety checks:
 
 ```text
 /tool unreal.mcp_validate_tool_schema {"toolName":"unreal.scaffold_mcp_tool"}
+```
+
+```text
+/tool unreal.mcp_apply_scaffold {"toolName":"unreal.my_custom_tool","dryRun":true}
+```
+
+```text
+/tool unreal.mcp_apply_scaffold {"toolName":"unreal.my_custom_tool","dryRun":false}
+```
+
+```text
+/tool unreal.mcp_rollback_last_extension {"dryRun":true}
 ```
 
 ```text

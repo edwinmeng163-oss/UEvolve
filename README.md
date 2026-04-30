@@ -91,6 +91,8 @@ Unreal MCP currently supports:
 - MCP extension scaffolding:
   - `unreal.scaffold_mcp_tool`
   - `unreal.mcp_validate_tool_schema`
+  - `unreal.mcp_apply_scaffold`
+  - `unreal.mcp_rollback_last_extension`
   - `unreal.mcp_tool_audit`
 - Restart-resilient project memory:
   - `unreal.project_memory_write`
@@ -158,6 +160,9 @@ Useful first-stage extension checks:
 
 ```text
 /tool unreal.mcp_validate_tool_schema {"toolName":"unreal.scaffold_mcp_tool"}
+/tool unreal.mcp_apply_scaffold {"toolName":"unreal.my_custom_tool","dryRun":true}
+/tool unreal.mcp_apply_scaffold {"toolName":"unreal.my_custom_tool","dryRun":false}
+/tool unreal.mcp_rollback_last_extension {"dryRun":true}
 /tool unreal.mcp_tool_audit {}
 /tool unreal.project_memory_write {"key":"mcp_extension","summary":"Resume MCP extension work after editor restart.","status":"in_progress","nextStep":"Run schema validation and tool audit after rebuilding.","contentJson":"{\"target\":\"self-extension\"}","tags":["mcp","restart"]}
 /tool unreal.project_memory_read {"key":"mcp_extension","includeContent":true}

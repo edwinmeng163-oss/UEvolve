@@ -70,6 +70,7 @@
 #include "Materials/MaterialInterface.h"
 #include "Misc/App.h"
 #include "Misc/ConfigCacheIni.h"
+#include "Misc/Crc.h"
 #include "Misc/EngineVersion.h"
 #include "Misc/FileHelper.h"
 #include "Misc/OutputDevice.h"
@@ -4012,8 +4013,647 @@ namespace UnrealMcp
 				false);
 		}
 
-		FUnrealMcpExecutionResult ScaffoldRoundSystem(UEditorAssetSubsystem* EditorAssetSubsystem, const FJsonObject& Arguments)
+		FString HashTextForManifest(const FString& Text)
 		{
+			return FString::Printf(TEXT("%08x"), FCrc::StrCrc32(*Text));
+		}
+
+		FString GetMcpModuleSourcePath()
+		{
+			return FPaths::ConvertRelativePathToFull(FPaths::Combine(
+				FPaths::ProjectDir(),
+				TEXT("Plugins/UnrealMcp/Source/UnrealMcp/Private/UnrealMcpModule.cpp")));
+		}
+
+		FString GetMcpExtensionBackupRoot()
+		{
+			return FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UnrealMcp/ExtensionBackups")));
+		}
+
+		FString GetLatestMcpExtensionManifestPath()
+		{
+			return FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UnrealMcp/LastExtensionApply.json")));
+		}
+
+		bool SaveJsonObjectToFile(const TSharedPtr<FJsonObject>& Object, const FString& FilePath, FString& OutFailureReason)
+		{
+			if (!Object.IsValid())
+			{
+				OutFailureReason = TEXT("Cannot save an invalid JSON object.");
+				return false;
+			}
+
+			const FString Directory = FPaths::GetPath(FilePath);
+			if (!IFileManager::Get().MakeDirectory(*Directory, true))
+			{
+				OutFailureReason = FString::Printf(TEXT("Failed to create directory '%s'."), *Directory);
+				return false;
+			}
+
+			FString JsonText;
+			TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonText);
+			if (!FJsonSerializer::Serialize(Object.ToSharedRef(), Writer))
+			{
+				OutFailureReason = TEXT("Failed to serialize JSON object.");
+				return false;
+			}
+
+			if (!FFileHelper::SaveStringToFile(JsonText, *FilePath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+			{
+				OutFailureReason = FString::Printf(TEXT("Failed to write '%s'."), *FilePath);
+				return false;
+			}
+			return true;
+		}
+
+		bool ResolveProjectPathInsideProject(const FString& RequestedPath, FString& OutPath, FString& OutFailureReason)
+		{
+			FString TrimmedPath = RequestedPath.TrimStartAndEnd();
+			if (TrimmedPath.IsEmpty())
+			{
+				OutFailureReason = TEXT("Path must not be empty.");
+				return false;
+			}
+
+			FString ProjectDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+			FPaths::NormalizeDirectoryName(ProjectDir);
+			FPaths::CollapseRelativeDirectories(ProjectDir);
+
+			FString ResolvedPath = FPaths::IsRelative(TrimmedPath)
+				? FPaths::Combine(ProjectDir, TrimmedPath)
+				: TrimmedPath;
+			ResolvedPath = FPaths::ConvertRelativePathToFull(ResolvedPath);
+			FPaths::NormalizeFilename(ResolvedPath);
+			FPaths::CollapseRelativeDirectories(ResolvedPath);
+
+			const FString ProjectDirPrefix = ProjectDir.EndsWith(TEXT("/")) ? ProjectDir : ProjectDir + TEXT("/");
+			if (!ResolvedPath.Equals(ProjectDir, ESearchCase::IgnoreCase)
+				&& !ResolvedPath.StartsWith(ProjectDirPrefix, ESearchCase::IgnoreCase))
+			{
+				OutFailureReason = FString::Printf(TEXT("Path '%s' resolves outside project directory '%s'."), *ResolvedPath, *ProjectDir);
+				return false;
+			}
+
+			OutPath = ResolvedPath;
+			return true;
+		}
+
+		bool ResolveMcpScaffoldDirectory(const FJsonObject& Arguments, FString& OutDirectory, FString& OutToolName, FString& OutFailureReason)
+		{
+			FString ScaffoldDir;
+			FString ToolName;
+			FString OutputRoot;
+			Arguments.TryGetStringField(TEXT("scaffoldDir"), ScaffoldDir);
+			Arguments.TryGetStringField(TEXT("toolName"), ToolName);
+			Arguments.TryGetStringField(TEXT("outputRoot"), OutputRoot);
+			ToolName = ToolName.TrimStartAndEnd();
+
+			if (!ScaffoldDir.TrimStartAndEnd().IsEmpty())
+			{
+				if (!ResolveProjectPathInsideProject(ScaffoldDir, OutDirectory, OutFailureReason))
+				{
+					return false;
+				}
+			}
+			else
+			{
+				if (ToolName.IsEmpty())
+				{
+					OutFailureReason = TEXT("Provide either scaffoldDir or toolName.");
+					return false;
+				}
+
+				FString ResolvedOutputRoot;
+				if (!ResolveProjectOutputDirectory(OutputRoot, ResolvedOutputRoot, OutFailureReason))
+				{
+					return false;
+				}
+				OutDirectory = FPaths::Combine(ResolvedOutputRoot, SanitizeMcpToolIdForPath(ToolName));
+			}
+
+			FString TestRequestText;
+			const FString TestRequestPath = FPaths::Combine(OutDirectory, TEXT("TestRequest.json"));
+			if (!ToolName.IsEmpty())
+			{
+				OutToolName = ToolName;
+				return true;
+			}
+
+			if (FFileHelper::LoadFileToString(TestRequestText, *TestRequestPath))
+			{
+				TSharedPtr<FJsonObject> TestRequestObject;
+				if (LoadJsonObject(TestRequestText, TestRequestObject) && TestRequestObject.IsValid())
+				{
+					const TSharedPtr<FJsonObject>* ParamsObject = nullptr;
+					if (TestRequestObject->TryGetObjectField(TEXT("params"), ParamsObject) && ParamsObject && (*ParamsObject).IsValid())
+					{
+						(*ParamsObject)->TryGetStringField(TEXT("name"), ToolName);
+					}
+				}
+			}
+
+			if (ToolName.TrimStartAndEnd().IsEmpty())
+			{
+				OutFailureReason = FString::Printf(TEXT("Unable to determine toolName. Provide toolName or include %s."), *TestRequestPath);
+				return false;
+			}
+
+			OutToolName = ToolName.TrimStartAndEnd();
+			return true;
+		}
+
+		bool LoadScaffoldSnippet(
+			const FString& ScaffoldDirectory,
+			const FString& FileName,
+			bool bRequired,
+			FString& OutSnippet,
+			TArray<TSharedPtr<FJsonValue>>& Issues,
+			FString& OutFailureReason)
+		{
+			const FString SnippetPath = FPaths::Combine(ScaffoldDirectory, FileName);
+			if (!FPaths::FileExists(SnippetPath))
+			{
+				AddAuditIssue(Issues, bRequired ? TEXT("error") : TEXT("warning"), SnippetPath, TEXT("Snippet file is missing."));
+				if (bRequired)
+				{
+					OutFailureReason = FString::Printf(TEXT("Required snippet file is missing: %s"), *SnippetPath);
+					return false;
+				}
+				return true;
+			}
+
+			if (!FFileHelper::LoadFileToString(OutSnippet, *SnippetPath))
+			{
+				AddAuditIssue(Issues, TEXT("error"), SnippetPath, TEXT("Failed to read snippet file."));
+				OutFailureReason = FString::Printf(TEXT("Failed to read snippet file: %s"), *SnippetPath);
+				return false;
+			}
+
+			if (OutSnippet.TrimStartAndEnd().IsEmpty())
+			{
+				AddAuditIssue(Issues, bRequired ? TEXT("error") : TEXT("warning"), SnippetPath, TEXT("Snippet file is empty."));
+				if (bRequired)
+				{
+					OutFailureReason = FString::Printf(TEXT("Required snippet file is empty: %s"), *SnippetPath);
+					return false;
+				}
+			}
+			return true;
+		}
+
+		enum class EMcpScaffoldInsertionStatus
+		{
+			WillInsert,
+			Inserted,
+			SkippedAlreadyIntegrated,
+			SkippedOptionalMissing,
+			Conflict,
+			MissingAnchor
+		};
+
+		const TCHAR* LexToString(EMcpScaffoldInsertionStatus Status)
+		{
+			switch (Status)
+			{
+			case EMcpScaffoldInsertionStatus::WillInsert:
+				return TEXT("will_insert");
+			case EMcpScaffoldInsertionStatus::Inserted:
+				return TEXT("inserted");
+			case EMcpScaffoldInsertionStatus::SkippedAlreadyIntegrated:
+				return TEXT("skipped_already_integrated");
+			case EMcpScaffoldInsertionStatus::SkippedOptionalMissing:
+				return TEXT("skipped_optional_missing");
+			case EMcpScaffoldInsertionStatus::Conflict:
+				return TEXT("conflict");
+			case EMcpScaffoldInsertionStatus::MissingAnchor:
+				return TEXT("missing_anchor");
+			default:
+				return TEXT("unknown");
+			}
+		}
+
+		TSharedPtr<FJsonObject> MakeInsertionChangeObject(
+			const FString& Section,
+			EMcpScaffoldInsertionStatus Status,
+			const FString& Message,
+			int32 Offset,
+			const FString& Preview)
+		{
+			TSharedPtr<FJsonObject> ChangeObject = MakeShared<FJsonObject>();
+			ChangeObject->SetStringField(TEXT("section"), Section);
+			ChangeObject->SetStringField(TEXT("status"), LexToString(Status));
+			ChangeObject->SetStringField(TEXT("message"), Message);
+			ChangeObject->SetNumberField(TEXT("offset"), Offset);
+			ChangeObject->SetStringField(TEXT("preview"), Preview);
+			return ChangeObject;
+		}
+
+		bool PlanOrApplyScaffoldInsertion(
+			FString& SourceText,
+			const FString& ConflictSourceText,
+			const FString& Section,
+			const FString& ToolName,
+			const FString& Snippet,
+			const FString& Anchor,
+			const FString& ConflictNeedle,
+			bool bDryRun,
+			TArray<TSharedPtr<FJsonValue>>& Changes,
+			bool& bOutChanged)
+		{
+			const FString TrimmedSnippet = Snippet.TrimStartAndEnd();
+			if (TrimmedSnippet.IsEmpty())
+			{
+				Changes.Add(MakeShared<FJsonValueObject>(MakeInsertionChangeObject(
+					Section,
+					EMcpScaffoldInsertionStatus::Conflict,
+					TEXT("Snippet is empty."),
+					INDEX_NONE,
+					FString())));
+				return false;
+			}
+
+			if (SourceText.Contains(TrimmedSnippet, ESearchCase::CaseSensitive))
+			{
+				Changes.Add(MakeShared<FJsonValueObject>(MakeInsertionChangeObject(
+					Section,
+					EMcpScaffoldInsertionStatus::SkippedAlreadyIntegrated,
+					TEXT("Exact snippet is already present."),
+					INDEX_NONE,
+					FString())));
+				return true;
+			}
+
+			if (!ConflictNeedle.IsEmpty() && ConflictSourceText.Contains(ConflictNeedle, ESearchCase::CaseSensitive))
+			{
+				Changes.Add(MakeShared<FJsonValueObject>(MakeInsertionChangeObject(
+					Section,
+					EMcpScaffoldInsertionStatus::Conflict,
+					FString::Printf(TEXT("Source already contains conflict marker '%s' but not the exact snippet."), *ConflictNeedle),
+					INDEX_NONE,
+					TrimmedSnippet.Left(800))));
+				return false;
+			}
+
+			const int32 AnchorOffset = SourceText.Find(Anchor, ESearchCase::CaseSensitive);
+			int32 ResolvedAnchorOffset = AnchorOffset;
+			if (ResolvedAnchorOffset == INDEX_NONE && Section == TEXT("AppendToolDefinitions"))
+			{
+				const int32 CompileBlueprintMarkerOffset = SourceText.Find(TEXT("TEXT(\"unreal.compile_blueprint\")"), ESearchCase::CaseSensitive);
+				if (CompileBlueprintMarkerOffset != INDEX_NONE)
+				{
+					const FString Prefix = SourceText.Left(CompileBlueprintMarkerOffset);
+					ResolvedAnchorOffset = Prefix.Find(TEXT("\n\t\t\t{"), ESearchCase::CaseSensitive, ESearchDir::FromEnd);
+					if (ResolvedAnchorOffset == INDEX_NONE)
+					{
+						ResolvedAnchorOffset = Prefix.Find(TEXT("\n\t\t{"), ESearchCase::CaseSensitive, ESearchDir::FromEnd);
+					}
+				}
+			}
+			if (ResolvedAnchorOffset == INDEX_NONE)
+			{
+				Changes.Add(MakeShared<FJsonValueObject>(MakeInsertionChangeObject(
+					Section,
+					EMcpScaffoldInsertionStatus::MissingAnchor,
+					TEXT("Insertion anchor was not found in UnrealMcpModule.cpp."),
+					INDEX_NONE,
+					TrimmedSnippet.Left(800))));
+				return false;
+			}
+
+			const FString InsertionText = FString::Printf(TEXT("\n%s\n"), *TrimmedSnippet);
+			Changes.Add(MakeShared<FJsonValueObject>(MakeInsertionChangeObject(
+				Section,
+				bDryRun ? EMcpScaffoldInsertionStatus::WillInsert : EMcpScaffoldInsertionStatus::Inserted,
+				bDryRun ? TEXT("Would insert snippet before anchor.") : TEXT("Inserted snippet before anchor."),
+				ResolvedAnchorOffset,
+				TrimmedSnippet.Left(800))));
+
+			if (!bDryRun)
+			{
+				SourceText.InsertAt(ResolvedAnchorOffset, InsertionText);
+				bOutChanged = true;
+			}
+			return true;
+		}
+
+		FUnrealMcpExecutionResult ApplyMcpScaffold(const FJsonObject& Arguments)
+		{
+			FString ScaffoldDirectory;
+			FString ToolName;
+			FString FailureReason;
+			if (!ResolveMcpScaffoldDirectory(Arguments, ScaffoldDirectory, ToolName, FailureReason))
+			{
+				return MakeExecutionResult(FailureReason, nullptr, true);
+			}
+
+			bool bDryRun = true;
+			bool bApplyChatCommand = true;
+			bool bCreateBackup = true;
+			Arguments.TryGetBoolField(TEXT("dryRun"), bDryRun);
+			Arguments.TryGetBoolField(TEXT("applyChatCommand"), bApplyChatCommand);
+			Arguments.TryGetBoolField(TEXT("createBackup"), bCreateBackup);
+
+			TArray<TSharedPtr<FJsonValue>> Issues;
+			FString DefinitionSnippet;
+			FString HandlerSnippet;
+			FString ChatCommandSnippet;
+			if (!LoadScaffoldSnippet(ScaffoldDirectory, TEXT("ToolDefinition.cpp.snippet"), true, DefinitionSnippet, Issues, FailureReason)
+				|| !LoadScaffoldSnippet(ScaffoldDirectory, TEXT("ExecuteToolHandler.cpp.snippet"), true, HandlerSnippet, Issues, FailureReason)
+				|| !LoadScaffoldSnippet(ScaffoldDirectory, TEXT("ChatCommand.cpp.snippet"), bApplyChatCommand, ChatCommandSnippet, Issues, FailureReason))
+			{
+				TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+				StructuredContent->SetStringField(TEXT("action"), TEXT("mcp_apply_scaffold"));
+				StructuredContent->SetStringField(TEXT("toolName"), ToolName);
+				StructuredContent->SetStringField(TEXT("scaffoldDir"), ScaffoldDirectory);
+				StructuredContent->SetArrayField(TEXT("issues"), Issues);
+				return MakeExecutionResult(FailureReason, StructuredContent, true);
+			}
+
+			const FString SourcePath = GetMcpModuleSourcePath();
+			FString SourceText;
+			if (!FFileHelper::LoadFileToString(SourceText, *SourcePath))
+			{
+				return MakeExecutionResult(FString::Printf(TEXT("Failed to read source file '%s'."), *SourcePath), nullptr, true);
+			}
+
+			const FString SourceHashBefore = HashTextForManifest(SourceText);
+			const FString OriginalSourceText = SourceText;
+			TArray<TSharedPtr<FJsonValue>> Changes;
+			bool bChanged = false;
+			bool bCanApply = true;
+
+			const FString DefinitionAnchor =
+				TEXT("\n\t\t\t{\n\t\t\t\tTSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();\n\t\t\t\tPropertiesObject->SetObjectField(TEXT(\"path\"), UnrealMcp::MakeStringProperty(TEXT(\"Blueprint asset path to compile.\")));");
+			const FString HandlerAnchor =
+				TEXT("\n\treturn UnrealMcp::MakeExecutionResult(FString::Printf(TEXT(\"Unknown tool '%s'.\"), *ToolName), nullptr, true);");
+			const FString ChatCommandAnchor =
+				TEXT("\n\t\treturn UnrealMcp::MakeExecutionResult(TEXT(\"Unknown command. Try /help.\"), nullptr, true);");
+			const FString ToolNameNeedle = FString::Printf(TEXT("TEXT(\"%s\")"), *ToolName);
+			const FString ChatCommandNeedle = FString::Printf(TEXT("TEXT(\"/%s\")"), *SanitizeMcpToolIdForPath(ToolName));
+
+			bCanApply &= PlanOrApplyScaffoldInsertion(
+				SourceText,
+				OriginalSourceText,
+				TEXT("AppendToolDefinitions"),
+				ToolName,
+				DefinitionSnippet,
+				DefinitionAnchor,
+				ToolNameNeedle,
+				bDryRun,
+				Changes,
+				bChanged);
+
+			bCanApply &= PlanOrApplyScaffoldInsertion(
+				SourceText,
+				OriginalSourceText,
+				TEXT("ExecuteTool"),
+				ToolName,
+				HandlerSnippet,
+				HandlerAnchor,
+				ToolNameNeedle,
+				bDryRun,
+				Changes,
+				bChanged);
+
+			if (bApplyChatCommand)
+			{
+				bCanApply &= PlanOrApplyScaffoldInsertion(
+					SourceText,
+					OriginalSourceText,
+					TEXT("ExecuteChatCommand"),
+					ToolName,
+					ChatCommandSnippet,
+					ChatCommandAnchor,
+					ChatCommandNeedle,
+					bDryRun,
+					Changes,
+					bChanged);
+			}
+			else
+			{
+				Changes.Add(MakeShared<FJsonValueObject>(MakeInsertionChangeObject(
+					TEXT("ExecuteChatCommand"),
+					EMcpScaffoldInsertionStatus::SkippedOptionalMissing,
+					TEXT("applyChatCommand=false; skipped optional chat command snippet."),
+					INDEX_NONE,
+					FString())));
+			}
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("action"), TEXT("mcp_apply_scaffold"));
+			StructuredContent->SetStringField(TEXT("toolName"), ToolName);
+			StructuredContent->SetStringField(TEXT("toolId"), SanitizeMcpToolIdForPath(ToolName));
+			StructuredContent->SetStringField(TEXT("scaffoldDir"), ScaffoldDirectory);
+			StructuredContent->SetStringField(TEXT("sourcePath"), SourcePath);
+			StructuredContent->SetBoolField(TEXT("dryRun"), bDryRun);
+			StructuredContent->SetBoolField(TEXT("canApply"), bCanApply);
+			StructuredContent->SetBoolField(TEXT("changed"), bChanged);
+			StructuredContent->SetStringField(TEXT("sourceHashBefore"), SourceHashBefore);
+			StructuredContent->SetArrayField(TEXT("issues"), Issues);
+			StructuredContent->SetArrayField(TEXT("changes"), Changes);
+
+			if (!bCanApply)
+			{
+				return MakeExecutionResult(TEXT("Scaffold cannot be applied safely. See changes/issues for conflicts or missing anchors."), StructuredContent, true);
+			}
+
+			if (bDryRun)
+			{
+				return MakeExecutionResult(
+					FString::Printf(TEXT("Dry run complete for %s. canApply=true"), *ToolName),
+					StructuredContent,
+					false);
+			}
+
+			if (!bChanged)
+			{
+				return MakeExecutionResult(
+					FString::Printf(TEXT("No source changes needed for %s; scaffold appears already integrated."), *ToolName),
+					StructuredContent,
+					false);
+			}
+
+			const FString Timestamp = FDateTime::UtcNow().ToString(TEXT("%Y%m%d-%H%M%S"));
+			const FString BackupDirectory = FPaths::Combine(GetMcpExtensionBackupRoot(), Timestamp + TEXT("_") + SanitizeMcpToolIdForPath(ToolName));
+			const FString BackupSourcePath = FPaths::Combine(BackupDirectory, TEXT("UnrealMcpModule.cpp.before"));
+			const FString AfterSourcePath = FPaths::Combine(BackupDirectory, TEXT("UnrealMcpModule.cpp.after"));
+			if (bCreateBackup)
+			{
+				if (!IFileManager::Get().MakeDirectory(*BackupDirectory, true))
+				{
+					return MakeExecutionResult(FString::Printf(TEXT("Failed to create backup directory '%s'."), *BackupDirectory), StructuredContent, true);
+				}
+				if (!FFileHelper::SaveStringToFile(SourceText, *AfterSourcePath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+				{
+					return MakeExecutionResult(FString::Printf(TEXT("Failed to write after snapshot '%s'."), *AfterSourcePath), StructuredContent, true);
+				}
+				FString BackupOriginalSourceText;
+				if (!FFileHelper::LoadFileToString(BackupOriginalSourceText, *SourcePath)
+					|| !FFileHelper::SaveStringToFile(BackupOriginalSourceText, *BackupSourcePath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+				{
+					return MakeExecutionResult(FString::Printf(TEXT("Failed to write source backup '%s'."), *BackupSourcePath), StructuredContent, true);
+				}
+			}
+
+			if (!FFileHelper::SaveStringToFile(SourceText, *SourcePath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+			{
+				return MakeExecutionResult(FString::Printf(TEXT("Failed to write source file '%s'."), *SourcePath), StructuredContent, true);
+			}
+
+			const FString SourceHashAfter = HashTextForManifest(SourceText);
+			StructuredContent->SetStringField(TEXT("sourceHashAfter"), SourceHashAfter);
+			StructuredContent->SetStringField(TEXT("backupDirectory"), BackupDirectory);
+			StructuredContent->SetStringField(TEXT("backupSourcePath"), BackupSourcePath);
+			StructuredContent->SetStringField(TEXT("afterSourcePath"), AfterSourcePath);
+
+			TSharedPtr<FJsonObject> ManifestObject = MakeShared<FJsonObject>();
+			ManifestObject->SetStringField(TEXT("action"), TEXT("mcp_apply_scaffold"));
+			ManifestObject->SetStringField(TEXT("toolName"), ToolName);
+			ManifestObject->SetStringField(TEXT("toolId"), SanitizeMcpToolIdForPath(ToolName));
+			ManifestObject->SetStringField(TEXT("scaffoldDir"), ScaffoldDirectory);
+			ManifestObject->SetStringField(TEXT("sourcePath"), SourcePath);
+			ManifestObject->SetStringField(TEXT("backupDirectory"), BackupDirectory);
+			ManifestObject->SetStringField(TEXT("backupSourcePath"), BackupSourcePath);
+			ManifestObject->SetStringField(TEXT("afterSourcePath"), AfterSourcePath);
+			ManifestObject->SetStringField(TEXT("sourceHashBefore"), SourceHashBefore);
+			ManifestObject->SetStringField(TEXT("sourceHashAfter"), SourceHashAfter);
+			ManifestObject->SetStringField(TEXT("appliedAtUtc"), FDateTime::UtcNow().ToIso8601());
+			ManifestObject->SetArrayField(TEXT("changes"), Changes);
+
+			if (bCreateBackup)
+			{
+				FString ManifestFailure;
+				const FString ManifestPath = FPaths::Combine(BackupDirectory, TEXT("Manifest.json"));
+				if (!SaveJsonObjectToFile(ManifestObject, ManifestPath, ManifestFailure)
+					|| !SaveJsonObjectToFile(ManifestObject, GetLatestMcpExtensionManifestPath(), ManifestFailure))
+				{
+					return MakeExecutionResult(ManifestFailure, StructuredContent, true);
+				}
+				StructuredContent->SetStringField(TEXT("manifestPath"), ManifestPath);
+				StructuredContent->SetStringField(TEXT("latestManifestPath"), GetLatestMcpExtensionManifestPath());
+			}
+
+			return MakeExecutionResult(
+				FString::Printf(TEXT("Applied scaffold for %s. Backup: %s"), *ToolName, *BackupDirectory),
+				StructuredContent,
+				false);
+		}
+
+		FUnrealMcpExecutionResult RollbackLastMcpExtension(const FJsonObject& Arguments)
+		{
+			FString ManifestPath = GetLatestMcpExtensionManifestPath();
+			bool bDryRun = false;
+			bool bForce = false;
+			Arguments.TryGetStringField(TEXT("manifestPath"), ManifestPath);
+			Arguments.TryGetBoolField(TEXT("dryRun"), bDryRun);
+			Arguments.TryGetBoolField(TEXT("force"), bForce);
+
+			FString ResolvedManifestPath;
+			FString FailureReason;
+			if (!ResolveProjectPathInsideProject(ManifestPath, ResolvedManifestPath, FailureReason))
+			{
+				return MakeExecutionResult(FailureReason, nullptr, true);
+			}
+
+			FString ManifestText;
+			if (!FFileHelper::LoadFileToString(ManifestText, *ResolvedManifestPath))
+			{
+				return MakeExecutionResult(FString::Printf(TEXT("Failed to read manifest '%s'."), *ResolvedManifestPath), nullptr, true);
+			}
+
+			TSharedPtr<FJsonObject> ManifestObject;
+			if (!LoadJsonObject(ManifestText, ManifestObject) || !ManifestObject.IsValid())
+			{
+				return MakeExecutionResult(FString::Printf(TEXT("Manifest '%s' is not valid JSON."), *ResolvedManifestPath), nullptr, true);
+			}
+
+			FString ToolName;
+			FString SourcePath;
+			FString BackupSourcePath;
+			FString ExpectedAfterHash;
+			ManifestObject->TryGetStringField(TEXT("toolName"), ToolName);
+			ManifestObject->TryGetStringField(TEXT("sourcePath"), SourcePath);
+			ManifestObject->TryGetStringField(TEXT("backupSourcePath"), BackupSourcePath);
+			ManifestObject->TryGetStringField(TEXT("sourceHashAfter"), ExpectedAfterHash);
+
+			if (SourcePath.IsEmpty() || BackupSourcePath.IsEmpty())
+			{
+				return MakeExecutionResult(TEXT("Manifest is missing sourcePath or backupSourcePath."), nullptr, true);
+			}
+
+			FString ResolvedSourcePath;
+			FString ResolvedBackupPath;
+			if (!ResolveProjectPathInsideProject(SourcePath, ResolvedSourcePath, FailureReason)
+				|| !ResolveProjectPathInsideProject(BackupSourcePath, ResolvedBackupPath, FailureReason))
+			{
+				return MakeExecutionResult(FailureReason, nullptr, true);
+			}
+
+			FString CurrentSourceText;
+			FString BackupSourceText;
+			if (!FFileHelper::LoadFileToString(CurrentSourceText, *ResolvedSourcePath))
+			{
+				return MakeExecutionResult(FString::Printf(TEXT("Failed to read current source '%s'."), *ResolvedSourcePath), nullptr, true);
+			}
+			if (!FFileHelper::LoadFileToString(BackupSourceText, *ResolvedBackupPath))
+			{
+				return MakeExecutionResult(FString::Printf(TEXT("Failed to read backup source '%s'."), *ResolvedBackupPath), nullptr, true);
+			}
+
+			const FString CurrentHash = HashTextForManifest(CurrentSourceText);
+			const FString BackupHash = HashTextForManifest(BackupSourceText);
+			const bool bHashMatches = ExpectedAfterHash.IsEmpty() || CurrentHash == ExpectedAfterHash;
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("action"), TEXT("mcp_rollback_last_extension"));
+			StructuredContent->SetStringField(TEXT("toolName"), ToolName);
+			StructuredContent->SetStringField(TEXT("manifestPath"), ResolvedManifestPath);
+			StructuredContent->SetStringField(TEXT("sourcePath"), ResolvedSourcePath);
+			StructuredContent->SetStringField(TEXT("backupSourcePath"), ResolvedBackupPath);
+			StructuredContent->SetStringField(TEXT("currentHash"), CurrentHash);
+			StructuredContent->SetStringField(TEXT("expectedAfterHash"), ExpectedAfterHash);
+			StructuredContent->SetStringField(TEXT("backupHash"), BackupHash);
+			StructuredContent->SetBoolField(TEXT("dryRun"), bDryRun);
+			StructuredContent->SetBoolField(TEXT("force"), bForce);
+			StructuredContent->SetBoolField(TEXT("hashMatchesExpectedAfter"), bHashMatches);
+
+			if (!bHashMatches && !bForce)
+			{
+				return MakeExecutionResult(
+					TEXT("Rollback refused because current source hash differs from the applied manifest. Pass force=true to override."),
+					StructuredContent,
+					true);
+			}
+
+			if (bDryRun)
+			{
+				return MakeExecutionResult(
+					FString::Printf(TEXT("Dry run rollback for %s would restore %s."), ToolName.IsEmpty() ? TEXT("<unknown>") : *ToolName, *ResolvedSourcePath),
+					StructuredContent,
+					false);
+			}
+
+			if (!FFileHelper::SaveStringToFile(BackupSourceText, *ResolvedSourcePath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+			{
+				return MakeExecutionResult(FString::Printf(TEXT("Failed to restore source file '%s'."), *ResolvedSourcePath), StructuredContent, true);
+			}
+
+			ManifestObject->SetStringField(TEXT("rolledBackAtUtc"), FDateTime::UtcNow().ToIso8601());
+			ManifestObject->SetBoolField(TEXT("rolledBack"), true);
+			FString ManifestFailure;
+			SaveJsonObjectToFile(ManifestObject, ResolvedManifestPath, ManifestFailure);
+			SaveJsonObjectToFile(ManifestObject, GetLatestMcpExtensionManifestPath(), ManifestFailure);
+
+			StructuredContent->SetBoolField(TEXT("rolledBack"), true);
+			StructuredContent->SetStringField(TEXT("restoredHash"), BackupHash);
+			return MakeExecutionResult(
+				FString::Printf(TEXT("Rolled back MCP extension for %s."), ToolName.IsEmpty() ? TEXT("<unknown>") : *ToolName),
+				StructuredContent,
+				false);
+		}
+
+			FUnrealMcpExecutionResult ScaffoldRoundSystem(UEditorAssetSubsystem* EditorAssetSubsystem, const FJsonObject& Arguments)
+			{
 		FString RootArg;
 		Arguments.TryGetStringField(TEXT("rootPath"), RootArg);
 		const FString RootPath = NormalizeScaffoldRootPath(RootArg);
@@ -6949,9 +7589,46 @@ void FUnrealMcpModule::AppendToolDefinitions(TArray<TSharedPtr<FJsonValue>>& Too
 				InputSchema);
 		}
 
-			{
-				TSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
-				PropertiesObject->SetObjectField(TEXT("path"), UnrealMcp::MakeStringProperty(TEXT("Blueprint asset path to compile.")));
+		{
+			TSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
+			PropertiesObject->SetObjectField(TEXT("toolName"), UnrealMcp::MakeStringProperty(TEXT("Tool name whose scaffold should be applied. Used when scaffoldDir is empty.")));
+			PropertiesObject->SetObjectField(TEXT("scaffoldDir"), UnrealMcp::MakeStringProperty(TEXT("Project-relative or absolute scaffold directory containing generated snippet files.")));
+			PropertiesObject->SetObjectField(TEXT("outputRoot"), UnrealMcp::MakeStringProperty(TEXT("Project-relative scaffold root used with toolName."), TEXT("Tools/UnrealMcpToolScaffolds")));
+			PropertiesObject->SetObjectField(TEXT("dryRun"), UnrealMcp::MakeBoolProperty(TEXT("Preview changes without modifying source."), true));
+			PropertiesObject->SetObjectField(TEXT("applyChatCommand"), UnrealMcp::MakeBoolProperty(TEXT("Whether to apply ChatCommand.cpp.snippet."), true));
+			PropertiesObject->SetObjectField(TEXT("createBackup"), UnrealMcp::MakeBoolProperty(TEXT("Whether to create rollback backup and manifest when dryRun=false."), true));
+
+			TSharedPtr<FJsonObject> InputSchema = UnrealMcp::MakeObjectSchema();
+			InputSchema->SetObjectField(TEXT("properties"), PropertiesObject);
+
+			UnrealMcp::AddToolDefinition(
+				ToolsArray,
+				TEXT("unreal.mcp_apply_scaffold"),
+				TEXT("Apply MCP Scaffold"),
+				TEXT("Safely previews or applies generated MCP tool scaffold snippets into the UnrealMcpModule source with idempotence checks and backups."),
+				InputSchema);
+		}
+
+		{
+			TSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
+			PropertiesObject->SetObjectField(TEXT("manifestPath"), UnrealMcp::MakeStringProperty(TEXT("Optional project-local manifest path. Defaults to Saved/UnrealMcp/LastExtensionApply.json.")));
+			PropertiesObject->SetObjectField(TEXT("dryRun"), UnrealMcp::MakeBoolProperty(TEXT("Preview rollback without restoring source."), false));
+			PropertiesObject->SetObjectField(TEXT("force"), UnrealMcp::MakeBoolProperty(TEXT("Restore even if current source hash differs from the apply manifest."), false));
+
+			TSharedPtr<FJsonObject> InputSchema = UnrealMcp::MakeObjectSchema();
+			InputSchema->SetObjectField(TEXT("properties"), PropertiesObject);
+
+			UnrealMcp::AddToolDefinition(
+				ToolsArray,
+				TEXT("unreal.mcp_rollback_last_extension"),
+				TEXT("Rollback Last MCP Extension"),
+				TEXT("Restores UnrealMcpModule.cpp from the last mcp_apply_scaffold backup, with hash safety checks."),
+				InputSchema);
+		}
+
+				{
+					TSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
+					PropertiesObject->SetObjectField(TEXT("path"), UnrealMcp::MakeStringProperty(TEXT("Blueprint asset path to compile.")));
 
 		TSharedPtr<FJsonObject> InputSchema = UnrealMcp::MakeObjectSchema();
 		InputSchema->SetObjectField(TEXT("properties"), PropertiesObject);
@@ -10834,10 +11511,28 @@ FUnrealMcpExecutionResult FUnrealMcpModule::ExecuteTool(const FString& ToolName,
 			return UnrealMcp::ProjectMemoryRead(Arguments);
 		}
 
-			if (ToolName == TEXT("unreal.compile_blueprint"))
+		if (ToolName == TEXT("unreal.mcp_apply_scaffold"))
+		{
+			if (UnrealMcp::IsEditorPlaying())
 			{
-				if (UnrealMcp::IsEditorPlaying())
+				return UnrealMcp::MakePieBlockedResult(ToolName);
+			}
+			return UnrealMcp::ApplyMcpScaffold(Arguments);
+		}
+
+		if (ToolName == TEXT("unreal.mcp_rollback_last_extension"))
+		{
+			if (UnrealMcp::IsEditorPlaying())
+			{
+				return UnrealMcp::MakePieBlockedResult(ToolName);
+			}
+			return UnrealMcp::RollbackLastMcpExtension(Arguments);
+		}
+
+				if (ToolName == TEXT("unreal.compile_blueprint"))
 				{
+					if (UnrealMcp::IsEditorPlaying())
+					{
 					return UnrealMcp::MakePieBlockedResult(ToolName);
 		}
 
