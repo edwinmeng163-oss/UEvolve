@@ -153,6 +153,7 @@ Install:
 
 - Unreal Engine 5.7.
 - Xcode command line tools on macOS.
+- Visual Studio 2022 with C++ tools on Windows.
 - Git.
 - Git LFS.
 
@@ -189,7 +190,109 @@ For a command-line editor build on macOS:
 
 If the editor asks to rebuild modules on first open, allow it to rebuild.
 
-### 4. Confirm Plugin Settings
+### 4. Windows Deployment Notes
+
+Windows is supported as a source-build target, but it has a few extra setup requirements because Unreal C++ plugins must be compiled locally for Win64.
+
+Recommended Windows environment:
+
+- Windows 10 or Windows 11 64-bit.
+- Unreal Engine 5.7 installed through Epic Games Launcher or from source.
+- Visual Studio 2022.
+- Visual Studio workload: `Desktop development with C++`.
+- MSVC v143 toolchain.
+- Windows 10 or Windows 11 SDK.
+- .NET support supplied by Unreal Engine's bundled DotNet runtime.
+- Git for Windows.
+- Git LFS for Windows.
+
+Recommended clone location:
+
+```text
+C:\UnrealProjects\UEMCP
+```
+
+Avoid these locations when possible:
+
+- Very deep paths, because Windows path length limits can still affect tooling.
+- OneDrive-synced folders, because file locking and cloud sync can interfere with Unreal assets.
+- Paths with non-ASCII characters if you hit build or plugin load issues.
+- Protected folders such as `Program Files` for the project checkout.
+
+Clone on Windows:
+
+```powershell
+git clone https://github.com/edwinmeng163-oss/UEMCP.git C:\UnrealProjects\UEMCP
+cd C:\UnrealProjects\UEMCP
+git lfs install
+git lfs pull
+```
+
+Build from PowerShell:
+
+```powershell
+& "C:\Program Files\Epic Games\UE_5.7\Engine\Build\BatchFiles\Build.bat" `
+  MyProjectEditor Win64 Development `
+  "-Project=$((Get-Location).Path)\MyProject.uproject" `
+  -WaitMutex
+```
+
+Build from Command Prompt:
+
+```bat
+"C:\Program Files\Epic Games\UE_5.7\Engine\Build\BatchFiles\Build.bat" ^
+  MyProjectEditor Win64 Development ^
+  -Project="%CD%\MyProject.uproject" ^
+  -WaitMutex
+```
+
+If your engine is installed somewhere else, change the `UE_5.7` path accordingly.
+
+Windows-specific issues to expect:
+
+- Engine version mismatch: install Unreal Engine 5.7 or update `EngineAssociation` intentionally.
+- Missing C++ compiler: install Visual Studio 2022 and the C++ desktop workload.
+- Missing Windows SDK: add it through Visual Studio Installer.
+- Plugin binary mismatch: macOS binaries do not run on Windows; rebuild to generate `Binaries/Win64`.
+- Git LFS pointer files: if assets fail to load or are tiny text files, run `git lfs pull`.
+- Path length errors: move the project closer to a drive root or enable long paths in Windows.
+- OneDrive file locks: move the checkout out of OneDrive/Documents/Desktop if Unreal reports save/load issues.
+- Antivirus or Windows Defender delays: allow Unreal Editor and UnrealBuildTool if builds are blocked or extremely slow.
+- Controlled Folder Access: disable it for the project folder or allow Unreal tools.
+- Firewall prompt: allow local/private network access if Windows asks when the MCP server starts.
+- Port conflict: if `8765` is already in use, change the port in Project Settings or stop the other process.
+- PowerShell `curl` behavior: use `curl.exe` explicitly if `curl` behaves like an alias.
+- Generated project files: if Visual Studio cannot find targets, right-click `MyProject.uproject` and choose `Generate Visual Studio project files`.
+- Case sensitivity: avoid manually renaming Unreal assets only by letter case on Windows.
+- Line endings: keep Git-managed text files normalized; avoid mass CRLF rewrites.
+- Editor rebuild prompt loop: close Unreal, delete local `Binaries/` and `Intermediate/`, then rebuild.
+- Plugin not visible: confirm `Plugins/UnrealMcp/UnrealMcp.uplugin` exists and the plugin is enabled in the project.
+- Python tools unavailable: confirm Unreal's Python Script Plugin is enabled.
+- AI requests fail but direct commands work: verify API key, model name, rate limits, and request timeout settings.
+
+Verify MCP from Windows PowerShell with `curl.exe`:
+
+```powershell
+curl.exe -s `
+  -H "Content-Type: application/json" `
+  -H "Accept: application/json, text/event-stream" `
+  -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"unreal.editor_status\",\"arguments\":{}}}" `
+  http://127.0.0.1:8765/mcp
+```
+
+Check whether port `8765` is already in use:
+
+```powershell
+netstat -ano | findstr :8765
+```
+
+If another process owns the port, either stop that process or change the Unreal MCP port in:
+
+```text
+Edit > Project Settings > Plugins > Unreal MCP
+```
+
+### 5. Confirm Plugin Settings
 
 In Unreal Editor, open:
 
@@ -207,7 +310,7 @@ Recommended defaults:
 
 The plugin is editor-focused. Keep the endpoint bound to localhost unless you intentionally know how you want to secure remote access.
 
-### 5. Verify The MCP Endpoint
+### 6. Verify The MCP Endpoint
 
 With the Unreal Editor running, test from a terminal:
 
@@ -239,7 +342,7 @@ curl -s \
   http://127.0.0.1:8765/mcp
 ```
 
-### 6. Use The In-Editor Chat
+### 7. Use The In-Editor Chat
 
 Open:
 
@@ -262,7 +365,7 @@ Try a direct tool call:
 /tool unreal.editor_status {}
 ```
 
-### 7. Optional AI Assistant Setup
+### 8. Optional AI Assistant Setup
 
 To use natural-language AI requests from the chat panel, configure:
 
@@ -281,7 +384,7 @@ Set:
 
 Keep API keys local. Do not commit editor user settings or key files.
 
-### 8. Troubleshooting
+### 9. Troubleshooting
 
 - If `/status` works but AI requests fail, check the AI settings and API key.
 - If `curl` cannot connect, confirm the Unreal Editor is open and the plugin is enabled.
