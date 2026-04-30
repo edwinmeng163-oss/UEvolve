@@ -5673,6 +5673,325 @@ namespace UnrealMcp
 			return !OutSchemaJson.IsEmpty();
 		}
 
+		TSharedPtr<FJsonObject> MakeScaffoldFileObject(
+			const FString& ScaffoldDirectory,
+			const FString& FileName,
+			bool bRequired,
+			bool bIncludeFileText,
+			int32 MaxPreviewChars)
+		{
+			const FString FilePath = FPaths::Combine(ScaffoldDirectory, FileName);
+			TSharedPtr<FJsonObject> FileObject = MakeFileInfoObject(FilePath);
+			FileObject->SetStringField(TEXT("name"), FileName);
+			FileObject->SetBoolField(TEXT("required"), bRequired);
+			FileObject->SetBoolField(TEXT("missing"), !FPaths::FileExists(FilePath));
+
+			FString Text;
+			if (FFileHelper::LoadFileToString(Text, *FilePath))
+			{
+				const int32 SafeMaxPreviewChars = FMath::Max(100, MaxPreviewChars);
+				FileObject->SetNumberField(TEXT("characterCount"), Text.Len());
+				FileObject->SetStringField(TEXT("preview"), Text.Left(SafeMaxPreviewChars));
+				FileObject->SetBoolField(TEXT("previewTruncated"), Text.Len() > SafeMaxPreviewChars);
+				if (bIncludeFileText)
+				{
+					FileObject->SetStringField(TEXT("text"), Text);
+				}
+			}
+			return FileObject;
+		}
+
+		bool TryReadToolNameFromTestRequest(
+			const FString& TestRequestPath,
+			FString& OutToolName,
+			TSharedPtr<FJsonObject>& OutTestRequestObject,
+			FString& OutFailureReason)
+		{
+			OutToolName.Reset();
+			OutTestRequestObject.Reset();
+			OutFailureReason.Reset();
+
+			if (!FPaths::FileExists(TestRequestPath))
+			{
+				OutFailureReason = FString::Printf(TEXT("TestRequest.json is missing at '%s'."), *TestRequestPath);
+				return false;
+			}
+
+			if (!LoadJsonObjectFromFile(TestRequestPath, OutTestRequestObject, OutFailureReason))
+			{
+				return false;
+			}
+
+			FString Method;
+			OutTestRequestObject->TryGetStringField(TEXT("method"), Method);
+			if (Method != TEXT("tools/call"))
+			{
+				OutFailureReason = TEXT("TestRequest.json method is not tools/call.");
+				return false;
+			}
+
+			const TSharedPtr<FJsonObject>* ParamsObject = nullptr;
+			if (!OutTestRequestObject->TryGetObjectField(TEXT("params"), ParamsObject) || !ParamsObject || !(*ParamsObject).IsValid())
+			{
+				OutFailureReason = TEXT("TestRequest.json is missing params object.");
+				return false;
+			}
+
+			(*ParamsObject)->TryGetStringField(TEXT("name"), OutToolName);
+			OutToolName = OutToolName.TrimStartAndEnd();
+			if (OutToolName.IsEmpty())
+			{
+				OutFailureReason = TEXT("TestRequest.json params.name is empty.");
+				return false;
+			}
+			return true;
+		}
+
+		bool ResolveMcpScaffoldForInspection(
+			const FJsonObject& Arguments,
+			FString& OutDirectory,
+			FString& OutToolName,
+			FString& OutFailureReason)
+		{
+			FString ScaffoldDir;
+			FString ToolName;
+			FString OutputRoot;
+			Arguments.TryGetStringField(TEXT("scaffoldDir"), ScaffoldDir);
+			Arguments.TryGetStringField(TEXT("toolName"), ToolName);
+			Arguments.TryGetStringField(TEXT("outputRoot"), OutputRoot);
+			ScaffoldDir = ScaffoldDir.TrimStartAndEnd();
+			ToolName = ToolName.TrimStartAndEnd();
+
+			if (!ScaffoldDir.IsEmpty())
+			{
+				if (!ResolveProjectPathInsideProject(ScaffoldDir, OutDirectory, OutFailureReason))
+				{
+					return false;
+				}
+			}
+			else
+			{
+				if (ToolName.IsEmpty())
+				{
+					OutFailureReason = TEXT("Provide either scaffoldDir or toolName.");
+					return false;
+				}
+
+				FString ResolvedOutputRoot;
+				if (!ResolveProjectOutputDirectory(OutputRoot, ResolvedOutputRoot, OutFailureReason))
+				{
+					return false;
+				}
+				OutDirectory = FPaths::Combine(ResolvedOutputRoot, SanitizeMcpToolIdForPath(ToolName));
+			}
+
+			OutToolName = ToolName;
+			if (OutToolName.IsEmpty())
+			{
+				TSharedPtr<FJsonObject> TestRequestObject;
+				FString TestRequestFailure;
+				TryReadToolNameFromTestRequest(FPaths::Combine(OutDirectory, TEXT("TestRequest.json")), OutToolName, TestRequestObject, TestRequestFailure);
+			}
+			return true;
+		}
+
+		TSharedPtr<FJsonObject> InspectMcpScaffoldDirectory(
+			const FString& ScaffoldDirectory,
+			const FString& RequestedToolName,
+			const TArray<TSharedPtr<FJsonValue>>& ToolsArray,
+			bool bIncludeFileText,
+			int32 MaxPreviewChars)
+		{
+			const FString ResolvedScaffoldDirectory = NormalizeFullPathForCompare(ScaffoldDirectory);
+			TSharedPtr<FJsonObject> ResultObject = MakeShared<FJsonObject>();
+			ResultObject->SetStringField(TEXT("directory"), ResolvedScaffoldDirectory);
+			ResultObject->SetStringField(TEXT("toolId"), FPaths::GetCleanFilename(ResolvedScaffoldDirectory));
+			ResultObject->SetBoolField(TEXT("exists"), FPaths::DirectoryExists(ResolvedScaffoldDirectory));
+
+			static const TCHAR* RequiredFiles[] = {
+				TEXT("README.md"),
+				TEXT("ToolDefinition.cpp.snippet"),
+				TEXT("ExecuteToolHandler.cpp.snippet"),
+				TEXT("TestRequest.json"),
+				TEXT("IntegrationChecklist.md")
+			};
+
+			TArray<TSharedPtr<FJsonValue>> Files;
+			TArray<TSharedPtr<FJsonValue>> MissingRequiredFiles;
+			for (const TCHAR* FileName : RequiredFiles)
+			{
+				TSharedPtr<FJsonObject> FileObject = MakeScaffoldFileObject(ResolvedScaffoldDirectory, FileName, true, bIncludeFileText, MaxPreviewChars);
+				if (FileObject->GetBoolField(TEXT("missing")))
+				{
+					MissingRequiredFiles.Add(MakeShared<FJsonValueString>(FileName));
+				}
+				Files.Add(MakeShared<FJsonValueObject>(FileObject));
+			}
+			Files.Add(MakeShared<FJsonValueObject>(MakeScaffoldFileObject(ResolvedScaffoldDirectory, TEXT("ChatCommand.cpp.snippet"), false, bIncludeFileText, MaxPreviewChars)));
+
+			FString ToolName = RequestedToolName;
+			FString TestRequestFailure;
+			TSharedPtr<FJsonObject> TestRequestObject;
+			const bool bValidTestRequest = TryReadToolNameFromTestRequest(
+				FPaths::Combine(ResolvedScaffoldDirectory, TEXT("TestRequest.json")),
+				ToolName,
+				TestRequestObject,
+				TestRequestFailure);
+
+			ResultObject->SetStringField(TEXT("toolName"), ToolName);
+			ResultObject->SetBoolField(TEXT("validTestRequest"), bValidTestRequest);
+			if (!TestRequestFailure.IsEmpty())
+			{
+				ResultObject->SetStringField(TEXT("testRequestIssue"), TestRequestFailure);
+			}
+			if (TestRequestObject.IsValid())
+			{
+				ResultObject->SetObjectField(TEXT("testRequest"), TestRequestObject);
+			}
+
+			FString RequestedSchemaJson;
+			const bool bHasRequestedSchema = ExtractRequestedSchemaFromScaffoldReadme(ResolvedScaffoldDirectory, RequestedSchemaJson);
+			ResultObject->SetBoolField(TEXT("hasRequestedSchema"), bHasRequestedSchema);
+			if (bHasRequestedSchema)
+			{
+				ResultObject->SetStringField(TEXT("requestedSchemaJson"), RequestedSchemaJson);
+				TSharedPtr<FJsonObject> RequestedSchemaObject;
+				if (LoadJsonObject(RequestedSchemaJson, RequestedSchemaObject) && RequestedSchemaObject.IsValid())
+				{
+					TArray<TSharedPtr<FJsonValue>> SchemaIssues;
+					FString SchemaReason;
+					TSharedPtr<FJsonObject> NormalizedSchema;
+					const bool bSchemaCompatible = AnalyzeOpenAiSchemaCompatibility(RequestedSchemaObject, SchemaIssues, SchemaReason, NormalizedSchema);
+					ResultObject->SetBoolField(TEXT("schemaCompatible"), bSchemaCompatible);
+					ResultObject->SetStringField(TEXT("schemaReason"), SchemaReason);
+					ResultObject->SetArrayField(TEXT("schemaIssues"), SchemaIssues);
+					if (NormalizedSchema.IsValid())
+					{
+						ResultObject->SetObjectField(TEXT("normalizedSchema"), NormalizedSchema);
+					}
+				}
+				else
+				{
+					ResultObject->SetBoolField(TEXT("schemaCompatible"), false);
+					ResultObject->SetStringField(TEXT("schemaReason"), TEXT("Requested schema block is not valid JSON."));
+				}
+			}
+
+			const bool bToolListed = !ToolName.IsEmpty() && FindToolDefinitionByName(ToolsArray, ToolName).IsValid();
+			ResultObject->SetBoolField(TEXT("toolListed"), bToolListed);
+			ResultObject->SetBoolField(TEXT("readyForApply"), MissingRequiredFiles.Num() == 0 && bValidTestRequest);
+			ResultObject->SetArrayField(TEXT("missingRequiredFiles"), MissingRequiredFiles);
+			ResultObject->SetArrayField(TEXT("files"), Files);
+			return ResultObject;
+		}
+
+		FUnrealMcpExecutionResult ListMcpScaffolds(
+			const FJsonObject& Arguments,
+			const TArray<TSharedPtr<FJsonValue>>& ToolsArray)
+		{
+			FString OutputRoot;
+			FString ToolNameFilter;
+			bool bIncludeSavedTestScaffolds = true;
+			bool bIncludeFileText = false;
+			bool bReadyOnly = false;
+			Arguments.TryGetStringField(TEXT("outputRoot"), OutputRoot);
+			Arguments.TryGetStringField(TEXT("toolNameFilter"), ToolNameFilter);
+			Arguments.TryGetBoolField(TEXT("includeSavedTestScaffolds"), bIncludeSavedTestScaffolds);
+			Arguments.TryGetBoolField(TEXT("includeFileText"), bIncludeFileText);
+			Arguments.TryGetBoolField(TEXT("readyOnly"), bReadyOnly);
+			const int32 MaxPreviewChars = FMath::Min(GetPositiveIntArgument(Arguments, TEXT("maxPreviewChars"), 1200), 20000);
+
+			FString ResolvedOutputRoot;
+			FString FailureReason;
+			if (!ResolveProjectOutputDirectory(OutputRoot, ResolvedOutputRoot, FailureReason))
+			{
+				return MakeExecutionResult(FailureReason, nullptr, true);
+			}
+
+			TArray<FString> CandidateDirectories;
+			FindImmediateChildren(ResolvedOutputRoot, TEXT("*"), false, true, CandidateDirectories);
+			if (bIncludeSavedTestScaffolds)
+			{
+				FindImmediateChildren(FPaths::Combine(GetUnrealMcpSavedRoot(), TEXT("TestScaffolds")), TEXT("*"), false, true, CandidateDirectories);
+			}
+			CandidateDirectories.Sort();
+
+			TArray<TSharedPtr<FJsonValue>> ScaffoldObjects;
+			TArray<TSharedPtr<FJsonValue>> SkippedObjects;
+			for (const FString& CandidateDirectory : CandidateDirectories)
+			{
+				TSharedPtr<FJsonObject> ScaffoldObject = InspectMcpScaffoldDirectory(CandidateDirectory, FString(), ToolsArray, bIncludeFileText, MaxPreviewChars);
+				FString ToolName;
+				ScaffoldObject->TryGetStringField(TEXT("toolName"), ToolName);
+				const bool bReadyForApply = ScaffoldObject->GetBoolField(TEXT("readyForApply"));
+
+				if (!ToolNameFilter.TrimStartAndEnd().IsEmpty()
+					&& !ToolName.Contains(ToolNameFilter.TrimStartAndEnd(), ESearchCase::IgnoreCase)
+					&& !CandidateDirectory.Contains(ToolNameFilter.TrimStartAndEnd(), ESearchCase::IgnoreCase))
+				{
+					ScaffoldObject->SetStringField(TEXT("skipReason"), TEXT("toolNameFilter did not match."));
+					SkippedObjects.Add(MakeShared<FJsonValueObject>(ScaffoldObject));
+					continue;
+				}
+
+				if (bReadyOnly && !bReadyForApply)
+				{
+					ScaffoldObject->SetStringField(TEXT("skipReason"), TEXT("readyOnly=true and scaffold is not ready for apply."));
+					SkippedObjects.Add(MakeShared<FJsonValueObject>(ScaffoldObject));
+					continue;
+				}
+
+				ScaffoldObjects.Add(MakeShared<FJsonValueObject>(ScaffoldObject));
+			}
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("action"), TEXT("mcp_list_scaffolds"));
+			StructuredContent->SetStringField(TEXT("outputRoot"), ResolvedOutputRoot);
+			StructuredContent->SetBoolField(TEXT("includeSavedTestScaffolds"), bIncludeSavedTestScaffolds);
+			StructuredContent->SetBoolField(TEXT("includeFileText"), bIncludeFileText);
+			StructuredContent->SetBoolField(TEXT("readyOnly"), bReadyOnly);
+			StructuredContent->SetStringField(TEXT("toolNameFilter"), ToolNameFilter);
+			StructuredContent->SetNumberField(TEXT("scaffoldCount"), ScaffoldObjects.Num());
+			StructuredContent->SetNumberField(TEXT("skippedCount"), SkippedObjects.Num());
+			StructuredContent->SetArrayField(TEXT("scaffolds"), ScaffoldObjects);
+			StructuredContent->SetArrayField(TEXT("skipped"), SkippedObjects);
+
+			return MakeExecutionResult(
+				FString::Printf(TEXT("Found %d MCP scaffold%s (%d skipped)."), ScaffoldObjects.Num(), ScaffoldObjects.Num() == 1 ? TEXT("") : TEXT("s"), SkippedObjects.Num()),
+				StructuredContent,
+				false);
+		}
+
+		FUnrealMcpExecutionResult InspectMcpScaffold(
+			const FJsonObject& Arguments,
+			const TArray<TSharedPtr<FJsonValue>>& ToolsArray)
+		{
+			bool bIncludeFileText = false;
+			Arguments.TryGetBoolField(TEXT("includeFileText"), bIncludeFileText);
+			const int32 MaxPreviewChars = FMath::Min(GetPositiveIntArgument(Arguments, TEXT("maxPreviewChars"), 2000), 50000);
+
+			FString ScaffoldDirectory;
+			FString ToolName;
+			FString FailureReason;
+			if (!ResolveMcpScaffoldForInspection(Arguments, ScaffoldDirectory, ToolName, FailureReason))
+			{
+				return MakeExecutionResult(FailureReason, nullptr, true);
+			}
+
+			TSharedPtr<FJsonObject> InspectionObject = InspectMcpScaffoldDirectory(ScaffoldDirectory, ToolName, ToolsArray, bIncludeFileText, MaxPreviewChars);
+			InspectionObject->SetStringField(TEXT("action"), TEXT("mcp_inspect_scaffold"));
+			const bool bReadyForApply = InspectionObject->GetBoolField(TEXT("readyForApply"));
+			FString InspectedToolName;
+			InspectionObject->TryGetStringField(TEXT("toolName"), InspectedToolName);
+
+			return MakeExecutionResult(
+				FString::Printf(TEXT("Inspected MCP scaffold %s. readyForApply=%s."),
+					InspectedToolName.IsEmpty() ? *InspectionObject->GetStringField(TEXT("toolId")) : *InspectedToolName,
+					bReadyForApply ? TEXT("true") : TEXT("false")),
+				InspectionObject,
+				false);
+		}
+
 		FUnrealMcpExecutionResult BuildEditor(const FJsonObject& Arguments)
 		{
 			FString Target = FString::Printf(TEXT("%sEditor"), FApp::GetProjectName());
@@ -8687,6 +9006,45 @@ void FUnrealMcpModule::AppendToolDefinitions(TArray<TSharedPtr<FJsonValue>>& Too
 				TEXT("unreal.scaffold_mcp_tool"),
 				TEXT("Scaffold MCP Tool"),
 				TEXT("Generates C++ snippet files, docs, and a test request for adding a new Unreal MCP tool after review and rebuild."),
+				InputSchema);
+		}
+
+		{
+			TSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
+			PropertiesObject->SetObjectField(TEXT("outputRoot"), UnrealMcp::MakeStringProperty(TEXT("Project-relative scaffold root to scan."), TEXT("Tools/UnrealMcpToolScaffolds")));
+			PropertiesObject->SetObjectField(TEXT("includeSavedTestScaffolds"), UnrealMcp::MakeBoolProperty(TEXT("Whether to also scan Saved/UnrealMcp/TestScaffolds."), true));
+			PropertiesObject->SetObjectField(TEXT("toolNameFilter"), UnrealMcp::MakeStringProperty(TEXT("Optional case-insensitive filter applied to tool names and scaffold paths.")));
+			PropertiesObject->SetObjectField(TEXT("readyOnly"), UnrealMcp::MakeBoolProperty(TEXT("Only return scaffolds with all required files and a valid TestRequest.json."), false));
+			PropertiesObject->SetObjectField(TEXT("includeFileText"), UnrealMcp::MakeBoolProperty(TEXT("Whether to include full file text for each scaffold file."), false));
+			PropertiesObject->SetObjectField(TEXT("maxPreviewChars"), UnrealMcp::MakeNumberProperty(TEXT("Maximum per-file preview characters."), 1200.0));
+
+			TSharedPtr<FJsonObject> InputSchema = UnrealMcp::MakeObjectSchema();
+			InputSchema->SetObjectField(TEXT("properties"), PropertiesObject);
+
+			UnrealMcp::AddToolDefinition(
+				ToolsArray,
+				TEXT("unreal.mcp_list_scaffolds"),
+				TEXT("List MCP Scaffolds"),
+				TEXT("Lists generated MCP tool scaffold directories, readiness, tool names, schema status, and test request status."),
+				InputSchema);
+		}
+
+		{
+			TSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
+			PropertiesObject->SetObjectField(TEXT("toolName"), UnrealMcp::MakeStringProperty(TEXT("MCP tool name whose scaffold should be inspected. Used when scaffoldDir is empty.")));
+			PropertiesObject->SetObjectField(TEXT("scaffoldDir"), UnrealMcp::MakeStringProperty(TEXT("Project-relative or absolute scaffold directory to inspect.")));
+			PropertiesObject->SetObjectField(TEXT("outputRoot"), UnrealMcp::MakeStringProperty(TEXT("Project-relative scaffold root used with toolName."), TEXT("Tools/UnrealMcpToolScaffolds")));
+			PropertiesObject->SetObjectField(TEXT("includeFileText"), UnrealMcp::MakeBoolProperty(TEXT("Whether to include full file text for scaffold files."), false));
+			PropertiesObject->SetObjectField(TEXT("maxPreviewChars"), UnrealMcp::MakeNumberProperty(TEXT("Maximum per-file preview characters."), 2000.0));
+
+			TSharedPtr<FJsonObject> InputSchema = UnrealMcp::MakeObjectSchema();
+			InputSchema->SetObjectField(TEXT("properties"), PropertiesObject);
+
+			UnrealMcp::AddToolDefinition(
+				ToolsArray,
+				TEXT("unreal.mcp_inspect_scaffold"),
+				TEXT("Inspect MCP Scaffold"),
+				TEXT("Inspects one generated MCP scaffold for required files, schema compatibility, test request validity, snippets, and whether the tool is already loaded."),
 				InputSchema);
 		}
 
@@ -12780,6 +13138,20 @@ FUnrealMcpExecutionResult FUnrealMcpModule::ExecuteTool(const FString& ToolName,
 				return UnrealMcp::MakePieBlockedResult(ToolName);
 			}
 			return UnrealMcp::ScaffoldMcpTool(Arguments);
+		}
+
+		if (ToolName == TEXT("unreal.mcp_list_scaffolds"))
+		{
+			TArray<TSharedPtr<FJsonValue>> ToolsArray;
+			AppendToolDefinitions(ToolsArray);
+			return UnrealMcp::ListMcpScaffolds(Arguments, ToolsArray);
+		}
+
+		if (ToolName == TEXT("unreal.mcp_inspect_scaffold"))
+		{
+			TArray<TSharedPtr<FJsonValue>> ToolsArray;
+			AppendToolDefinitions(ToolsArray);
+			return UnrealMcp::InspectMcpScaffold(Arguments, ToolsArray);
 		}
 
 		if (ToolName == TEXT("unreal.mcp_validate_tool_schema"))

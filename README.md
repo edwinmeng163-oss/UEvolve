@@ -90,6 +90,8 @@ Unreal MCP currently supports:
   - `unreal.scaffold_result_ui`
 - MCP extension scaffolding:
   - `unreal.scaffold_mcp_tool`
+  - `unreal.mcp_list_scaffolds`
+  - `unreal.mcp_inspect_scaffold`
   - `unreal.mcp_validate_tool_schema`
   - `unreal.mcp_apply_scaffold`
   - `unreal.mcp_rollback_last_extension`
@@ -166,6 +168,8 @@ Useful first-stage extension checks:
 
 ```text
 /tool unreal.mcp_validate_tool_schema {"toolName":"unreal.scaffold_mcp_tool"}
+/tool unreal.mcp_list_scaffolds {"includeSavedTestScaffolds":true}
+/tool unreal.mcp_inspect_scaffold {"toolName":"unreal.my_custom_tool"}
 /tool unreal.mcp_apply_scaffold {"toolName":"unreal.my_custom_tool","dryRun":true}
 /tool unreal.mcp_apply_scaffold {"toolName":"unreal.my_custom_tool","dryRun":false}
 /tool unreal.mcp_rollback_last_extension {"dryRun":true}
@@ -182,6 +186,8 @@ Useful first-stage extension checks:
 
 Build/test handoff note:
 
+- `unreal.mcp_list_scaffolds` scans generated scaffold folders under `Tools/UnrealMcpToolScaffolds` and optionally `Saved/UnrealMcp/TestScaffolds`, reporting readiness, missing files, schema status, test request validity, and whether the tool is already loaded.
+- `unreal.mcp_inspect_scaffold` inspects one scaffold by `toolName` or `scaffoldDir`, including required file status, snippet previews, requested schema compatibility, and the generated `TestRequest.json`.
 - `unreal.mcp_build_editor` runs Unreal Build Tool for `MyProjectEditor`, captures a build log under `Saved/UnrealMcp/BuildLogs`, parses key error lines, and writes restart handoff state into project memory.
 - Because the tool is invoked from a running editor, newly compiled plugin code is not loaded until Unreal Editor is restarted.
 - After restart, `unreal.mcp_run_tool_test` can read the memory entry, locate the generated `TestRequest.json`, confirm the tool appears in `tools/list`, and execute the recorded `tools/call` request through the in-editor MCP handlers.

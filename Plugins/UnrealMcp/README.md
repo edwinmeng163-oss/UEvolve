@@ -66,6 +66,8 @@ Editor action tools:
 - `unreal.scaffold_autobattler_ai`
 - `unreal.scaffold_result_ui`
 - `unreal.scaffold_mcp_tool`
+- `unreal.mcp_list_scaffolds`
+- `unreal.mcp_inspect_scaffold`
 - `unreal.mcp_validate_tool_schema`
 - `unreal.mcp_apply_scaffold`
 - `unreal.mcp_rollback_last_extension`
@@ -268,6 +270,16 @@ MCP tool extension scaffold example:
 This generates reviewable C++ snippets, a test request, and an integration checklist under `Tools/UnrealMcpToolScaffolds`. It does not hot-load C++ into the running editor; integrate the snippets, rebuild `MyProjectEditor`, and reopen the editor if needed.
 
 MCP extension safety checks:
+
+```text
+/tool unreal.mcp_list_scaffolds {"includeSavedTestScaffolds":true}
+```
+
+```text
+/tool unreal.mcp_inspect_scaffold {"toolName":"unreal.my_custom_tool"}
+```
+
+`unreal.mcp_list_scaffolds` gives Chat a project-local inventory of generated scaffold folders, including readiness, missing files, schema status, test request validity, and whether each tool is already loaded. `unreal.mcp_inspect_scaffold` drills into a single scaffold by `toolName` or `scaffoldDir` and returns required file status, snippet previews, requested schema compatibility, and the generated `TestRequest.json`.
 
 ```text
 /tool unreal.mcp_validate_tool_schema {"toolName":"unreal.scaffold_mcp_tool"}
