@@ -3261,10 +3261,10 @@ namespace UnrealMcp
 			*EscapeForCppTextLiteral(ToolName));
 	}
 
-	FUnrealMcpExecutionResult ScaffoldMcpTool(const FJsonObject& Arguments)
-	{
-		FString ToolName;
-		if (!Arguments.TryGetStringField(TEXT("toolName"), ToolName) || ToolName.TrimStartAndEnd().IsEmpty())
+		FUnrealMcpExecutionResult ScaffoldMcpTool(const FJsonObject& Arguments)
+		{
+			FString ToolName;
+			if (!Arguments.TryGetStringField(TEXT("toolName"), ToolName) || ToolName.TrimStartAndEnd().IsEmpty())
 		{
 			return MakeExecutionResult(TEXT("Missing required field 'toolName'."), nullptr, true);
 		}
@@ -3400,11 +3400,620 @@ namespace UnrealMcp
 		return MakeExecutionResult(
 			FString::Printf(TEXT("Scaffolded MCP tool extension files for %s under %s."), *ToolName, *ToolDirectory),
 			StructuredContent,
-			false);
-	}
+				false);
+		}
 
-	FUnrealMcpExecutionResult ScaffoldRoundSystem(UEditorAssetSubsystem* EditorAssetSubsystem, const FJsonObject& Arguments)
-	{
+		void AddAuditIssue(
+			TArray<TSharedPtr<FJsonValue>>& Issues,
+			const FString& Severity,
+			const FString& Path,
+			const FString& Message)
+		{
+			TSharedPtr<FJsonObject> IssueObject = MakeShared<FJsonObject>();
+			IssueObject->SetStringField(TEXT("severity"), Severity);
+			IssueObject->SetStringField(TEXT("path"), Path);
+			IssueObject->SetStringField(TEXT("message"), Message);
+			Issues.Add(MakeShared<FJsonValueObject>(IssueObject));
+		}
+
+		bool AnalyzeOpenAiSchemaObject(
+			const TSharedPtr<FJsonObject>& SchemaObject,
+			const FString& Path,
+			TArray<TSharedPtr<FJsonValue>>& Issues);
+
+		bool AnalyzeOpenAiSchemaValue(
+			const TSharedPtr<FJsonValue>& SchemaValue,
+			const FString& Path,
+			TArray<TSharedPtr<FJsonValue>>& Issues)
+		{
+			if (!SchemaValue.IsValid())
+			{
+				AddAuditIssue(Issues, TEXT("warning"), Path, TEXT("Schema value is null."));
+				return true;
+			}
+
+			if (SchemaValue->Type == EJson::Object)
+			{
+				return AnalyzeOpenAiSchemaObject(SchemaValue->AsObject(), Path, Issues);
+			}
+
+			if (SchemaValue->Type == EJson::Array)
+			{
+				bool bCompatible = true;
+				const TArray<TSharedPtr<FJsonValue>>& Items = SchemaValue->AsArray();
+				for (int32 Index = 0; Index < Items.Num(); ++Index)
+				{
+					bCompatible &= AnalyzeOpenAiSchemaValue(
+						Items[Index],
+						FString::Printf(TEXT("%s[%d]"), *Path, Index),
+						Issues);
+				}
+				return bCompatible;
+			}
+
+			return true;
+		}
+
+		bool AnalyzeOpenAiSchemaObject(
+			const TSharedPtr<FJsonObject>& SchemaObject,
+			const FString& Path,
+			TArray<TSharedPtr<FJsonValue>>& Issues)
+		{
+			if (!SchemaObject.IsValid())
+			{
+				AddAuditIssue(Issues, TEXT("error"), Path, TEXT("Schema object is invalid."));
+				return false;
+			}
+
+			bool bCompatible = true;
+			FString TypeString;
+			const bool bHasStringType = SchemaObject->TryGetStringField(TEXT("type"), TypeString);
+			const TSharedPtr<FJsonValue> TypeField = SchemaObject->TryGetField(TEXT("type"));
+			if (TypeField.IsValid() && !bHasStringType)
+			{
+				AddAuditIssue(Issues, TEXT("warning"), Path + TEXT(".type"), TEXT("Non-string JSON schema type values may not be accepted by OpenAI function calling."));
+			}
+
+			if (bHasStringType && TypeString == TEXT("object"))
+			{
+				const TSharedPtr<FJsonValue> AdditionalProperties = SchemaObject->TryGetField(TEXT("additionalProperties"));
+				if (!AdditionalProperties.IsValid())
+				{
+					AddAuditIssue(Issues, TEXT("warning"), Path, TEXT("Object schema does not explicitly set additionalProperties=false."));
+				}
+				else if (AdditionalProperties->Type == EJson::Boolean)
+				{
+					if (AdditionalProperties->AsBool())
+					{
+						AddAuditIssue(Issues, TEXT("error"), Path + TEXT(".additionalProperties"), TEXT("additionalProperties=true is not accepted by the AI function interface."));
+						bCompatible = false;
+					}
+				}
+				else
+				{
+					AddAuditIssue(Issues, TEXT("warning"), Path + TEXT(".additionalProperties"), TEXT("additionalProperties should be boolean false for AI-facing tools."));
+				}
+
+				const TSharedPtr<FJsonObject>* PropertiesObject = nullptr;
+				if (SchemaObject->TryGetObjectField(TEXT("properties"), PropertiesObject) && PropertiesObject && (*PropertiesObject).IsValid())
+				{
+					for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : (*PropertiesObject)->Values)
+					{
+						bCompatible &= AnalyzeOpenAiSchemaValue(Pair.Value, Path + TEXT(".properties.") + Pair.Key, Issues);
+					}
+				}
+			}
+			else if (bHasStringType && TypeString == TEXT("array"))
+			{
+				const TSharedPtr<FJsonObject>* ItemsObject = nullptr;
+				if (SchemaObject->TryGetObjectField(TEXT("items"), ItemsObject) && ItemsObject && (*ItemsObject).IsValid())
+				{
+					bCompatible &= AnalyzeOpenAiSchemaObject(*ItemsObject, Path + TEXT(".items"), Issues);
+				}
+				else
+				{
+					AddAuditIssue(Issues, TEXT("warning"), Path + TEXT(".items"), TEXT("Array schema should define an object-valued items schema."));
+				}
+			}
+
+			return bCompatible;
+		}
+
+		bool AnalyzeOpenAiSchemaCompatibility(
+			const TSharedPtr<FJsonObject>& InputSchema,
+			TArray<TSharedPtr<FJsonValue>>& Issues,
+			FString& OutReason,
+			TSharedPtr<FJsonObject>& OutNormalizedSchema)
+		{
+			OutReason.Reset();
+			OutNormalizedSchema = NormalizeOpenAiSchemaObject(InputSchema);
+
+			bool bCompatible = AnalyzeOpenAiSchemaObject(OutNormalizedSchema, TEXT("inputSchema"), Issues);
+			FString ExistingCompatibilityReason;
+			if (!IsOpenAiSchemaCompatibleObject(OutNormalizedSchema, ExistingCompatibilityReason))
+			{
+				AddAuditIssue(Issues, TEXT("error"), TEXT("inputSchema"), ExistingCompatibilityReason);
+				bCompatible = false;
+			}
+
+			if (!bCompatible)
+			{
+				OutReason = ExistingCompatibilityReason.IsEmpty() ? TEXT("Schema contains AI-incompatible fields.") : ExistingCompatibilityReason;
+			}
+			return bCompatible;
+		}
+
+		TSharedPtr<FJsonObject> FindToolDefinitionByName(
+			const TArray<TSharedPtr<FJsonValue>>& ToolsArray,
+			const FString& ToolName)
+		{
+			for (const TSharedPtr<FJsonValue>& ToolValue : ToolsArray)
+			{
+				if (!ToolValue.IsValid() || ToolValue->Type != EJson::Object || !ToolValue->AsObject().IsValid())
+				{
+					continue;
+				}
+
+				TSharedPtr<FJsonObject> ToolObject = ToolValue->AsObject();
+				FString CandidateName;
+				if (ToolObject->TryGetStringField(TEXT("name"), CandidateName) && CandidateName == ToolName)
+				{
+					return ToolObject;
+				}
+			}
+
+			return nullptr;
+		}
+
+		FUnrealMcpExecutionResult ValidateMcpToolSchema(
+			const FJsonObject& Arguments,
+			const TArray<TSharedPtr<FJsonValue>>& ToolsArray)
+		{
+			FString ToolName;
+			FString SchemaJson;
+			bool bReturnNormalizedSchema = true;
+			Arguments.TryGetStringField(TEXT("toolName"), ToolName);
+			Arguments.TryGetStringField(TEXT("schemaJson"), SchemaJson);
+			Arguments.TryGetBoolField(TEXT("returnNormalizedSchema"), bReturnNormalizedSchema);
+			ToolName = ToolName.TrimStartAndEnd();
+			SchemaJson = SchemaJson.TrimStartAndEnd();
+
+			TSharedPtr<FJsonObject> InputSchema;
+			FString Source = TEXT("schemaJson");
+			if (!SchemaJson.IsEmpty())
+			{
+				if (!LoadJsonObject(SchemaJson, InputSchema) || !InputSchema.IsValid())
+				{
+					return MakeExecutionResult(TEXT("schemaJson must be a valid JSON object."), nullptr, true);
+				}
+			}
+			else
+			{
+				if (ToolName.IsEmpty())
+				{
+					return MakeExecutionResult(TEXT("Provide either schemaJson or toolName."), nullptr, true);
+				}
+
+				const TSharedPtr<FJsonObject> ToolObject = FindToolDefinitionByName(ToolsArray, ToolName);
+				if (!ToolObject.IsValid())
+				{
+					return MakeExecutionResult(FString::Printf(TEXT("Tool '%s' was not found in current tool definitions."), *ToolName), nullptr, true);
+				}
+
+				const TSharedPtr<FJsonObject>* SchemaObject = nullptr;
+				if (!ToolObject->TryGetObjectField(TEXT("inputSchema"), SchemaObject) || !SchemaObject || !(*SchemaObject).IsValid())
+				{
+					return MakeExecutionResult(FString::Printf(TEXT("Tool '%s' does not expose an inputSchema object."), *ToolName), nullptr, true);
+				}
+
+				InputSchema = *SchemaObject;
+				Source = TEXT("toolName");
+			}
+
+			TArray<TSharedPtr<FJsonValue>> Issues;
+			FString Reason;
+			TSharedPtr<FJsonObject> NormalizedSchema;
+			const bool bCompatible = AnalyzeOpenAiSchemaCompatibility(InputSchema, Issues, Reason, NormalizedSchema);
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("action"), TEXT("mcp_validate_tool_schema"));
+			StructuredContent->SetStringField(TEXT("source"), Source);
+			StructuredContent->SetStringField(TEXT("toolName"), ToolName);
+			StructuredContent->SetBoolField(TEXT("compatible"), bCompatible);
+			StructuredContent->SetStringField(TEXT("reason"), Reason);
+			StructuredContent->SetArrayField(TEXT("issues"), Issues);
+			if (bReturnNormalizedSchema && NormalizedSchema.IsValid())
+			{
+				StructuredContent->SetObjectField(TEXT("normalizedSchema"), NormalizedSchema);
+			}
+
+			const FString Text = bCompatible
+				? FString::Printf(TEXT("Schema is AI-compatible. warnings=%d"), Issues.Num())
+				: FString::Printf(TEXT("Schema is not AI-compatible: %s"), Reason.IsEmpty() ? TEXT("see issues") : *Reason);
+			return MakeExecutionResult(Text, StructuredContent, !bCompatible);
+		}
+
+		bool LoadProjectTextFile(const FString& ProjectRelativePath, FString& OutText)
+		{
+			const FString FullPath = FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectDir(), ProjectRelativePath));
+			return FFileHelper::LoadFileToString(OutText, *FullPath);
+		}
+
+		FUnrealMcpExecutionResult AuditMcpTools(const TArray<TSharedPtr<FJsonValue>>& ToolsArray)
+		{
+			FString SourceText;
+			FString PluginReadme;
+			FString RootReadme;
+			LoadProjectTextFile(TEXT("Plugins/UnrealMcp/Source/UnrealMcp/Private/UnrealMcpModule.cpp"), SourceText);
+			LoadProjectTextFile(TEXT("Plugins/UnrealMcp/README.md"), PluginReadme);
+			LoadProjectTextFile(TEXT("README.md"), RootReadme);
+
+			TArray<TSharedPtr<FJsonValue>> ToolReports;
+			TArray<FString> MissingHandlers;
+			TArray<FString> MissingDocs;
+			TArray<FString> IncompatibleSchemas;
+			int32 CompatibleCount = 0;
+			int32 WarningCount = 0;
+
+			for (const TSharedPtr<FJsonValue>& ToolValue : ToolsArray)
+			{
+				if (!ToolValue.IsValid() || ToolValue->Type != EJson::Object || !ToolValue->AsObject().IsValid())
+				{
+					continue;
+				}
+
+				TSharedPtr<FJsonObject> ToolObject = ToolValue->AsObject();
+				FString Name;
+				FString Title;
+				FString Description;
+				ToolObject->TryGetStringField(TEXT("name"), Name);
+				ToolObject->TryGetStringField(TEXT("title"), Title);
+				ToolObject->TryGetStringField(TEXT("description"), Description);
+
+				const FString HandlerNeedle = FString::Printf(TEXT("ToolName == TEXT(\"%s\")"), *Name);
+				const bool bHasHandler = SourceText.Contains(HandlerNeedle, ESearchCase::CaseSensitive);
+				const bool bDocumentedInPluginReadme = PluginReadme.Contains(Name, ESearchCase::CaseSensitive);
+				const bool bDocumentedInRootReadme = RootReadme.Contains(Name, ESearchCase::CaseSensitive);
+				const bool bDocumented = bDocumentedInPluginReadme || bDocumentedInRootReadme;
+
+				const TSharedPtr<FJsonObject>* SchemaObject = nullptr;
+				TArray<TSharedPtr<FJsonValue>> Issues;
+				FString Reason;
+				TSharedPtr<FJsonObject> NormalizedSchema;
+				bool bCompatible = true;
+				if (ToolObject->TryGetObjectField(TEXT("inputSchema"), SchemaObject) && SchemaObject && (*SchemaObject).IsValid())
+				{
+					bCompatible = AnalyzeOpenAiSchemaCompatibility(*SchemaObject, Issues, Reason, NormalizedSchema);
+				}
+				else
+				{
+					AddAuditIssue(Issues, TEXT("error"), TEXT("inputSchema"), TEXT("Tool definition does not include an inputSchema object."));
+					Reason = TEXT("missing inputSchema");
+					bCompatible = false;
+				}
+
+				if (bCompatible)
+				{
+					++CompatibleCount;
+				}
+				else
+				{
+					IncompatibleSchemas.Add(Name);
+				}
+				if (!bHasHandler)
+				{
+					MissingHandlers.Add(Name);
+				}
+				if (!bDocumented)
+				{
+					MissingDocs.Add(Name);
+				}
+				if (Issues.Num() > 0)
+				{
+					++WarningCount;
+				}
+
+				TSharedPtr<FJsonObject> ReportObject = MakeShared<FJsonObject>();
+				ReportObject->SetStringField(TEXT("name"), Name);
+				ReportObject->SetStringField(TEXT("title"), Title);
+				ReportObject->SetStringField(TEXT("description"), Description);
+				ReportObject->SetBoolField(TEXT("hasHandler"), bHasHandler);
+				ReportObject->SetBoolField(TEXT("documentedInPluginReadme"), bDocumentedInPluginReadme);
+				ReportObject->SetBoolField(TEXT("documentedInRootReadme"), bDocumentedInRootReadme);
+				ReportObject->SetBoolField(TEXT("schemaCompatible"), bCompatible);
+				ReportObject->SetStringField(TEXT("schemaReason"), Reason);
+				ReportObject->SetArrayField(TEXT("schemaIssues"), Issues);
+				ToolReports.Add(MakeShared<FJsonValueObject>(ReportObject));
+			}
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("action"), TEXT("mcp_tool_audit"));
+			StructuredContent->SetNumberField(TEXT("toolCount"), ToolsArray.Num());
+			StructuredContent->SetNumberField(TEXT("schemaCompatibleCount"), CompatibleCount);
+			StructuredContent->SetNumberField(TEXT("schemaIncompatibleCount"), IncompatibleSchemas.Num());
+			StructuredContent->SetNumberField(TEXT("toolsWithSchemaIssues"), WarningCount);
+			StructuredContent->SetNumberField(TEXT("missingHandlerCount"), MissingHandlers.Num());
+			StructuredContent->SetNumberField(TEXT("missingDocumentationCount"), MissingDocs.Num());
+			StructuredContent->SetArrayField(TEXT("tools"), ToolReports);
+
+			auto AddStringArray = [](TSharedPtr<FJsonObject> Object, const FString& FieldName, const TArray<FString>& Values)
+			{
+				TArray<TSharedPtr<FJsonValue>> JsonValues;
+				for (const FString& Value : Values)
+				{
+					JsonValues.Add(MakeShared<FJsonValueString>(Value));
+				}
+				Object->SetArrayField(FieldName, JsonValues);
+			};
+
+			AddStringArray(StructuredContent, TEXT("schemaIncompatibleTools"), IncompatibleSchemas);
+			AddStringArray(StructuredContent, TEXT("missingHandlerTools"), MissingHandlers);
+			AddStringArray(StructuredContent, TEXT("missingDocumentationTools"), MissingDocs);
+
+			const FString Text = FString::Printf(
+				TEXT("Audited %d MCP tools. schemaCompatible=%d incompatible=%d missingHandlers=%d missingDocs=%d"),
+				ToolsArray.Num(),
+				CompatibleCount,
+				IncompatibleSchemas.Num(),
+				MissingHandlers.Num(),
+				MissingDocs.Num());
+			return MakeExecutionResult(Text, StructuredContent, false);
+		}
+
+		FString GetProjectMemoryFilePath()
+		{
+			return FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UnrealMcp/ProjectMemory.json")));
+		}
+
+		TSharedPtr<FJsonObject> MakeEmptyProjectMemory()
+		{
+			TSharedPtr<FJsonObject> MemoryObject = MakeShared<FJsonObject>();
+			MemoryObject->SetNumberField(TEXT("version"), 1);
+			MemoryObject->SetStringField(TEXT("projectName"), FApp::GetProjectName());
+			MemoryObject->SetArrayField(TEXT("entries"), TArray<TSharedPtr<FJsonValue>>());
+			return MemoryObject;
+		}
+
+		bool LoadProjectMemory(TSharedPtr<FJsonObject>& OutMemory, FString& OutFailureReason)
+		{
+			const FString MemoryPath = GetProjectMemoryFilePath();
+			if (!FPaths::FileExists(MemoryPath))
+			{
+				OutMemory = MakeEmptyProjectMemory();
+				return true;
+			}
+
+			FString MemoryText;
+			if (!FFileHelper::LoadFileToString(MemoryText, *MemoryPath))
+			{
+				OutFailureReason = FString::Printf(TEXT("Failed to read project memory file '%s'."), *MemoryPath);
+				return false;
+			}
+
+			if (!LoadJsonObject(MemoryText, OutMemory) || !OutMemory.IsValid())
+			{
+				OutFailureReason = FString::Printf(TEXT("Project memory file '%s' is not valid JSON."), *MemoryPath);
+				return false;
+			}
+
+			const TArray<TSharedPtr<FJsonValue>>* Entries = nullptr;
+			if (!OutMemory->TryGetArrayField(TEXT("entries"), Entries) || !Entries)
+			{
+				OutMemory->SetArrayField(TEXT("entries"), TArray<TSharedPtr<FJsonValue>>());
+			}
+			return true;
+		}
+
+		bool SaveProjectMemory(const TSharedPtr<FJsonObject>& MemoryObject, FString& OutFailureReason)
+		{
+			const FString MemoryPath = GetProjectMemoryFilePath();
+			const FString Directory = FPaths::GetPath(MemoryPath);
+			if (!IFileManager::Get().MakeDirectory(*Directory, true))
+			{
+				OutFailureReason = FString::Printf(TEXT("Failed to create project memory directory '%s'."), *Directory);
+				return false;
+			}
+
+			FString MemoryText;
+			TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&MemoryText);
+			if (!FJsonSerializer::Serialize(MemoryObject.ToSharedRef(), Writer))
+			{
+				OutFailureReason = TEXT("Failed to serialize project memory JSON.");
+				return false;
+			}
+
+			if (!FFileHelper::SaveStringToFile(MemoryText, *MemoryPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+			{
+				OutFailureReason = FString::Printf(TEXT("Failed to write project memory file '%s'."), *MemoryPath);
+				return false;
+			}
+			return true;
+		}
+
+		FUnrealMcpExecutionResult ProjectMemoryWrite(const FJsonObject& Arguments)
+		{
+			FString Key = TEXT("current");
+			FString Summary;
+			FString Status;
+			FString NextStep;
+			FString ContentJson;
+			Arguments.TryGetStringField(TEXT("key"), Key);
+			Arguments.TryGetStringField(TEXT("summary"), Summary);
+			Arguments.TryGetStringField(TEXT("status"), Status);
+			Arguments.TryGetStringField(TEXT("nextStep"), NextStep);
+			Arguments.TryGetStringField(TEXT("contentJson"), ContentJson);
+			Key = Key.TrimStartAndEnd();
+			if (Key.IsEmpty())
+			{
+				return MakeExecutionResult(TEXT("key must not be empty."), nullptr, true);
+			}
+
+			TArray<FString> Tags;
+			TryGetStringArrayField(Arguments, TEXT("tags"), Tags);
+
+			TSharedPtr<FJsonObject> ContentObject = MakeShared<FJsonObject>();
+			if (!ContentJson.TrimStartAndEnd().IsEmpty())
+			{
+				if (!LoadJsonObject(ContentJson, ContentObject) || !ContentObject.IsValid())
+				{
+					return MakeExecutionResult(TEXT("contentJson must be a valid JSON object."), nullptr, true);
+				}
+			}
+
+			FString FailureReason;
+			TSharedPtr<FJsonObject> MemoryObject;
+			if (!LoadProjectMemory(MemoryObject, FailureReason))
+			{
+				return MakeExecutionResult(FailureReason, nullptr, true);
+			}
+
+			const FString Timestamp = FDateTime::UtcNow().ToIso8601();
+			TArray<TSharedPtr<FJsonValue>> Entries;
+			const TArray<TSharedPtr<FJsonValue>>* ExistingEntries = nullptr;
+			if (MemoryObject->TryGetArrayField(TEXT("entries"), ExistingEntries) && ExistingEntries)
+			{
+				Entries = *ExistingEntries;
+			}
+
+			int32 ExistingIndex = INDEX_NONE;
+			for (int32 Index = 0; Index < Entries.Num(); ++Index)
+			{
+				if (!Entries[Index].IsValid() || Entries[Index]->Type != EJson::Object || !Entries[Index]->AsObject().IsValid())
+				{
+					continue;
+				}
+
+				FString ExistingKey;
+				if (Entries[Index]->AsObject()->TryGetStringField(TEXT("key"), ExistingKey) && ExistingKey == Key)
+				{
+					ExistingIndex = Index;
+					break;
+				}
+			}
+
+			TArray<TSharedPtr<FJsonValue>> TagValues;
+			for (const FString& Tag : Tags)
+			{
+				TagValues.Add(MakeShared<FJsonValueString>(Tag));
+			}
+
+			TSharedPtr<FJsonObject> EntryObject = MakeShared<FJsonObject>();
+			EntryObject->SetStringField(TEXT("key"), Key);
+			EntryObject->SetStringField(TEXT("summary"), Summary);
+			EntryObject->SetStringField(TEXT("status"), Status);
+			EntryObject->SetStringField(TEXT("nextStep"), NextStep);
+			EntryObject->SetStringField(TEXT("updatedAtUtc"), Timestamp);
+			EntryObject->SetArrayField(TEXT("tags"), TagValues);
+			EntryObject->SetObjectField(TEXT("content"), ContentObject);
+
+			if (ExistingIndex == INDEX_NONE)
+			{
+				Entries.Add(MakeShared<FJsonValueObject>(EntryObject));
+			}
+			else
+			{
+				Entries[ExistingIndex] = MakeShared<FJsonValueObject>(EntryObject);
+			}
+
+			MemoryObject->SetStringField(TEXT("updatedAtUtc"), Timestamp);
+			MemoryObject->SetArrayField(TEXT("entries"), Entries);
+
+			if (!SaveProjectMemory(MemoryObject, FailureReason))
+			{
+				return MakeExecutionResult(FailureReason, nullptr, true);
+			}
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("action"), TEXT("project_memory_write"));
+			StructuredContent->SetStringField(TEXT("path"), GetProjectMemoryFilePath());
+			StructuredContent->SetStringField(TEXT("key"), Key);
+			StructuredContent->SetBoolField(TEXT("created"), ExistingIndex == INDEX_NONE);
+			StructuredContent->SetObjectField(TEXT("entry"), EntryObject);
+
+			return MakeExecutionResult(
+				FString::Printf(TEXT("Wrote project memory key '%s' to %s."), *Key, *GetProjectMemoryFilePath()),
+				StructuredContent,
+				false);
+		}
+
+		FUnrealMcpExecutionResult ProjectMemoryRead(const FJsonObject& Arguments)
+		{
+			FString Key;
+			bool bIncludeContent = true;
+			Arguments.TryGetStringField(TEXT("key"), Key);
+			Arguments.TryGetBoolField(TEXT("includeContent"), bIncludeContent);
+			Key = Key.TrimStartAndEnd();
+
+			FString FailureReason;
+			TSharedPtr<FJsonObject> MemoryObject;
+			if (!LoadProjectMemory(MemoryObject, FailureReason))
+			{
+				return MakeExecutionResult(FailureReason, nullptr, true);
+			}
+
+			TArray<TSharedPtr<FJsonValue>> MatchingEntries;
+			const TArray<TSharedPtr<FJsonValue>>* Entries = nullptr;
+			if (MemoryObject->TryGetArrayField(TEXT("entries"), Entries) && Entries)
+			{
+				for (const TSharedPtr<FJsonValue>& EntryValue : *Entries)
+				{
+					if (!EntryValue.IsValid() || EntryValue->Type != EJson::Object || !EntryValue->AsObject().IsValid())
+					{
+						continue;
+					}
+
+					TSharedPtr<FJsonObject> EntryObject = EntryValue->AsObject();
+					FString ExistingKey;
+					EntryObject->TryGetStringField(TEXT("key"), ExistingKey);
+					if (!Key.IsEmpty() && ExistingKey != Key)
+					{
+						continue;
+					}
+
+					if (bIncludeContent)
+					{
+						MatchingEntries.Add(MakeShared<FJsonValueObject>(EntryObject));
+					}
+					else
+					{
+						TSharedPtr<FJsonObject> SummaryObject = MakeShared<FJsonObject>();
+						SummaryObject->SetStringField(TEXT("key"), ExistingKey);
+						FString Summary;
+						FString Status;
+						FString NextStep;
+						FString UpdatedAtUtc;
+						EntryObject->TryGetStringField(TEXT("summary"), Summary);
+						EntryObject->TryGetStringField(TEXT("status"), Status);
+						EntryObject->TryGetStringField(TEXT("nextStep"), NextStep);
+						EntryObject->TryGetStringField(TEXT("updatedAtUtc"), UpdatedAtUtc);
+						SummaryObject->SetStringField(TEXT("summary"), Summary);
+						SummaryObject->SetStringField(TEXT("status"), Status);
+						SummaryObject->SetStringField(TEXT("nextStep"), NextStep);
+						SummaryObject->SetStringField(TEXT("updatedAtUtc"), UpdatedAtUtc);
+						MatchingEntries.Add(MakeShared<FJsonValueObject>(SummaryObject));
+					}
+				}
+			}
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("action"), TEXT("project_memory_read"));
+			StructuredContent->SetStringField(TEXT("path"), GetProjectMemoryFilePath());
+			StructuredContent->SetStringField(TEXT("key"), Key);
+			StructuredContent->SetNumberField(TEXT("entryCount"), MatchingEntries.Num());
+			StructuredContent->SetArrayField(TEXT("entries"), MatchingEntries);
+
+			const FString KeySuffix = Key.IsEmpty() ? FString() : FString::Printf(TEXT(" for key '%s'"), *Key);
+			return MakeExecutionResult(
+				FString::Printf(TEXT("Read %d project memory entr%s%s."),
+					MatchingEntries.Num(),
+					MatchingEntries.Num() == 1 ? TEXT("y") : TEXT("ies"),
+					*KeySuffix),
+				StructuredContent,
+				false);
+		}
+
+		FUnrealMcpExecutionResult ScaffoldRoundSystem(UEditorAssetSubsystem* EditorAssetSubsystem, const FJsonObject& Arguments)
+		{
 		FString RootArg;
 		Arguments.TryGetStringField(TEXT("rootPath"), RootArg);
 		const FString RootPath = NormalizeScaffoldRootPath(RootArg);
@@ -6279,7 +6888,70 @@ void FUnrealMcpModule::AppendToolDefinitions(TArray<TSharedPtr<FJsonValue>>& Too
 
 		{
 			TSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
-			PropertiesObject->SetObjectField(TEXT("path"), UnrealMcp::MakeStringProperty(TEXT("Blueprint asset path to compile.")));
+			PropertiesObject->SetObjectField(TEXT("toolName"), UnrealMcp::MakeStringProperty(TEXT("Existing MCP tool name to validate. Used when schemaJson is empty.")));
+			PropertiesObject->SetObjectField(TEXT("schemaJson"), UnrealMcp::MakeStringProperty(TEXT("Raw JSON object schema to validate. If set, this takes precedence over toolName.")));
+			PropertiesObject->SetObjectField(TEXT("returnNormalizedSchema"), UnrealMcp::MakeBoolProperty(TEXT("Whether to include the normalized schema in structured output."), true));
+
+			TSharedPtr<FJsonObject> InputSchema = UnrealMcp::MakeObjectSchema();
+			InputSchema->SetObjectField(TEXT("properties"), PropertiesObject);
+
+			UnrealMcp::AddToolDefinition(
+				ToolsArray,
+				TEXT("unreal.mcp_validate_tool_schema"),
+				TEXT("Validate MCP Tool Schema"),
+				TEXT("Checks whether a tool input schema is compatible with OpenAI function calling, including additionalProperties risks."),
+				InputSchema);
+		}
+
+		{
+			TSharedPtr<FJsonObject> InputSchema = UnrealMcp::MakeObjectSchema();
+			UnrealMcp::AddToolDefinition(
+				ToolsArray,
+				TEXT("unreal.mcp_tool_audit"),
+				TEXT("Audit MCP Tools"),
+				TEXT("Read-only audit of registered MCP tools, handlers, README documentation, and AI schema compatibility."),
+				InputSchema);
+		}
+
+		{
+			TSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
+			PropertiesObject->SetObjectField(TEXT("key"), UnrealMcp::MakeStringProperty(TEXT("Memory entry key."), TEXT("current")));
+			PropertiesObject->SetObjectField(TEXT("summary"), UnrealMcp::MakeStringProperty(TEXT("Short human-readable memory summary.")));
+			PropertiesObject->SetObjectField(TEXT("status"), UnrealMcp::MakeStringProperty(TEXT("Current status, for example pending, in_progress, blocked, or done.")));
+			PropertiesObject->SetObjectField(TEXT("nextStep"), UnrealMcp::MakeStringProperty(TEXT("Next action to resume after restart.")));
+			PropertiesObject->SetObjectField(TEXT("contentJson"), UnrealMcp::MakeStringProperty(TEXT("Optional JSON object payload with detailed state.")));
+			PropertiesObject->SetObjectField(TEXT("tags"), UnrealMcp::MakeStringArrayProperty(TEXT("Optional tags for this memory entry.")));
+
+			TSharedPtr<FJsonObject> InputSchema = UnrealMcp::MakeObjectSchema();
+			InputSchema->SetObjectField(TEXT("properties"), PropertiesObject);
+
+			UnrealMcp::AddToolDefinition(
+				ToolsArray,
+				TEXT("unreal.project_memory_write"),
+				TEXT("Project Memory Write"),
+				TEXT("Writes a resumable project memory entry under Saved/UnrealMcp for editor restart handoff."),
+				InputSchema);
+		}
+
+		{
+			TSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
+			PropertiesObject->SetObjectField(TEXT("key"), UnrealMcp::MakeStringProperty(TEXT("Optional memory entry key. Empty returns all entries.")));
+			PropertiesObject->SetObjectField(TEXT("includeContent"), UnrealMcp::MakeBoolProperty(TEXT("Whether to include detailed content payloads."), true));
+
+			TSharedPtr<FJsonObject> InputSchema = UnrealMcp::MakeObjectSchema();
+			InputSchema->SetObjectField(TEXT("properties"), PropertiesObject);
+
+			UnrealMcp::AddToolDefinition(
+				ToolsArray,
+				TEXT("unreal.project_memory_read"),
+				TEXT("Project Memory Read"),
+				TEXT("Reads resumable project memory entries from Saved/UnrealMcp."),
+				InputSchema);
+		}
+
+			{
+				TSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
+				PropertiesObject->SetObjectField(TEXT("path"), UnrealMcp::MakeStringProperty(TEXT("Blueprint asset path to compile.")));
 
 		TSharedPtr<FJsonObject> InputSchema = UnrealMcp::MakeObjectSchema();
 		InputSchema->SetObjectField(TEXT("properties"), PropertiesObject);
@@ -10129,20 +10801,44 @@ FUnrealMcpExecutionResult FUnrealMcpModule::ExecuteTool(const FString& ToolName,
 		return UnrealMcp::ScaffoldResultUi(EditorAssetSubsystem, Arguments);
 	}
 
-	if (ToolName == TEXT("unreal.scaffold_mcp_tool"))
-	{
-		if (UnrealMcp::IsEditorPlaying())
-		{
-			return UnrealMcp::MakePieBlockedResult(ToolName);
-		}
-		return UnrealMcp::ScaffoldMcpTool(Arguments);
-	}
-
-		if (ToolName == TEXT("unreal.compile_blueprint"))
+		if (ToolName == TEXT("unreal.scaffold_mcp_tool"))
 		{
 			if (UnrealMcp::IsEditorPlaying())
 			{
 				return UnrealMcp::MakePieBlockedResult(ToolName);
+			}
+			return UnrealMcp::ScaffoldMcpTool(Arguments);
+		}
+
+		if (ToolName == TEXT("unreal.mcp_validate_tool_schema"))
+		{
+			TArray<TSharedPtr<FJsonValue>> ToolsArray;
+			AppendToolDefinitions(ToolsArray);
+			return UnrealMcp::ValidateMcpToolSchema(Arguments, ToolsArray);
+		}
+
+		if (ToolName == TEXT("unreal.mcp_tool_audit"))
+		{
+			TArray<TSharedPtr<FJsonValue>> ToolsArray;
+			AppendToolDefinitions(ToolsArray);
+			return UnrealMcp::AuditMcpTools(ToolsArray);
+		}
+
+		if (ToolName == TEXT("unreal.project_memory_write"))
+		{
+			return UnrealMcp::ProjectMemoryWrite(Arguments);
+		}
+
+		if (ToolName == TEXT("unreal.project_memory_read"))
+		{
+			return UnrealMcp::ProjectMemoryRead(Arguments);
+		}
+
+			if (ToolName == TEXT("unreal.compile_blueprint"))
+			{
+				if (UnrealMcp::IsEditorPlaying())
+				{
+					return UnrealMcp::MakePieBlockedResult(ToolName);
 		}
 
 		if (!EditorAssetSubsystem)

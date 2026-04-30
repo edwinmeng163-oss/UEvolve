@@ -66,6 +66,10 @@ Editor action tools:
 - `unreal.scaffold_autobattler_ai`
 - `unreal.scaffold_result_ui`
 - `unreal.scaffold_mcp_tool`
+- `unreal.mcp_validate_tool_schema`
+- `unreal.mcp_tool_audit`
+- `unreal.project_memory_write`
+- `unreal.project_memory_read`
 - `unreal.save_dirty_packages`
 
 ## Endpoint
@@ -254,6 +258,26 @@ MCP tool extension scaffold example:
 ```
 
 This generates reviewable C++ snippets, a test request, and an integration checklist under `Tools/UnrealMcpToolScaffolds`. It does not hot-load C++ into the running editor; integrate the snippets, rebuild `MyProjectEditor`, and reopen the editor if needed.
+
+MCP extension safety checks:
+
+```text
+/tool unreal.mcp_validate_tool_schema {"toolName":"unreal.scaffold_mcp_tool"}
+```
+
+```text
+/tool unreal.mcp_tool_audit {}
+```
+
+Restart handoff memory:
+
+```text
+/tool unreal.project_memory_write {"key":"mcp_extension","summary":"Resume MCP extension work after editor restart.","status":"in_progress","nextStep":"Run tool audit after rebuild.","contentJson":"{\"target\":\"self-extension\"}","tags":["mcp","restart"]}
+```
+
+```text
+/tool unreal.project_memory_read {"key":"mcp_extension","includeContent":true}
+```
 
 ## Quick Test
 

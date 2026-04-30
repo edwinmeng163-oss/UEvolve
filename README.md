@@ -90,6 +90,11 @@ Unreal MCP currently supports:
   - `unreal.scaffold_result_ui`
 - MCP extension scaffolding:
   - `unreal.scaffold_mcp_tool`
+  - `unreal.mcp_validate_tool_schema`
+  - `unreal.mcp_tool_audit`
+- Restart-resilient project memory:
+  - `unreal.project_memory_write`
+  - `unreal.project_memory_read`
 - Saving dirty packages.
 
 ## In-Editor Chat Usage
@@ -148,6 +153,15 @@ Generated output includes:
 - Per-tool README.
 
 Current boundary: generated MCP tool snippets still need to be reviewed, integrated into the plugin source, compiled, and loaded by Unreal Editor. The project does not hot-load arbitrary new C++ tools into a running editor session.
+
+Useful first-stage extension checks:
+
+```text
+/tool unreal.mcp_validate_tool_schema {"toolName":"unreal.scaffold_mcp_tool"}
+/tool unreal.mcp_tool_audit {}
+/tool unreal.project_memory_write {"key":"mcp_extension","summary":"Resume MCP extension work after editor restart.","status":"in_progress","nextStep":"Run schema validation and tool audit after rebuilding.","contentJson":"{\"target\":\"self-extension\"}","tags":["mcp","restart"]}
+/tool unreal.project_memory_read {"key":"mcp_extension","includeContent":true}
+```
 
 ## Opening The Project
 
