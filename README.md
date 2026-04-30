@@ -93,6 +93,8 @@ Unreal MCP currently supports:
   - `unreal.mcp_validate_tool_schema`
   - `unreal.mcp_apply_scaffold`
   - `unreal.mcp_rollback_last_extension`
+  - `unreal.mcp_build_editor`
+  - `unreal.mcp_run_tool_test`
   - `unreal.mcp_tool_audit`
 - Restart-resilient project memory:
   - `unreal.project_memory_write`
@@ -163,10 +165,18 @@ Useful first-stage extension checks:
 /tool unreal.mcp_apply_scaffold {"toolName":"unreal.my_custom_tool","dryRun":true}
 /tool unreal.mcp_apply_scaffold {"toolName":"unreal.my_custom_tool","dryRun":false}
 /tool unreal.mcp_rollback_last_extension {"dryRun":true}
+/tool unreal.mcp_build_editor {"toolName":"unreal.my_custom_tool","scaffoldDir":"Tools/UnrealMcpToolScaffolds/my_custom_tool","writeProjectMemory":true}
+/tool unreal.mcp_run_tool_test {"memoryKey":"mcp.extension.build_test","readProjectMemory":true}
 /tool unreal.mcp_tool_audit {}
 /tool unreal.project_memory_write {"key":"mcp_extension","summary":"Resume MCP extension work after editor restart.","status":"in_progress","nextStep":"Run schema validation and tool audit after rebuilding.","contentJson":"{\"target\":\"self-extension\"}","tags":["mcp","restart"]}
 /tool unreal.project_memory_read {"key":"mcp_extension","includeContent":true}
 ```
+
+Build/test handoff note:
+
+- `unreal.mcp_build_editor` runs Unreal Build Tool for `MyProjectEditor`, captures a build log under `Saved/UnrealMcp/BuildLogs`, parses key error lines, and writes restart handoff state into project memory.
+- Because the tool is invoked from a running editor, newly compiled plugin code is not loaded until Unreal Editor is restarted.
+- After restart, `unreal.mcp_run_tool_test` can read the memory entry, locate the generated `TestRequest.json`, confirm the tool appears in `tools/list`, and execute the recorded `tools/call` request through the in-editor MCP handlers.
 
 ## Opening The Project
 

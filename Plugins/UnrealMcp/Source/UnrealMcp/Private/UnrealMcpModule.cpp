@@ -704,6 +704,16 @@ namespace UnrealMcp
 			return true;
 		}
 
+		TArray<TSharedPtr<FJsonValue>> MakeJsonStringArray(const TArray<FString>& Values)
+		{
+			TArray<TSharedPtr<FJsonValue>> JsonValues;
+			for (const FString& Value : Values)
+			{
+				JsonValues.Add(MakeShared<FJsonValueString>(Value));
+			}
+			return JsonValues;
+		}
+
 		bool TryGetObjectArrayField(const FJsonObject& Arguments, const FString& FieldName, TArray<TSharedPtr<FJsonObject>>& OutValues)
 		{
 			const TArray<TSharedPtr<FJsonValue>>* JsonArray = nullptr;
@@ -4652,6 +4662,321 @@ namespace UnrealMcp
 				false);
 		}
 
+		FString GetHostBuildPlatformName()
+		{
+#if PLATFORM_MAC
+			return TEXT("Mac");
+#elif PLATFORM_WINDOWS
+			return TEXT("Win64");
+#elif PLATFORM_LINUX
+			return TEXT("Linux");
+#else
+			return FPlatformProperties::PlatformName();
+#endif
+		}
+
+		FString GetUnrealBuildScriptPath()
+		{
+			const FString EngineDir = FPaths::ConvertRelativePathToFull(FPaths::EngineDir());
+#if PLATFORM_MAC
+			return FPaths::Combine(EngineDir, TEXT("Build/BatchFiles/Mac/Build.sh"));
+#elif PLATFORM_WINDOWS
+			return FPaths::Combine(EngineDir, TEXT("Build/BatchFiles/Build.bat"));
+#elif PLATFORM_LINUX
+			return FPaths::Combine(EngineDir, TEXT("Build/BatchFiles/Linux/Build.sh"));
+#else
+			return FPaths::Combine(EngineDir, TEXT("Build/BatchFiles/Build.sh"));
+#endif
+		}
+
+		FString QuoteCommandLineArgument(const FString& Value)
+		{
+			FString Escaped = Value;
+			Escaped.ReplaceInline(TEXT("\""), TEXT("\\\""));
+			return FString::Printf(TEXT("\"%s\""), *Escaped);
+		}
+
+		bool LooksLikeBuildErrorLine(const FString& Line)
+		{
+			const FString Lower = Line.ToLower();
+			return Lower.Contains(TEXT(": error"))
+				|| Lower.Contains(TEXT(" error c"))
+				|| Lower.Contains(TEXT("fatal error"))
+				|| Lower.Contains(TEXT(" error:"))
+				|| Lower.Contains(TEXT("error:"))
+				|| Lower.Contains(TEXT("error "));
+		}
+
+		bool LooksLikeImportantBuildLine(const FString& Line)
+		{
+			const FString Lower = Line.ToLower();
+			return LooksLikeBuildErrorLine(Line)
+				|| Lower.Contains(TEXT("warning"))
+				|| Lower.Contains(TEXT("result:"))
+				|| Lower.Contains(TEXT("total execution time"))
+				|| Lower.Contains(TEXT("failed"))
+				|| Lower.Contains(TEXT("succeeded"));
+		}
+
+		TSharedPtr<FJsonObject> MakeBuildLineObject(const FString& Line)
+		{
+			TSharedPtr<FJsonObject> LineObject = MakeShared<FJsonObject>();
+			LineObject->SetStringField(TEXT("raw"), Line.TrimStartAndEnd());
+
+			FString File;
+			int32 LineNumber = 0;
+			FString Message = Line.TrimStartAndEnd();
+
+			const int32 MsvcMarker = Line.Find(TEXT("): error"), ESearchCase::IgnoreCase);
+			if (MsvcMarker != INDEX_NONE)
+			{
+				const FString Prefix = Line.Left(MsvcMarker);
+				const int32 OpenParen = Prefix.Find(TEXT("("), ESearchCase::CaseSensitive, ESearchDir::FromEnd);
+				if (OpenParen != INDEX_NONE)
+				{
+					File = Prefix.Left(OpenParen);
+					const FString LinePart = Prefix.Mid(OpenParen + 1);
+					LexTryParseString(LineNumber, *LinePart);
+					Message = Line.Mid(MsvcMarker + 3).TrimStartAndEnd();
+				}
+			}
+
+			if (File.IsEmpty())
+			{
+				int32 ErrorMarker = Line.Find(TEXT(": error"), ESearchCase::IgnoreCase);
+				if (ErrorMarker == INDEX_NONE)
+				{
+					ErrorMarker = Line.Find(TEXT(": fatal error"), ESearchCase::IgnoreCase);
+				}
+				if (ErrorMarker != INDEX_NONE)
+				{
+					const FString Prefix = Line.Left(ErrorMarker);
+					Message = Line.Mid(ErrorMarker + 2).TrimStartAndEnd();
+
+					const int32 LastColon = Prefix.Find(TEXT(":"), ESearchCase::CaseSensitive, ESearchDir::FromEnd);
+					if (LastColon != INDEX_NONE)
+					{
+						const FString MaybeLine = Prefix.Mid(LastColon + 1);
+						if (LexTryParseString(LineNumber, *MaybeLine))
+						{
+							File = Prefix.Left(LastColon);
+						}
+						else
+						{
+							File = Prefix;
+						}
+					}
+					else
+					{
+						File = Prefix;
+					}
+				}
+			}
+
+			if (!File.TrimStartAndEnd().IsEmpty())
+			{
+				LineObject->SetStringField(TEXT("file"), File.TrimStartAndEnd());
+			}
+			if (LineNumber > 0)
+			{
+				LineObject->SetNumberField(TEXT("line"), LineNumber);
+			}
+			LineObject->SetStringField(TEXT("message"), Message);
+			return LineObject;
+		}
+
+		void ParseBuildLog(const FString& LogText, int32 ReturnCode, const TSharedPtr<FJsonObject>& StructuredContent)
+		{
+			TArray<FString> Lines;
+			LogText.ParseIntoArrayLines(Lines, false);
+
+			TArray<TSharedPtr<FJsonValue>> ErrorLines;
+			TArray<TSharedPtr<FJsonValue>> KeyLines;
+			for (const FString& Line : Lines)
+			{
+				if (LooksLikeBuildErrorLine(Line))
+				{
+					ErrorLines.Add(MakeShared<FJsonValueObject>(MakeBuildLineObject(Line)));
+				}
+
+				if (LooksLikeImportantBuildLine(Line))
+				{
+					KeyLines.Add(MakeShared<FJsonValueString>(Line.TrimStartAndEnd()));
+					if (KeyLines.Num() > 120)
+					{
+						KeyLines.RemoveAt(0);
+					}
+				}
+			}
+
+			const bool bSucceeded = ReturnCode == 0 && !LogText.Contains(TEXT("Result: Failed"), ESearchCase::IgnoreCase);
+			StructuredContent->SetBoolField(TEXT("succeeded"), bSucceeded);
+			StructuredContent->SetNumberField(TEXT("returnCode"), ReturnCode);
+			StructuredContent->SetNumberField(TEXT("errorCount"), ErrorLines.Num());
+			StructuredContent->SetArrayField(TEXT("errors"), ErrorLines);
+			StructuredContent->SetArrayField(TEXT("keyLogLines"), KeyLines);
+		}
+
+		void WriteBuildTestMemory(
+			const FString& MemoryKey,
+			const FString& Summary,
+			const FString& Status,
+			const FString& NextStep,
+			const TSharedPtr<FJsonObject>& ContentObject)
+		{
+			TSharedPtr<FJsonObject> MemoryArgs = MakeShared<FJsonObject>();
+			MemoryArgs->SetStringField(TEXT("key"), MemoryKey);
+			MemoryArgs->SetStringField(TEXT("summary"), Summary);
+			MemoryArgs->SetStringField(TEXT("status"), Status);
+			MemoryArgs->SetStringField(TEXT("nextStep"), NextStep);
+			MemoryArgs->SetStringField(TEXT("contentJson"), JsonObjectToString(ContentObject));
+			MemoryArgs->SetArrayField(TEXT("tags"), MakeJsonStringArray({ TEXT("mcp"), TEXT("build"), TEXT("test"), TEXT("restart") }));
+			ProjectMemoryWrite(*MemoryArgs);
+		}
+
+		FUnrealMcpExecutionResult BuildEditor(const FJsonObject& Arguments)
+		{
+			FString Target = FString::Printf(TEXT("%sEditor"), FApp::GetProjectName());
+			FString Platform = GetHostBuildPlatformName();
+			FString Configuration = TEXT("Development");
+			FString ExtraArgs;
+			FString ToolName;
+			FString TestRequestPath;
+			FString ScaffoldDir;
+			FString MemoryKey = TEXT("mcp.extension.build_test");
+			bool bWriteProjectMemory = true;
+
+			Arguments.TryGetStringField(TEXT("target"), Target);
+			Arguments.TryGetStringField(TEXT("platform"), Platform);
+			Arguments.TryGetStringField(TEXT("configuration"), Configuration);
+			Arguments.TryGetStringField(TEXT("extraArgs"), ExtraArgs);
+			Arguments.TryGetStringField(TEXT("toolName"), ToolName);
+			Arguments.TryGetStringField(TEXT("testRequestPath"), TestRequestPath);
+			Arguments.TryGetStringField(TEXT("scaffoldDir"), ScaffoldDir);
+			Arguments.TryGetStringField(TEXT("memoryKey"), MemoryKey);
+			Arguments.TryGetBoolField(TEXT("writeProjectMemory"), bWriteProjectMemory);
+
+			Target = Target.TrimStartAndEnd();
+			Platform = Platform.TrimStartAndEnd();
+			Configuration = Configuration.TrimStartAndEnd();
+			MemoryKey = MemoryKey.TrimStartAndEnd();
+			if (Target.IsEmpty() || Platform.IsEmpty() || Configuration.IsEmpty())
+			{
+				return MakeExecutionResult(TEXT("target, platform, and configuration must not be empty."), nullptr, true);
+			}
+			if (MemoryKey.IsEmpty())
+			{
+				MemoryKey = TEXT("mcp.extension.build_test");
+			}
+
+			const FString BuildScriptPath = GetUnrealBuildScriptPath();
+			if (!FPaths::FileExists(BuildScriptPath))
+			{
+				return MakeExecutionResult(FString::Printf(TEXT("Unreal Build script was not found: %s"), *BuildScriptPath), nullptr, true);
+			}
+
+			FString ProjectFilePath = FPaths::GetProjectFilePath();
+			if (ProjectFilePath.IsEmpty())
+			{
+				ProjectFilePath = FPaths::Combine(FPaths::ProjectDir(), FString::Printf(TEXT("%s.uproject"), FApp::GetProjectName()));
+			}
+			ProjectFilePath = FPaths::ConvertRelativePathToFull(ProjectFilePath);
+
+			const FString Timestamp = FDateTime::UtcNow().ToString(TEXT("%Y%m%d-%H%M%S"));
+			const FString BuildLogDirectory = FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UnrealMcp/BuildLogs")));
+			IFileManager::Get().MakeDirectory(*BuildLogDirectory, true);
+			const FString BuildLogPath = FPaths::Combine(BuildLogDirectory, FString::Printf(TEXT("Build_%s_%s_%s.log"), *Target, *Configuration, *Timestamp));
+
+			if (TestRequestPath.TrimStartAndEnd().IsEmpty() && !ScaffoldDir.TrimStartAndEnd().IsEmpty())
+			{
+				FString ResolvedScaffoldDir;
+				FString ResolveFailure;
+				if (ResolveProjectPathInsideProject(ScaffoldDir, ResolvedScaffoldDir, ResolveFailure))
+				{
+					TestRequestPath = FPaths::Combine(ResolvedScaffoldDir, TEXT("TestRequest.json"));
+				}
+			}
+
+			TSharedPtr<FJsonObject> MemoryContent = MakeShared<FJsonObject>();
+			MemoryContent->SetStringField(TEXT("target"), Target);
+			MemoryContent->SetStringField(TEXT("platform"), Platform);
+			MemoryContent->SetStringField(TEXT("configuration"), Configuration);
+			MemoryContent->SetStringField(TEXT("toolName"), ToolName);
+			MemoryContent->SetStringField(TEXT("testRequestPath"), TestRequestPath);
+			MemoryContent->SetStringField(TEXT("scaffoldDir"), ScaffoldDir);
+			MemoryContent->SetStringField(TEXT("buildLogPath"), BuildLogPath);
+			MemoryContent->SetBoolField(TEXT("editorWasRunningDuringBuild"), true);
+			MemoryContent->SetBoolField(TEXT("editorRestartRequiredBeforeTestingNewTools"), true);
+			MemoryContent->SetStringField(TEXT("recommendation"), TEXT("Restart Unreal Editor after a successful plugin build before running unreal.mcp_run_tool_test for newly added tools."));
+
+			if (bWriteProjectMemory)
+			{
+				WriteBuildTestMemory(
+					MemoryKey,
+					TEXT("Waiting for Unreal Editor restart before MCP tool testing."),
+					TEXT("waiting_for_editor_restart_after_build"),
+					TEXT("If build succeeds, restart Unreal Editor, then run unreal.mcp_run_tool_test with this memoryKey."),
+					MemoryContent);
+			}
+
+			const FString Params = FString::Printf(
+				TEXT("%s %s %s -Project=%s -WaitMutex%s%s"),
+				*Target,
+				*Platform,
+				*Configuration,
+				*QuoteCommandLineArgument(ProjectFilePath),
+				ExtraArgs.TrimStartAndEnd().IsEmpty() ? TEXT("") : TEXT(" "),
+				*ExtraArgs.TrimStartAndEnd());
+
+			int32 ReturnCode = -1;
+			FString StdOut;
+			FString StdErr;
+			const bool bLaunched = FPlatformProcess::ExecProcess(
+				*BuildScriptPath,
+				*Params,
+				&ReturnCode,
+				&StdOut,
+				&StdErr,
+				*FPaths::ConvertRelativePathToFull(FPaths::EngineDir()));
+
+			const FString CombinedLog = StdOut + (StdErr.IsEmpty() ? FString() : FString::Printf(TEXT("\n\n[stderr]\n%s"), *StdErr));
+			FFileHelper::SaveStringToFile(CombinedLog, *BuildLogPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("action"), TEXT("mcp_build_editor"));
+			StructuredContent->SetStringField(TEXT("target"), Target);
+			StructuredContent->SetStringField(TEXT("platform"), Platform);
+			StructuredContent->SetStringField(TEXT("configuration"), Configuration);
+			StructuredContent->SetStringField(TEXT("extraArgs"), ExtraArgs);
+			StructuredContent->SetStringField(TEXT("projectFile"), ProjectFilePath);
+			StructuredContent->SetStringField(TEXT("buildScript"), BuildScriptPath);
+			StructuredContent->SetStringField(TEXT("buildLogPath"), BuildLogPath);
+			StructuredContent->SetBoolField(TEXT("launched"), bLaunched);
+			StructuredContent->SetBoolField(TEXT("editorRunningDuringBuild"), true);
+			StructuredContent->SetBoolField(TEXT("editorRestartRequiredBeforeTestingNewTools"), true);
+			StructuredContent->SetStringField(TEXT("restartAdvice"), TEXT("The editor is running because this tool is invoked from Chat. A successful plugin build still requires restarting Unreal Editor before new tool definitions are loaded."));
+
+			ParseBuildLog(CombinedLog, bLaunched ? ReturnCode : -1, StructuredContent);
+			const bool bSucceeded = StructuredContent->GetBoolField(TEXT("succeeded"));
+
+			MemoryContent->SetBoolField(TEXT("buildSucceeded"), bSucceeded);
+			MemoryContent->SetNumberField(TEXT("returnCode"), bLaunched ? ReturnCode : -1);
+			if (bWriteProjectMemory)
+			{
+				WriteBuildTestMemory(
+					MemoryKey,
+					bSucceeded ? TEXT("Editor build succeeded; restart before MCP tool test.") : TEXT("Editor build failed; inspect parsed errors and build log."),
+					bSucceeded ? TEXT("build_succeeded_restart_required") : TEXT("build_failed"),
+					bSucceeded ? TEXT("Restart Unreal Editor, then run unreal.mcp_run_tool_test.") : TEXT("Fix compile errors, then rerun unreal.mcp_build_editor."),
+					MemoryContent);
+			}
+
+			const FString Text = bSucceeded
+				? FString::Printf(TEXT("Build succeeded for %s %s %s. Restart Unreal Editor before testing newly compiled MCP tools."), *Target, *Platform, *Configuration)
+				: FString::Printf(TEXT("Build failed for %s %s %s. See parsed errors and log: %s"), *Target, *Platform, *Configuration, *BuildLogPath);
+			return MakeExecutionResult(Text, StructuredContent, !bSucceeded);
+		}
+
 			FUnrealMcpExecutionResult ScaffoldRoundSystem(UEditorAssetSubsystem* EditorAssetSubsystem, const FJsonObject& Arguments)
 			{
 		FString RootArg;
@@ -7623,6 +7948,52 @@ void FUnrealMcpModule::AppendToolDefinitions(TArray<TSharedPtr<FJsonValue>>& Too
 				TEXT("unreal.mcp_rollback_last_extension"),
 				TEXT("Rollback Last MCP Extension"),
 				TEXT("Restores UnrealMcpModule.cpp from the last mcp_apply_scaffold backup, with hash safety checks."),
+				InputSchema);
+		}
+
+		{
+			TSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
+			PropertiesObject->SetObjectField(TEXT("target"), UnrealMcp::MakeStringProperty(TEXT("UBT target to build."), FString::Printf(TEXT("%sEditor"), FApp::GetProjectName())));
+			PropertiesObject->SetObjectField(TEXT("platform"), UnrealMcp::MakeStringProperty(TEXT("UBT platform. Empty/default uses the host editor platform."), UnrealMcp::GetHostBuildPlatformName()));
+			PropertiesObject->SetObjectField(TEXT("configuration"), UnrealMcp::MakeStringProperty(TEXT("UBT configuration."), TEXT("Development")));
+			PropertiesObject->SetObjectField(TEXT("extraArgs"), UnrealMcp::MakeStringProperty(TEXT("Optional additional UBT arguments appended to the build command.")));
+			PropertiesObject->SetObjectField(TEXT("toolName"), UnrealMcp::MakeStringProperty(TEXT("Optional newly integrated tool name to persist into project memory for post-restart testing.")));
+			PropertiesObject->SetObjectField(TEXT("testRequestPath"), UnrealMcp::MakeStringProperty(TEXT("Optional project-local TestRequest.json path to persist for post-restart testing.")));
+			PropertiesObject->SetObjectField(TEXT("scaffoldDir"), UnrealMcp::MakeStringProperty(TEXT("Optional scaffold directory. If testRequestPath is empty, scaffoldDir/TestRequest.json is remembered.")));
+			PropertiesObject->SetObjectField(TEXT("memoryKey"), UnrealMcp::MakeStringProperty(TEXT("Project memory key used for restart handoff."), TEXT("mcp.extension.build_test")));
+			PropertiesObject->SetObjectField(TEXT("writeProjectMemory"), UnrealMcp::MakeBoolProperty(TEXT("Whether to write restart handoff state before and after the build."), true));
+
+			TSharedPtr<FJsonObject> InputSchema = UnrealMcp::MakeObjectSchema();
+			InputSchema->SetObjectField(TEXT("properties"), PropertiesObject);
+
+			UnrealMcp::AddToolDefinition(
+				ToolsArray,
+				TEXT("unreal.mcp_build_editor"),
+				TEXT("Build Editor"),
+				TEXT("Runs Unreal Build Tool for the editor target, captures build logs, parses errors, and writes restart handoff state for MCP extension testing."),
+				InputSchema);
+		}
+
+		{
+			TSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
+			PropertiesObject->SetObjectField(TEXT("toolName"), UnrealMcp::MakeStringProperty(TEXT("Optional tool name. If empty, read from TestRequest.json or project memory.")));
+			PropertiesObject->SetObjectField(TEXT("testRequestPath"), UnrealMcp::MakeStringProperty(TEXT("Project-relative or absolute TestRequest.json path.")));
+			PropertiesObject->SetObjectField(TEXT("scaffoldDir"), UnrealMcp::MakeStringProperty(TEXT("Project-relative or absolute scaffold directory containing TestRequest.json.")));
+			PropertiesObject->SetObjectField(TEXT("outputRoot"), UnrealMcp::MakeStringProperty(TEXT("Project-relative scaffold root used with toolName if no testRequestPath/scaffoldDir is provided."), TEXT("Tools/UnrealMcpToolScaffolds")));
+			PropertiesObject->SetObjectField(TEXT("memoryKey"), UnrealMcp::MakeStringProperty(TEXT("Project memory key used to resume after editor restart."), TEXT("mcp.extension.build_test")));
+			PropertiesObject->SetObjectField(TEXT("readProjectMemory"), UnrealMcp::MakeBoolProperty(TEXT("Whether to read test path/tool name from project memory when arguments are omitted."), true));
+			PropertiesObject->SetObjectField(TEXT("writeProjectMemory"), UnrealMcp::MakeBoolProperty(TEXT("Whether to write test result back to project memory."), true));
+			PropertiesObject->SetObjectField(TEXT("expectToolListed"), UnrealMcp::MakeBoolProperty(TEXT("Whether missing tools/list entry should fail the test."), true));
+			PropertiesObject->SetObjectField(TEXT("executeTool"), UnrealMcp::MakeBoolProperty(TEXT("Whether to execute the tools/call request from TestRequest.json after tools/list check."), true));
+
+			TSharedPtr<FJsonObject> InputSchema = UnrealMcp::MakeObjectSchema();
+			InputSchema->SetObjectField(TEXT("properties"), PropertiesObject);
+
+			UnrealMcp::AddToolDefinition(
+				ToolsArray,
+				TEXT("unreal.mcp_run_tool_test"),
+				TEXT("Run MCP Tool Test"),
+				TEXT("Reads a generated TestRequest.json, checks whether the tool is listed, executes the tool call through in-editor MCP handlers, and records the result."),
 				InputSchema);
 		}
 
@@ -11529,6 +11900,16 @@ FUnrealMcpExecutionResult FUnrealMcpModule::ExecuteTool(const FString& ToolName,
 			return UnrealMcp::RollbackLastMcpExtension(Arguments);
 		}
 
+		if (ToolName == TEXT("unreal.mcp_build_editor"))
+		{
+			return UnrealMcp::BuildEditor(Arguments);
+		}
+
+		if (ToolName == TEXT("unreal.mcp_run_tool_test"))
+		{
+			return RunMcpToolTest(Arguments);
+		}
+
 				if (ToolName == TEXT("unreal.compile_blueprint"))
 				{
 					if (UnrealMcp::IsEditorPlaying())
@@ -12454,6 +12835,252 @@ FUnrealMcpExecutionResult FUnrealMcpModule::ExecuteChatCommand(const FString& In
 
 		return UnrealMcp::MakeExecutionResult(TEXT("Unknown command. Try /help."), nullptr, true);
 	}
+
+FUnrealMcpExecutionResult FUnrealMcpModule::RunMcpToolTest(const FJsonObject& Arguments) const
+{
+	FString ToolName;
+	FString TestRequestPath;
+	FString ScaffoldDir;
+	FString OutputRoot = TEXT("Tools/UnrealMcpToolScaffolds");
+	FString MemoryKey = TEXT("mcp.extension.build_test");
+	bool bReadProjectMemory = true;
+	bool bWriteProjectMemory = true;
+	bool bExecuteTool = true;
+	bool bExpectToolListed = true;
+
+	Arguments.TryGetStringField(TEXT("toolName"), ToolName);
+	Arguments.TryGetStringField(TEXT("testRequestPath"), TestRequestPath);
+	Arguments.TryGetStringField(TEXT("scaffoldDir"), ScaffoldDir);
+	Arguments.TryGetStringField(TEXT("outputRoot"), OutputRoot);
+	Arguments.TryGetStringField(TEXT("memoryKey"), MemoryKey);
+	Arguments.TryGetBoolField(TEXT("readProjectMemory"), bReadProjectMemory);
+	Arguments.TryGetBoolField(TEXT("writeProjectMemory"), bWriteProjectMemory);
+	Arguments.TryGetBoolField(TEXT("executeTool"), bExecuteTool);
+	Arguments.TryGetBoolField(TEXT("expectToolListed"), bExpectToolListed);
+
+	ToolName = ToolName.TrimStartAndEnd();
+	TestRequestPath = TestRequestPath.TrimStartAndEnd();
+	ScaffoldDir = ScaffoldDir.TrimStartAndEnd();
+	MemoryKey = MemoryKey.TrimStartAndEnd();
+	if (MemoryKey.IsEmpty())
+	{
+		MemoryKey = TEXT("mcp.extension.build_test");
+	}
+
+	TSharedPtr<FJsonObject> MemoryContent = MakeShared<FJsonObject>();
+	if (bReadProjectMemory)
+	{
+		FString FailureReason;
+		TSharedPtr<FJsonObject> MemoryObject;
+		if (UnrealMcp::LoadProjectMemory(MemoryObject, FailureReason) && MemoryObject.IsValid())
+		{
+			const TArray<TSharedPtr<FJsonValue>>* Entries = nullptr;
+			if (MemoryObject->TryGetArrayField(TEXT("entries"), Entries) && Entries)
+			{
+				for (const TSharedPtr<FJsonValue>& EntryValue : *Entries)
+				{
+					if (!EntryValue.IsValid() || EntryValue->Type != EJson::Object || !EntryValue->AsObject().IsValid())
+					{
+						continue;
+					}
+
+					TSharedPtr<FJsonObject> EntryObject = EntryValue->AsObject();
+					FString ExistingKey;
+					if (!EntryObject->TryGetStringField(TEXT("key"), ExistingKey) || ExistingKey != MemoryKey)
+					{
+						continue;
+					}
+
+					const TSharedPtr<FJsonObject>* ContentObject = nullptr;
+					if (EntryObject->TryGetObjectField(TEXT("content"), ContentObject) && ContentObject && (*ContentObject).IsValid())
+					{
+						MemoryContent = *ContentObject;
+						if (ToolName.IsEmpty())
+						{
+							MemoryContent->TryGetStringField(TEXT("toolName"), ToolName);
+						}
+						if (TestRequestPath.IsEmpty())
+						{
+							MemoryContent->TryGetStringField(TEXT("testRequestPath"), TestRequestPath);
+						}
+						if (ScaffoldDir.IsEmpty())
+						{
+							MemoryContent->TryGetStringField(TEXT("scaffoldDir"), ScaffoldDir);
+						}
+					}
+					break;
+				}
+			}
+		}
+	}
+
+	if (TestRequestPath.IsEmpty())
+	{
+		if (!ScaffoldDir.IsEmpty())
+		{
+			FString ResolvedScaffoldDir;
+			FString FailureReason;
+			if (!UnrealMcp::ResolveProjectPathInsideProject(ScaffoldDir, ResolvedScaffoldDir, FailureReason))
+			{
+				return UnrealMcp::MakeExecutionResult(FailureReason, nullptr, true);
+			}
+			TestRequestPath = FPaths::Combine(ResolvedScaffoldDir, TEXT("TestRequest.json"));
+		}
+		else if (!ToolName.IsEmpty())
+		{
+			FString ResolvedOutputRoot;
+			FString FailureReason;
+			if (!UnrealMcp::ResolveProjectOutputDirectory(OutputRoot, ResolvedOutputRoot, FailureReason))
+			{
+				return UnrealMcp::MakeExecutionResult(FailureReason, nullptr, true);
+			}
+			TestRequestPath = FPaths::Combine(ResolvedOutputRoot, UnrealMcp::SanitizeMcpToolIdForPath(ToolName), TEXT("TestRequest.json"));
+		}
+	}
+
+	FString ResolvedTestRequestPath;
+	FString ResolveFailure;
+	if (!UnrealMcp::ResolveProjectPathInsideProject(TestRequestPath, ResolvedTestRequestPath, ResolveFailure))
+	{
+		return UnrealMcp::MakeExecutionResult(ResolveFailure, nullptr, true);
+	}
+
+	FString TestRequestText;
+	if (!FFileHelper::LoadFileToString(TestRequestText, *ResolvedTestRequestPath))
+	{
+		return UnrealMcp::MakeExecutionResult(FString::Printf(TEXT("Failed to read TestRequest.json at '%s'."), *ResolvedTestRequestPath), nullptr, true);
+	}
+
+	TSharedPtr<FJsonObject> TestRequestObject;
+	if (!UnrealMcp::LoadJsonObject(TestRequestText, TestRequestObject) || !TestRequestObject.IsValid())
+	{
+		return UnrealMcp::MakeExecutionResult(FString::Printf(TEXT("Test request '%s' is not valid JSON."), *ResolvedTestRequestPath), nullptr, true);
+	}
+
+	FString Method;
+	TestRequestObject->TryGetStringField(TEXT("method"), Method);
+	if (!Method.IsEmpty() && Method != TEXT("tools/call"))
+	{
+		return UnrealMcp::MakeExecutionResult(TEXT("TestRequest.json must use JSON-RPC method tools/call."), nullptr, true);
+	}
+
+	const TSharedPtr<FJsonObject>* ParamsObject = nullptr;
+	if (!TestRequestObject->TryGetObjectField(TEXT("params"), ParamsObject) || !ParamsObject || !(*ParamsObject).IsValid())
+	{
+		return UnrealMcp::MakeExecutionResult(TEXT("TestRequest.json is missing params object."), nullptr, true);
+	}
+
+	FString RequestToolName;
+	(*ParamsObject)->TryGetStringField(TEXT("name"), RequestToolName);
+	RequestToolName = RequestToolName.TrimStartAndEnd();
+	if (RequestToolName.IsEmpty())
+	{
+		RequestToolName = ToolName;
+	}
+	if (RequestToolName.IsEmpty())
+	{
+		return UnrealMcp::MakeExecutionResult(TEXT("Unable to determine tool name from arguments, project memory, or TestRequest.json."), nullptr, true);
+	}
+
+	const TSharedPtr<FJsonObject>* RequestArgumentsObject = nullptr;
+	const TSharedPtr<FJsonObject> EmptyArguments = UnrealMcp::MakeEmptyObject();
+	const FJsonObject& RequestArguments = ((*ParamsObject)->TryGetObjectField(TEXT("arguments"), RequestArgumentsObject) && RequestArgumentsObject && (*RequestArgumentsObject).IsValid())
+		? **RequestArgumentsObject
+		: *EmptyArguments;
+
+	TArray<TSharedPtr<FJsonValue>> ToolsArray;
+	AppendToolDefinitions(ToolsArray);
+
+	bool bToolListed = false;
+	TSharedPtr<FJsonObject> ListedToolObject;
+	for (const TSharedPtr<FJsonValue>& ToolValue : ToolsArray)
+	{
+		if (!ToolValue.IsValid() || ToolValue->Type != EJson::Object || !ToolValue->AsObject().IsValid())
+		{
+			continue;
+		}
+
+		FString ListedName;
+		if (ToolValue->AsObject()->TryGetStringField(TEXT("name"), ListedName) && ListedName == RequestToolName)
+		{
+			bToolListed = true;
+			ListedToolObject = ToolValue->AsObject();
+			break;
+		}
+	}
+
+	bool bToolExecuted = false;
+	FUnrealMcpExecutionResult ToolResult;
+	if (bExecuteTool && bToolListed)
+	{
+		ToolResult = ExecuteTool(RequestToolName, RequestArguments);
+		bToolExecuted = true;
+	}
+
+	TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+	StructuredContent->SetStringField(TEXT("action"), TEXT("mcp_run_tool_test"));
+	StructuredContent->SetStringField(TEXT("toolName"), RequestToolName);
+	StructuredContent->SetStringField(TEXT("testRequestPath"), ResolvedTestRequestPath);
+	StructuredContent->SetStringField(TEXT("memoryKey"), MemoryKey);
+	StructuredContent->SetStringField(TEXT("endpointMode"), TEXT("in_process_mcp_handlers"));
+	StructuredContent->SetStringField(TEXT("endpointNote"), TEXT("tools/list and tools/call are exercised through the same in-editor MCP handlers. A network self-call to tools/call from inside tools/call would deadlock on the editor game thread."));
+	StructuredContent->SetNumberField(TEXT("toolCount"), ToolsArray.Num());
+	StructuredContent->SetBoolField(TEXT("toolListed"), bToolListed);
+	StructuredContent->SetBoolField(TEXT("toolExecuted"), bToolExecuted);
+	StructuredContent->SetBoolField(TEXT("expectToolListed"), bExpectToolListed);
+	if (ListedToolObject.IsValid())
+	{
+		StructuredContent->SetObjectField(TEXT("listedTool"), ListedToolObject);
+	}
+	if (bToolExecuted)
+	{
+		StructuredContent->SetBoolField(TEXT("toolCallIsError"), ToolResult.bIsError);
+		StructuredContent->SetStringField(TEXT("toolCallText"), ToolResult.Text);
+		if (ToolResult.StructuredContent.IsValid())
+		{
+			StructuredContent->SetObjectField(TEXT("toolCallStructuredContent"), ToolResult.StructuredContent);
+		}
+	}
+
+	const bool bSucceeded = (!bExpectToolListed || bToolListed) && (!bExecuteTool || (bToolExecuted && !ToolResult.bIsError));
+	StructuredContent->SetBoolField(TEXT("succeeded"), bSucceeded);
+
+	if (bWriteProjectMemory)
+	{
+		TSharedPtr<FJsonObject> UpdatedMemoryContent = MakeShared<FJsonObject>();
+		UpdatedMemoryContent->SetStringField(TEXT("toolName"), RequestToolName);
+		UpdatedMemoryContent->SetStringField(TEXT("testRequestPath"), ResolvedTestRequestPath);
+		UpdatedMemoryContent->SetBoolField(TEXT("toolListed"), bToolListed);
+		UpdatedMemoryContent->SetBoolField(TEXT("toolExecuted"), bToolExecuted);
+		UpdatedMemoryContent->SetBoolField(TEXT("testSucceeded"), bSucceeded);
+		UnrealMcp::WriteBuildTestMemory(
+			MemoryKey,
+			bSucceeded ? TEXT("MCP tool test succeeded.") : TEXT("MCP tool test failed or tool is not loaded."),
+			bSucceeded ? TEXT("tool_test_succeeded") : TEXT("tool_test_failed"),
+			bSucceeded ? TEXT("Continue with tool audit or next MCP extension stage.") : TEXT("If the tool is missing, restart Unreal Editor after a successful build, then rerun unreal.mcp_run_tool_test."),
+			UpdatedMemoryContent);
+	}
+
+	FString Text;
+	if (!bToolListed)
+	{
+		Text = FString::Printf(TEXT("Tool '%s' was not found in tools/list."), *RequestToolName);
+	}
+	else if (!bExecuteTool)
+	{
+		Text = FString::Printf(TEXT("Tool '%s' is listed. Execution was skipped by request."), *RequestToolName);
+	}
+	else
+	{
+		Text = FString::Printf(TEXT("Tool '%s' listed=%s executed=%s isError=%s."),
+			*RequestToolName,
+			bToolListed ? TEXT("true") : TEXT("false"),
+			bToolExecuted ? TEXT("true") : TEXT("false"),
+			ToolResult.bIsError ? TEXT("true") : TEXT("false"));
+	}
+
+	return UnrealMcp::MakeExecutionResult(Text, StructuredContent, !bSucceeded);
+}
 
 TSharedRef<IUnrealMcpAssistantHandle, ESPMode::ThreadSafe> FUnrealMcpModule::ExecuteAssistantTurnAsync(
 	const FString& UserPrompt,

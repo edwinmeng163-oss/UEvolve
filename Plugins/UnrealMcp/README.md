@@ -69,6 +69,8 @@ Editor action tools:
 - `unreal.mcp_validate_tool_schema`
 - `unreal.mcp_apply_scaffold`
 - `unreal.mcp_rollback_last_extension`
+- `unreal.mcp_build_editor`
+- `unreal.mcp_run_tool_test`
 - `unreal.mcp_tool_audit`
 - `unreal.project_memory_write`
 - `unreal.project_memory_read`
@@ -274,6 +276,22 @@ MCP extension safety checks:
 ```text
 /tool unreal.mcp_apply_scaffold {"toolName":"unreal.my_custom_tool","dryRun":false}
 ```
+
+Build the editor after applying snippets:
+
+```text
+/tool unreal.mcp_build_editor {"toolName":"unreal.my_custom_tool","scaffoldDir":"Tools/UnrealMcpToolScaffolds/my_custom_tool","writeProjectMemory":true}
+```
+
+`unreal.mcp_build_editor` captures UBT output under `Saved/UnrealMcp/BuildLogs`, parses success/failure plus key error lines, and writes a restart handoff memory entry. Since this command runs from an already-open editor, newly built plugin code still requires an Unreal Editor restart before fresh tools appear in `tools/list`.
+
+After restart, run the generated test request:
+
+```text
+/tool unreal.mcp_run_tool_test {"memoryKey":"mcp.extension.build_test","readProjectMemory":true}
+```
+
+The test runner resolves `TestRequest.json`, verifies the tool is listed, executes the recorded `tools/call` through the in-editor MCP handlers, and records the result back into project memory.
 
 ```text
 /tool unreal.mcp_rollback_last_extension {"dryRun":true}
