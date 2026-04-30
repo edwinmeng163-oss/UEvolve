@@ -72,6 +72,9 @@ Editor action tools:
 - `unreal.mcp_build_editor`
 - `unreal.mcp_run_tool_test`
 - `unreal.mcp_extension_pipeline`
+- `unreal.mcp_pipeline_status`
+- `unreal.mcp_diff_last_apply`
+- `unreal.mcp_clean_test_artifacts`
 - `unreal.mcp_tool_audit`
 - `unreal.project_memory_write`
 - `unreal.project_memory_read`
@@ -308,6 +311,18 @@ After an editor restart:
 /tool unreal.mcp_extension_pipeline {"mode":"resume_test","memoryKey":"mcp.extension.pipeline"}
 ```
 
+Inspect pipeline state and last source apply:
+
+```text
+/tool unreal.mcp_pipeline_status {"memoryKey":"mcp.extension.pipeline"}
+```
+
+```text
+/tool unreal.mcp_diff_last_apply {"maxPreviewLines":80}
+```
+
+`unreal.mcp_pipeline_status` collects project memory, the latest apply manifest, the newest build log tail, test scaffolds, test requests, and extension backups into one status report. `unreal.mcp_diff_last_apply` reads the backup snapshots written by `mcp_apply_scaffold`, so it can explain exactly what the last automatic source integration changed.
+
 External restart supervisor:
 
 ```bash
@@ -326,6 +341,18 @@ The supervisor script runs outside Unreal Editor, so it can close/reopen the edi
 ```text
 /tool unreal.mcp_tool_audit {}
 ```
+
+Clean generated test artifacts safely:
+
+```text
+/tool unreal.mcp_clean_test_artifacts {"dryRun":true}
+```
+
+```text
+/tool unreal.mcp_clean_test_artifacts {"dryRun":false,"nameContains":"phase5_cleanup_probe"}
+```
+
+The cleanup tool is intentionally conservative: by default it only previews `Saved/UnrealMcp/TestScaffolds` candidates. Build logs, extension backups, test requests, and project memory require explicit boolean flags, and all cleanup is constrained to `Saved/UnrealMcp`.
 
 Restart handoff memory:
 

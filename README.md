@@ -96,6 +96,9 @@ Unreal MCP currently supports:
   - `unreal.mcp_build_editor`
   - `unreal.mcp_run_tool_test`
   - `unreal.mcp_extension_pipeline`
+  - `unreal.mcp_pipeline_status`
+  - `unreal.mcp_diff_last_apply`
+  - `unreal.mcp_clean_test_artifacts`
   - `unreal.mcp_tool_audit`
 - Restart-resilient project memory:
   - `unreal.project_memory_write`
@@ -169,6 +172,9 @@ Useful first-stage extension checks:
 /tool unreal.mcp_build_editor {"toolName":"unreal.my_custom_tool","scaffoldDir":"Tools/UnrealMcpToolScaffolds/my_custom_tool","writeProjectMemory":true}
 /tool unreal.mcp_run_tool_test {"memoryKey":"mcp.extension.build_test","readProjectMemory":true}
 /tool unreal.mcp_extension_pipeline {"toolName":"unreal.my_custom_tool","memoryKey":"mcp.extension.pipeline"}
+/tool unreal.mcp_pipeline_status {"memoryKey":"mcp.extension.pipeline"}
+/tool unreal.mcp_diff_last_apply {"maxPreviewLines":80}
+/tool unreal.mcp_clean_test_artifacts {"dryRun":true}
 /tool unreal.mcp_tool_audit {}
 /tool unreal.project_memory_write {"key":"mcp_extension","summary":"Resume MCP extension work after editor restart.","status":"in_progress","nextStep":"Run schema validation and tool audit after rebuilding.","contentJson":"{\"target\":\"self-extension\"}","tags":["mcp","restart"]}
 /tool unreal.project_memory_read {"key":"mcp_extension","includeContent":true}
@@ -180,6 +186,9 @@ Build/test handoff note:
 - Because the tool is invoked from a running editor, newly compiled plugin code is not loaded until Unreal Editor is restarted.
 - After restart, `unreal.mcp_run_tool_test` can read the memory entry, locate the generated `TestRequest.json`, confirm the tool appears in `tools/list`, and execute the recorded `tools/call` request through the in-editor MCP handlers.
 - `unreal.mcp_extension_pipeline` orchestrates validate, apply dry run, apply, memory write, build, restart handoff, and post-restart test resume.
+- `unreal.mcp_pipeline_status` summarizes the current extension memory entry, last apply manifest, latest build log, saved test scaffolds, extension backups, and recommended next step.
+- `unreal.mcp_diff_last_apply` reads `Saved/UnrealMcp/LastExtensionApply.json` and returns a before/after source diff preview from the backup snapshots created by `mcp_apply_scaffold`.
+- `unreal.mcp_clean_test_artifacts` defaults to `dryRun:true` and only previews generated `Saved/UnrealMcp/TestScaffolds`; destructive cleanup must explicitly set `dryRun:false`, and optional filters such as `nameContains` should be used for targeted cleanup.
 
 External supervisor:
 

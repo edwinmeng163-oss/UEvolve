@@ -4040,9 +4040,37 @@ namespace UnrealMcp
 			return FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UnrealMcp/ExtensionBackups")));
 		}
 
+		FString GetUnrealMcpSavedRoot()
+		{
+			return FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UnrealMcp")));
+		}
+
+		FString GetMcpBuildLogRoot()
+		{
+			return FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UnrealMcp/BuildLogs")));
+		}
+
 		FString GetLatestMcpExtensionManifestPath()
 		{
 			return FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UnrealMcp/LastExtensionApply.json")));
+		}
+
+		bool LoadJsonObjectFromFile(const FString& FilePath, TSharedPtr<FJsonObject>& OutObject, FString& OutFailureReason)
+		{
+			FString JsonText;
+			if (!FFileHelper::LoadFileToString(JsonText, *FilePath))
+			{
+				OutFailureReason = FString::Printf(TEXT("Failed to read JSON file '%s'."), *FilePath);
+				return false;
+			}
+
+			if (!LoadJsonObject(JsonText, OutObject) || !OutObject.IsValid())
+			{
+				OutFailureReason = FString::Printf(TEXT("JSON file '%s' is not a valid object."), *FilePath);
+				return false;
+			}
+
+			return true;
 		}
 
 		bool SaveJsonObjectToFile(const TSharedPtr<FJsonObject>& Object, const FString& FilePath, FString& OutFailureReason)
@@ -4660,6 +4688,760 @@ namespace UnrealMcp
 				FString::Printf(TEXT("Rolled back MCP extension for %s."), ToolName.IsEmpty() ? TEXT("<unknown>") : *ToolName),
 				StructuredContent,
 				false);
+		}
+
+		FString NormalizeFullPathForCompare(const FString& Path)
+		{
+			FString NormalizedPath = FPaths::ConvertRelativePathToFull(Path);
+			FPaths::NormalizeFilename(NormalizedPath);
+			FPaths::CollapseRelativeDirectories(NormalizedPath);
+			return NormalizedPath;
+		}
+
+		bool IsPathInsideDirectory(const FString& Path, const FString& Directory)
+		{
+			const FString NormalizedPath = NormalizeFullPathForCompare(Path);
+			FString NormalizedDirectory = NormalizeFullPathForCompare(Directory);
+			NormalizedDirectory.RemoveFromEnd(TEXT("/"));
+			const FString DirectoryPrefix = NormalizedDirectory + TEXT("/");
+			return NormalizedPath.Equals(NormalizedDirectory, ESearchCase::IgnoreCase)
+				|| NormalizedPath.StartsWith(DirectoryPrefix, ESearchCase::IgnoreCase);
+		}
+
+		FString FileTimeToIsoString(const FDateTime& Time)
+		{
+			return Time.GetTicks() > 0 ? Time.ToIso8601() : FString();
+		}
+
+		TSharedPtr<FJsonObject> MakeFileInfoObject(const FString& Path)
+		{
+			TSharedPtr<FJsonObject> InfoObject = MakeShared<FJsonObject>();
+			InfoObject->SetStringField(TEXT("path"), Path);
+			InfoObject->SetBoolField(TEXT("exists"), FPaths::FileExists(Path) || FPaths::DirectoryExists(Path));
+
+			const FFileStatData Stat = IFileManager::Get().GetStatData(*Path);
+			if (Stat.bIsValid)
+			{
+				InfoObject->SetNumberField(TEXT("sizeBytes"), static_cast<double>(Stat.FileSize));
+				InfoObject->SetStringField(TEXT("modifiedAt"), FileTimeToIsoString(Stat.ModificationTime));
+			}
+			return InfoObject;
+		}
+
+		void FindImmediateChildren(const FString& Directory, const FString& Pattern, bool bFiles, bool bDirectories, TArray<FString>& OutChildren)
+		{
+			TArray<FString> Names;
+			IFileManager::Get().FindFiles(Names, *FPaths::Combine(Directory, Pattern), bFiles, bDirectories);
+			for (const FString& Name : Names)
+			{
+				OutChildren.Add(FPaths::Combine(Directory, Name));
+			}
+			OutChildren.Sort();
+		}
+
+		bool FindNewestFile(const FString& Directory, const FString& Pattern, FString& OutPath)
+		{
+			TArray<FString> Files;
+			IFileManager::Get().FindFilesRecursive(Files, *Directory, *Pattern, true, false);
+			if (Files.Num() == 0)
+			{
+				return false;
+			}
+
+			Files.Sort([](const FString& A, const FString& B)
+			{
+				const FFileStatData StatA = IFileManager::Get().GetStatData(*A);
+				const FFileStatData StatB = IFileManager::Get().GetStatData(*B);
+				return StatA.ModificationTime > StatB.ModificationTime;
+			});
+
+			OutPath = Files[0];
+			return true;
+		}
+
+		FString TailLines(const FString& Text, int32 MaxLines)
+		{
+			TArray<FString> Lines;
+			Text.ParseIntoArrayLines(Lines, false);
+			const int32 StartIndex = FMath::Max(0, Lines.Num() - FMath::Max(1, MaxLines));
+			TArray<FString> Tail;
+			for (int32 Index = StartIndex; Index < Lines.Num(); ++Index)
+			{
+				Tail.Add(Lines[Index]);
+			}
+			return FString::Join(Tail, TEXT("\n"));
+		}
+
+		TSharedPtr<FJsonObject> MakeMemoryEntrySummary(const TSharedPtr<FJsonObject>& EntryObject, bool bIncludeContent)
+		{
+			TSharedPtr<FJsonObject> SummaryObject = MakeShared<FJsonObject>();
+			if (!EntryObject.IsValid())
+			{
+				return SummaryObject;
+			}
+
+			FString Key;
+			FString Summary;
+			FString Status;
+			FString NextStep;
+			FString UpdatedAtUtc;
+			EntryObject->TryGetStringField(TEXT("key"), Key);
+			EntryObject->TryGetStringField(TEXT("summary"), Summary);
+			EntryObject->TryGetStringField(TEXT("status"), Status);
+			EntryObject->TryGetStringField(TEXT("nextStep"), NextStep);
+			EntryObject->TryGetStringField(TEXT("updatedAtUtc"), UpdatedAtUtc);
+			SummaryObject->SetStringField(TEXT("key"), Key);
+			SummaryObject->SetStringField(TEXT("summary"), Summary);
+			SummaryObject->SetStringField(TEXT("status"), Status);
+			SummaryObject->SetStringField(TEXT("nextStep"), NextStep);
+			SummaryObject->SetStringField(TEXT("updatedAtUtc"), UpdatedAtUtc);
+
+			const TArray<TSharedPtr<FJsonValue>>* Tags = nullptr;
+			if (EntryObject->TryGetArrayField(TEXT("tags"), Tags) && Tags)
+			{
+				SummaryObject->SetArrayField(TEXT("tags"), *Tags);
+			}
+
+			const TSharedPtr<FJsonObject>* Content = nullptr;
+			if (bIncludeContent && EntryObject->TryGetObjectField(TEXT("content"), Content) && Content && (*Content).IsValid())
+			{
+				SummaryObject->SetObjectField(TEXT("content"), *Content);
+			}
+			return SummaryObject;
+		}
+
+		TSharedPtr<FJsonObject> FindMemoryEntryByKey(const TSharedPtr<FJsonObject>& MemoryObject, const FString& Key)
+		{
+			const TArray<TSharedPtr<FJsonValue>>* Entries = nullptr;
+			if (!MemoryObject.IsValid() || !MemoryObject->TryGetArrayField(TEXT("entries"), Entries) || !Entries)
+			{
+				return nullptr;
+			}
+
+			for (const TSharedPtr<FJsonValue>& EntryValue : *Entries)
+			{
+				if (!EntryValue.IsValid() || EntryValue->Type != EJson::Object || !EntryValue->AsObject().IsValid())
+				{
+					continue;
+				}
+
+				FString ExistingKey;
+				if (EntryValue->AsObject()->TryGetStringField(TEXT("key"), ExistingKey) && ExistingKey == Key)
+				{
+					return EntryValue->AsObject();
+				}
+			}
+			return nullptr;
+		}
+
+		FString RecommendPipelineNextStep(const TSharedPtr<FJsonObject>& MemoryEntry)
+		{
+			if (!MemoryEntry.IsValid())
+			{
+				return TEXT("No matching project memory entry was found. Run unreal.mcp_extension_pipeline or write memory for the active extension.");
+			}
+
+			FString Status;
+			MemoryEntry->TryGetStringField(TEXT("status"), Status);
+			const FString LowerStatus = Status.ToLower();
+			if (LowerStatus.Contains(TEXT("restart")))
+			{
+				return TEXT("Restart Unreal Editor, then run unreal.mcp_extension_pipeline with mode=resume_test or unreal.mcp_run_tool_test.");
+			}
+			if (LowerStatus.Contains(TEXT("build_failed")))
+			{
+				return TEXT("Open the latest build log, fix compile errors, then rerun unreal.mcp_build_editor.");
+			}
+			if (LowerStatus.Contains(TEXT("tool_test_succeeded")))
+			{
+				return TEXT("Run unreal.mcp_tool_audit, then optionally run unreal.mcp_clean_test_artifacts in dryRun mode.");
+			}
+			if (LowerStatus.Contains(TEXT("pipeline_apply_complete")))
+			{
+				return TEXT("Run unreal.mcp_build_editor, restart if needed, then resume the tool test.");
+			}
+			return TEXT("Continue with the next pipeline step shown in project memory.");
+		}
+
+		FUnrealMcpExecutionResult PipelineStatus(const FJsonObject& Arguments)
+		{
+			FString MemoryKey = TEXT("mcp.extension.pipeline");
+			bool bIncludeAllMemory = false;
+			bool bIncludeBuildLogTail = true;
+			Arguments.TryGetStringField(TEXT("memoryKey"), MemoryKey);
+			Arguments.TryGetBoolField(TEXT("includeAllMemory"), bIncludeAllMemory);
+			Arguments.TryGetBoolField(TEXT("includeBuildLogTail"), bIncludeBuildLogTail);
+			const int32 BuildLogTailLines = FMath::Min(GetPositiveIntArgument(Arguments, TEXT("buildLogTailLines"), 80), 500);
+
+			FString FailureReason;
+			TSharedPtr<FJsonObject> MemoryObject;
+			if (!LoadProjectMemory(MemoryObject, FailureReason))
+			{
+				return MakeExecutionResult(FailureReason, nullptr, true);
+			}
+
+			TSharedPtr<FJsonObject> MatchingMemoryEntry = FindMemoryEntryByKey(MemoryObject, MemoryKey.TrimStartAndEnd());
+			TArray<TSharedPtr<FJsonValue>> MemorySummaries;
+			const TArray<TSharedPtr<FJsonValue>>* Entries = nullptr;
+			if (MemoryObject->TryGetArrayField(TEXT("entries"), Entries) && Entries)
+			{
+				for (const TSharedPtr<FJsonValue>& EntryValue : *Entries)
+				{
+					if (EntryValue.IsValid() && EntryValue->Type == EJson::Object && EntryValue->AsObject().IsValid())
+					{
+						MemorySummaries.Add(MakeShared<FJsonValueObject>(MakeMemoryEntrySummary(EntryValue->AsObject(), bIncludeAllMemory)));
+					}
+				}
+			}
+
+			TArray<FString> TestScaffolds;
+			TArray<FString> ExtensionBackups;
+			TArray<FString> TestRequests;
+			FindImmediateChildren(FPaths::Combine(GetUnrealMcpSavedRoot(), TEXT("TestScaffolds")), TEXT("*"), false, true, TestScaffolds);
+			FindImmediateChildren(GetMcpExtensionBackupRoot(), TEXT("*"), false, true, ExtensionBackups);
+			FindImmediateChildren(FPaths::Combine(GetUnrealMcpSavedRoot(), TEXT("TestRequests")), TEXT("*"), false, true, TestRequests);
+
+			TArray<TSharedPtr<FJsonValue>> TestScaffoldValues;
+			for (const FString& Path : TestScaffolds)
+			{
+				TestScaffoldValues.Add(MakeShared<FJsonValueString>(Path));
+			}
+			TArray<TSharedPtr<FJsonValue>> BackupValues;
+			for (const FString& Path : ExtensionBackups)
+			{
+				BackupValues.Add(MakeShared<FJsonValueString>(Path));
+			}
+			TArray<TSharedPtr<FJsonValue>> TestRequestValues;
+			for (const FString& Path : TestRequests)
+			{
+				TestRequestValues.Add(MakeShared<FJsonValueString>(Path));
+			}
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("action"), TEXT("mcp_pipeline_status"));
+			StructuredContent->SetStringField(TEXT("savedRoot"), GetUnrealMcpSavedRoot());
+			StructuredContent->SetStringField(TEXT("memoryPath"), GetProjectMemoryFilePath());
+			StructuredContent->SetStringField(TEXT("memoryKey"), MemoryKey);
+			StructuredContent->SetBoolField(TEXT("memoryEntryFound"), MatchingMemoryEntry.IsValid());
+			StructuredContent->SetObjectField(TEXT("selectedMemoryEntry"), MakeMemoryEntrySummary(MatchingMemoryEntry, true));
+			StructuredContent->SetNumberField(TEXT("memoryEntryCount"), MemorySummaries.Num());
+			StructuredContent->SetArrayField(TEXT("memoryEntries"), MemorySummaries);
+			StructuredContent->SetStringField(TEXT("latestManifestPath"), GetLatestMcpExtensionManifestPath());
+			StructuredContent->SetObjectField(TEXT("latestManifestFile"), MakeFileInfoObject(GetLatestMcpExtensionManifestPath()));
+
+			TSharedPtr<FJsonObject> ManifestObject;
+			if (FPaths::FileExists(GetLatestMcpExtensionManifestPath()) && LoadJsonObjectFromFile(GetLatestMcpExtensionManifestPath(), ManifestObject, FailureReason))
+			{
+				StructuredContent->SetObjectField(TEXT("latestManifest"), ManifestObject);
+			}
+			else if (!FailureReason.IsEmpty())
+			{
+				StructuredContent->SetStringField(TEXT("latestManifestReadWarning"), FailureReason);
+			}
+
+			FString LatestBuildLogPath;
+			StructuredContent->SetStringField(TEXT("buildLogRoot"), GetMcpBuildLogRoot());
+			if (FindNewestFile(GetMcpBuildLogRoot(), TEXT("*.log"), LatestBuildLogPath))
+			{
+				StructuredContent->SetObjectField(TEXT("latestBuildLog"), MakeFileInfoObject(LatestBuildLogPath));
+				if (bIncludeBuildLogTail)
+				{
+					FString LogText;
+					if (FFileHelper::LoadFileToString(LogText, *LatestBuildLogPath))
+					{
+						StructuredContent->SetStringField(TEXT("latestBuildLogTail"), TailLines(LogText, BuildLogTailLines));
+					}
+				}
+			}
+
+			StructuredContent->SetNumberField(TEXT("testScaffoldCount"), TestScaffolds.Num());
+			StructuredContent->SetArrayField(TEXT("testScaffolds"), TestScaffoldValues);
+			StructuredContent->SetNumberField(TEXT("extensionBackupCount"), ExtensionBackups.Num());
+			StructuredContent->SetArrayField(TEXT("extensionBackups"), BackupValues);
+			StructuredContent->SetNumberField(TEXT("testRequestCount"), TestRequests.Num());
+			StructuredContent->SetArrayField(TEXT("testRequests"), TestRequestValues);
+			StructuredContent->SetStringField(TEXT("recommendedNextStep"), RecommendPipelineNextStep(MatchingMemoryEntry));
+
+			const FString Text = FString::Printf(
+				TEXT("MCP pipeline status: memoryKey=%s found=%s testScaffolds=%d backups=%d."),
+				*MemoryKey,
+				MatchingMemoryEntry.IsValid() ? TEXT("true") : TEXT("false"),
+				TestScaffolds.Num(),
+				ExtensionBackups.Num());
+			return MakeExecutionResult(Text, StructuredContent, false);
+		}
+
+		void BuildSimpleLineDiffPreview(
+			const FString& BeforeText,
+			const FString& AfterText,
+			int32 MaxPreviewLines,
+			TArray<TSharedPtr<FJsonValue>>& OutChangedLines,
+			FString& OutPreviewText,
+			int32& OutChangedLineCount,
+			bool& bOutTruncated)
+		{
+			TArray<FString> BeforeLines;
+			TArray<FString> AfterLines;
+			BeforeText.ParseIntoArrayLines(BeforeLines, false);
+			AfterText.ParseIntoArrayLines(AfterLines, false);
+
+			const int32 SafeMaxPreviewLines = FMath::Max(1, MaxPreviewLines);
+			TArray<FString> PreviewLines;
+			OutChangedLineCount = 0;
+			bOutTruncated = false;
+
+			auto AddPreviewLine = [&](
+				const FString& Kind,
+				int32 BeforeLineNumber,
+				int32 AfterLineNumber,
+				const FString& BeforeLine,
+				const FString& AfterLine)
+			{
+				++OutChangedLineCount;
+				if (OutChangedLines.Num() >= SafeMaxPreviewLines)
+				{
+					bOutTruncated = true;
+					return;
+				}
+
+				TSharedPtr<FJsonObject> LineObject = MakeShared<FJsonObject>();
+				LineObject->SetStringField(TEXT("kind"), Kind);
+				if (BeforeLineNumber > 0)
+				{
+					LineObject->SetNumberField(TEXT("beforeLine"), BeforeLineNumber);
+				}
+				LineObject->SetStringField(TEXT("before"), BeforeLine.Left(1000));
+				if (AfterLineNumber > 0)
+				{
+					LineObject->SetNumberField(TEXT("afterLine"), AfterLineNumber);
+				}
+				LineObject->SetStringField(TEXT("after"), AfterLine.Left(1000));
+				OutChangedLines.Add(MakeShared<FJsonValueObject>(LineObject));
+
+				PreviewLines.Add(FString::Printf(TEXT("@@ %s before:%d after:%d @@"), *Kind, BeforeLineNumber, AfterLineNumber));
+				if (!BeforeLine.IsEmpty())
+				{
+					PreviewLines.Add(TEXT("- ") + BeforeLine.Left(1000));
+				}
+				if (!AfterLine.IsEmpty())
+				{
+					PreviewLines.Add(TEXT("+ ") + AfterLine.Left(1000));
+				}
+			};
+
+			auto FindLineForward = [](const TArray<FString>& Lines, const FString& Needle, int32 StartIndex, int32 Lookahead) -> int32
+			{
+				const int32 EndIndex = FMath::Min(Lines.Num(), StartIndex + Lookahead);
+				for (int32 Index = StartIndex; Index < EndIndex; ++Index)
+				{
+					if (Lines[Index] == Needle)
+					{
+						return Index;
+					}
+				}
+				return INDEX_NONE;
+			};
+
+			const int32 Lookahead = 300;
+			int32 BeforeIndex = 0;
+			int32 AfterIndex = 0;
+			while (BeforeIndex < BeforeLines.Num() || AfterIndex < AfterLines.Num())
+			{
+				if (BeforeIndex < BeforeLines.Num()
+					&& AfterIndex < AfterLines.Num()
+					&& BeforeLines[BeforeIndex] == AfterLines[AfterIndex])
+				{
+					++BeforeIndex;
+					++AfterIndex;
+					continue;
+				}
+
+				bool bHandled = false;
+				if (BeforeIndex < BeforeLines.Num() && AfterIndex < AfterLines.Num())
+				{
+					const int32 MatchingAfterIndex = FindLineForward(AfterLines, BeforeLines[BeforeIndex], AfterIndex + 1, Lookahead);
+					if (MatchingAfterIndex != INDEX_NONE)
+					{
+						for (int32 InsertIndex = AfterIndex; InsertIndex < MatchingAfterIndex; ++InsertIndex)
+						{
+							AddPreviewLine(TEXT("inserted"), BeforeIndex + 1, InsertIndex + 1, FString(), AfterLines[InsertIndex]);
+						}
+						AfterIndex = MatchingAfterIndex;
+						bHandled = true;
+					}
+				}
+
+				if (!bHandled && BeforeIndex < BeforeLines.Num() && AfterIndex < AfterLines.Num())
+				{
+					const int32 MatchingBeforeIndex = FindLineForward(BeforeLines, AfterLines[AfterIndex], BeforeIndex + 1, Lookahead);
+					if (MatchingBeforeIndex != INDEX_NONE)
+					{
+						for (int32 DeleteIndex = BeforeIndex; DeleteIndex < MatchingBeforeIndex; ++DeleteIndex)
+						{
+							AddPreviewLine(TEXT("deleted"), DeleteIndex + 1, AfterIndex + 1, BeforeLines[DeleteIndex], FString());
+						}
+						BeforeIndex = MatchingBeforeIndex;
+						bHandled = true;
+					}
+				}
+
+				if (bHandled)
+				{
+					continue;
+				}
+
+				const FString BeforeLine = BeforeLines.IsValidIndex(BeforeIndex) ? BeforeLines[BeforeIndex] : FString();
+				const FString AfterLine = AfterLines.IsValidIndex(AfterIndex) ? AfterLines[AfterIndex] : FString();
+				AddPreviewLine(
+					BeforeLines.IsValidIndex(BeforeIndex) && AfterLines.IsValidIndex(AfterIndex) ? TEXT("changed") : (BeforeLines.IsValidIndex(BeforeIndex) ? TEXT("deleted") : TEXT("inserted")),
+					BeforeLines.IsValidIndex(BeforeIndex) ? BeforeIndex + 1 : 0,
+					AfterLines.IsValidIndex(AfterIndex) ? AfterIndex + 1 : 0,
+					BeforeLine,
+					AfterLine);
+				if (BeforeLines.IsValidIndex(BeforeIndex))
+				{
+					++BeforeIndex;
+				}
+				if (AfterLines.IsValidIndex(AfterIndex))
+				{
+					++AfterIndex;
+				}
+			}
+
+			if (bOutTruncated)
+			{
+				PreviewLines.Add(FString::Printf(TEXT("... truncated after %d changed preview lines ..."), SafeMaxPreviewLines));
+			}
+			OutPreviewText = FString::Join(PreviewLines, TEXT("\n"));
+		}
+
+		FUnrealMcpExecutionResult DiffLastMcpApply(const FJsonObject& Arguments)
+		{
+			FString ManifestPath = GetLatestMcpExtensionManifestPath();
+			bool bIncludeFullText = false;
+			Arguments.TryGetStringField(TEXT("manifestPath"), ManifestPath);
+			Arguments.TryGetBoolField(TEXT("includeFullText"), bIncludeFullText);
+			const int32 MaxPreviewLines = FMath::Min(GetPositiveIntArgument(Arguments, TEXT("maxPreviewLines"), 120), 1000);
+
+			FString ResolvedManifestPath;
+			FString FailureReason;
+			if (!ResolveProjectPathInsideProject(ManifestPath, ResolvedManifestPath, FailureReason))
+			{
+				return MakeExecutionResult(FailureReason, nullptr, true);
+			}
+
+			TSharedPtr<FJsonObject> ManifestObject;
+			if (!LoadJsonObjectFromFile(ResolvedManifestPath, ManifestObject, FailureReason))
+			{
+				return MakeExecutionResult(FailureReason, nullptr, true);
+			}
+
+			FString ToolName;
+			FString SourcePath;
+			FString BackupSourcePath;
+			FString AfterSourcePath;
+			FString SourceHashBefore;
+			FString SourceHashAfter;
+			ManifestObject->TryGetStringField(TEXT("toolName"), ToolName);
+			ManifestObject->TryGetStringField(TEXT("sourcePath"), SourcePath);
+			ManifestObject->TryGetStringField(TEXT("backupSourcePath"), BackupSourcePath);
+			ManifestObject->TryGetStringField(TEXT("afterSourcePath"), AfterSourcePath);
+			ManifestObject->TryGetStringField(TEXT("sourceHashBefore"), SourceHashBefore);
+			ManifestObject->TryGetStringField(TEXT("sourceHashAfter"), SourceHashAfter);
+
+			if (BackupSourcePath.IsEmpty())
+			{
+				return MakeExecutionResult(TEXT("Manifest is missing backupSourcePath."), nullptr, true);
+			}
+			if (AfterSourcePath.IsEmpty())
+			{
+				AfterSourcePath = SourcePath;
+			}
+			if (AfterSourcePath.IsEmpty())
+			{
+				return MakeExecutionResult(TEXT("Manifest is missing afterSourcePath and sourcePath."), nullptr, true);
+			}
+
+			FString ResolvedBeforePath;
+			FString ResolvedAfterPath;
+			if (!ResolveProjectPathInsideProject(BackupSourcePath, ResolvedBeforePath, FailureReason)
+				|| !ResolveProjectPathInsideProject(AfterSourcePath, ResolvedAfterPath, FailureReason))
+			{
+				return MakeExecutionResult(FailureReason, nullptr, true);
+			}
+
+			FString BeforeText;
+			FString AfterText;
+			if (!FFileHelper::LoadFileToString(BeforeText, *ResolvedBeforePath))
+			{
+				return MakeExecutionResult(FString::Printf(TEXT("Failed to read before snapshot '%s'."), *ResolvedBeforePath), nullptr, true);
+			}
+			if (!FFileHelper::LoadFileToString(AfterText, *ResolvedAfterPath))
+			{
+				return MakeExecutionResult(FString::Printf(TEXT("Failed to read after snapshot '%s'."), *ResolvedAfterPath), nullptr, true);
+			}
+
+			TArray<FString> BeforeLines;
+			TArray<FString> AfterLines;
+			BeforeText.ParseIntoArrayLines(BeforeLines, false);
+			AfterText.ParseIntoArrayLines(AfterLines, false);
+
+			TArray<TSharedPtr<FJsonValue>> ChangedLines;
+			FString PreviewText;
+			int32 ChangedLineCount = 0;
+			bool bTruncated = false;
+			BuildSimpleLineDiffPreview(BeforeText, AfterText, MaxPreviewLines, ChangedLines, PreviewText, ChangedLineCount, bTruncated);
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("action"), TEXT("mcp_diff_last_apply"));
+			StructuredContent->SetStringField(TEXT("toolName"), ToolName);
+			StructuredContent->SetStringField(TEXT("manifestPath"), ResolvedManifestPath);
+			StructuredContent->SetStringField(TEXT("sourcePath"), SourcePath);
+			StructuredContent->SetStringField(TEXT("beforePath"), ResolvedBeforePath);
+			StructuredContent->SetStringField(TEXT("afterPath"), ResolvedAfterPath);
+			StructuredContent->SetStringField(TEXT("sourceHashBefore"), SourceHashBefore);
+			StructuredContent->SetStringField(TEXT("sourceHashAfter"), SourceHashAfter);
+			StructuredContent->SetStringField(TEXT("computedBeforeHash"), HashTextForManifest(BeforeText));
+			StructuredContent->SetStringField(TEXT("computedAfterHash"), HashTextForManifest(AfterText));
+			StructuredContent->SetNumberField(TEXT("beforeLineCount"), BeforeLines.Num());
+			StructuredContent->SetNumberField(TEXT("afterLineCount"), AfterLines.Num());
+			StructuredContent->SetNumberField(TEXT("changedLineCount"), ChangedLineCount);
+			StructuredContent->SetBoolField(TEXT("hasChanges"), ChangedLineCount > 0);
+			StructuredContent->SetBoolField(TEXT("truncated"), bTruncated);
+			StructuredContent->SetStringField(TEXT("previewText"), PreviewText);
+			StructuredContent->SetArrayField(TEXT("changedLines"), ChangedLines);
+			const TArray<TSharedPtr<FJsonValue>>* ManifestChanges = nullptr;
+			if (ManifestObject->TryGetArrayField(TEXT("changes"), ManifestChanges) && ManifestChanges)
+			{
+				StructuredContent->SetArrayField(TEXT("manifestChanges"), *ManifestChanges);
+			}
+			if (bIncludeFullText)
+			{
+				StructuredContent->SetStringField(TEXT("beforeText"), BeforeText);
+				StructuredContent->SetStringField(TEXT("afterText"), AfterText);
+			}
+
+			return MakeExecutionResult(
+				FString::Printf(TEXT("Last MCP apply diff for %s: changedLineCount=%d truncated=%s."),
+					ToolName.IsEmpty() ? TEXT("<unknown>") : *ToolName,
+					ChangedLineCount,
+					bTruncated ? TEXT("true") : TEXT("false")),
+				StructuredContent,
+				false);
+		}
+
+		bool ShouldIncludeCleanupCandidate(const FString& Path, double MaxAgeDays, const FString& NameContains, FString& OutSkipReason)
+		{
+			OutSkipReason.Reset();
+			if (!NameContains.TrimStartAndEnd().IsEmpty()
+				&& !Path.Contains(NameContains.TrimStartAndEnd(), ESearchCase::IgnoreCase))
+			{
+				OutSkipReason = TEXT("nameContains filter did not match.");
+				return false;
+			}
+
+			if (MaxAgeDays > 0.0)
+			{
+				const FFileStatData Stat = IFileManager::Get().GetStatData(*Path);
+				if (!Stat.bIsValid || Stat.ModificationTime.GetTicks() <= 0)
+				{
+					OutSkipReason = TEXT("age filter requested but modification time is unavailable.");
+					return false;
+				}
+
+				const double AgeDays = (FDateTime::Now() - Stat.ModificationTime).GetTotalDays();
+				if (AgeDays < MaxAgeDays)
+				{
+					OutSkipReason = FString::Printf(TEXT("age %.2f days is newer than maxAgeDays %.2f."), AgeDays, MaxAgeDays);
+					return false;
+				}
+			}
+			return true;
+		}
+
+		void AddCleanupCandidate(
+			const FString& Category,
+			const FString& Path,
+			const FString& Type,
+			double MaxAgeDays,
+			const FString& NameContains,
+			TArray<TSharedPtr<FJsonValue>>& Candidates,
+			TArray<TSharedPtr<FJsonValue>>& Skipped)
+		{
+			TSharedPtr<FJsonObject> CandidateObject = MakeFileInfoObject(Path);
+			CandidateObject->SetStringField(TEXT("category"), Category);
+			CandidateObject->SetStringField(TEXT("type"), Type);
+
+			if (!IsPathInsideDirectory(Path, GetUnrealMcpSavedRoot()))
+			{
+				CandidateObject->SetStringField(TEXT("skipReason"), TEXT("path is outside Saved/UnrealMcp safety root."));
+				Skipped.Add(MakeShared<FJsonValueObject>(CandidateObject));
+				return;
+			}
+
+			FString SkipReason;
+			if (!ShouldIncludeCleanupCandidate(Path, MaxAgeDays, NameContains, SkipReason))
+			{
+				CandidateObject->SetStringField(TEXT("skipReason"), SkipReason);
+				Skipped.Add(MakeShared<FJsonValueObject>(CandidateObject));
+				return;
+			}
+
+			Candidates.Add(MakeShared<FJsonValueObject>(CandidateObject));
+		}
+
+		void AddCleanupDirectoryChildren(
+			const FString& Category,
+			const FString& Directory,
+			double MaxAgeDays,
+			const FString& NameContains,
+			TArray<TSharedPtr<FJsonValue>>& Candidates,
+			TArray<TSharedPtr<FJsonValue>>& Skipped)
+		{
+			TArray<FString> Children;
+			FindImmediateChildren(Directory, TEXT("*"), false, true, Children);
+			for (const FString& Child : Children)
+			{
+				AddCleanupCandidate(Category, Child, TEXT("directory"), MaxAgeDays, NameContains, Candidates, Skipped);
+			}
+		}
+
+		void AddCleanupFiles(
+			const FString& Category,
+			const FString& Directory,
+			const FString& Pattern,
+			double MaxAgeDays,
+			const FString& NameContains,
+			TArray<TSharedPtr<FJsonValue>>& Candidates,
+			TArray<TSharedPtr<FJsonValue>>& Skipped)
+		{
+			TArray<FString> Files;
+			FindImmediateChildren(Directory, Pattern, true, false, Files);
+			for (const FString& File : Files)
+			{
+				AddCleanupCandidate(Category, File, TEXT("file"), MaxAgeDays, NameContains, Candidates, Skipped);
+			}
+		}
+
+		FUnrealMcpExecutionResult CleanMcpTestArtifacts(const FJsonObject& Arguments)
+		{
+			bool bDryRun = true;
+			bool bCleanTestScaffolds = true;
+			bool bCleanTestRequests = false;
+			bool bCleanBuildLogs = false;
+			bool bCleanExtensionBackups = false;
+			bool bCleanProjectMemory = false;
+			double MaxAgeDays = 0.0;
+			FString NameContains;
+			Arguments.TryGetBoolField(TEXT("dryRun"), bDryRun);
+			Arguments.TryGetBoolField(TEXT("cleanTestScaffolds"), bCleanTestScaffolds);
+			Arguments.TryGetBoolField(TEXT("cleanTestRequests"), bCleanTestRequests);
+			Arguments.TryGetBoolField(TEXT("cleanBuildLogs"), bCleanBuildLogs);
+			Arguments.TryGetBoolField(TEXT("cleanExtensionBackups"), bCleanExtensionBackups);
+			Arguments.TryGetBoolField(TEXT("cleanProjectMemory"), bCleanProjectMemory);
+			Arguments.TryGetNumberField(TEXT("maxAgeDays"), MaxAgeDays);
+			Arguments.TryGetStringField(TEXT("nameContains"), NameContains);
+			MaxAgeDays = FMath::Max(0.0, MaxAgeDays);
+
+			if (!bDryRun && IsEditorPlaying())
+			{
+				return MakePieBlockedResult(TEXT("unreal.mcp_clean_test_artifacts"));
+			}
+
+			TArray<TSharedPtr<FJsonValue>> Candidates;
+			TArray<TSharedPtr<FJsonValue>> Skipped;
+			if (bCleanTestScaffolds)
+			{
+				AddCleanupDirectoryChildren(TEXT("testScaffolds"), FPaths::Combine(GetUnrealMcpSavedRoot(), TEXT("TestScaffolds")), MaxAgeDays, NameContains, Candidates, Skipped);
+			}
+			if (bCleanTestRequests)
+			{
+				AddCleanupDirectoryChildren(TEXT("testRequests"), FPaths::Combine(GetUnrealMcpSavedRoot(), TEXT("TestRequests")), MaxAgeDays, NameContains, Candidates, Skipped);
+			}
+			if (bCleanBuildLogs)
+			{
+				AddCleanupFiles(TEXT("buildLogs"), GetMcpBuildLogRoot(), TEXT("*.log"), MaxAgeDays, NameContains, Candidates, Skipped);
+			}
+			if (bCleanExtensionBackups)
+			{
+				AddCleanupDirectoryChildren(TEXT("extensionBackups"), GetMcpExtensionBackupRoot(), MaxAgeDays, NameContains, Candidates, Skipped);
+			}
+			if (bCleanProjectMemory)
+			{
+				AddCleanupCandidate(TEXT("projectMemory"), GetProjectMemoryFilePath(), TEXT("file"), MaxAgeDays, NameContains, Candidates, Skipped);
+			}
+
+			TArray<TSharedPtr<FJsonValue>> Deleted;
+			TArray<TSharedPtr<FJsonValue>> DeleteErrors;
+			if (!bDryRun)
+			{
+				for (const TSharedPtr<FJsonValue>& CandidateValue : Candidates)
+				{
+					if (!CandidateValue.IsValid() || CandidateValue->Type != EJson::Object || !CandidateValue->AsObject().IsValid())
+					{
+						continue;
+					}
+
+					TSharedPtr<FJsonObject> CandidateObject = CandidateValue->AsObject();
+					FString Path;
+					FString Type;
+					CandidateObject->TryGetStringField(TEXT("path"), Path);
+					CandidateObject->TryGetStringField(TEXT("type"), Type);
+
+					bool bDeleted = false;
+					if (Type == TEXT("directory"))
+					{
+						bDeleted = IFileManager::Get().DeleteDirectory(*Path, false, true);
+					}
+					else
+					{
+						bDeleted = IFileManager::Get().Delete(*Path, false, true, true);
+					}
+
+					TSharedPtr<FJsonObject> ResultObject = MakeShared<FJsonObject>();
+					ResultObject->SetStringField(TEXT("path"), Path);
+					ResultObject->SetStringField(TEXT("type"), Type);
+					ResultObject->SetBoolField(TEXT("deleted"), bDeleted);
+					if (bDeleted)
+					{
+						Deleted.Add(MakeShared<FJsonValueObject>(ResultObject));
+					}
+					else
+					{
+						ResultObject->SetStringField(TEXT("error"), TEXT("delete operation returned false."));
+						DeleteErrors.Add(MakeShared<FJsonValueObject>(ResultObject));
+					}
+				}
+			}
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("action"), TEXT("mcp_clean_test_artifacts"));
+			StructuredContent->SetStringField(TEXT("savedRoot"), GetUnrealMcpSavedRoot());
+			StructuredContent->SetBoolField(TEXT("dryRun"), bDryRun);
+			StructuredContent->SetBoolField(TEXT("cleanTestScaffolds"), bCleanTestScaffolds);
+			StructuredContent->SetBoolField(TEXT("cleanTestRequests"), bCleanTestRequests);
+			StructuredContent->SetBoolField(TEXT("cleanBuildLogs"), bCleanBuildLogs);
+			StructuredContent->SetBoolField(TEXT("cleanExtensionBackups"), bCleanExtensionBackups);
+			StructuredContent->SetBoolField(TEXT("cleanProjectMemory"), bCleanProjectMemory);
+			StructuredContent->SetNumberField(TEXT("maxAgeDays"), MaxAgeDays);
+			StructuredContent->SetStringField(TEXT("nameContains"), NameContains);
+			StructuredContent->SetNumberField(TEXT("candidateCount"), Candidates.Num());
+			StructuredContent->SetNumberField(TEXT("skippedCount"), Skipped.Num());
+			StructuredContent->SetNumberField(TEXT("deletedCount"), Deleted.Num());
+			StructuredContent->SetNumberField(TEXT("deleteErrorCount"), DeleteErrors.Num());
+			StructuredContent->SetArrayField(TEXT("candidates"), Candidates);
+			StructuredContent->SetArrayField(TEXT("skipped"), Skipped);
+			StructuredContent->SetArrayField(TEXT("deleted"), Deleted);
+			StructuredContent->SetArrayField(TEXT("deleteErrors"), DeleteErrors);
+
+			const FString Text = FString::Printf(
+				TEXT("MCP cleanup %s: candidates=%d deleted=%d skipped=%d errors=%d."),
+				bDryRun ? TEXT("dry run") : TEXT("applied"),
+				Candidates.Num(),
+				Deleted.Num(),
+				Skipped.Num(),
+				DeleteErrors.Num());
+			return MakeExecutionResult(Text, StructuredContent, DeleteErrors.Num() > 0);
 		}
 
 		FString GetHostBuildPlatformName()
@@ -8079,6 +8861,63 @@ void FUnrealMcpModule::AppendToolDefinitions(TArray<TSharedPtr<FJsonValue>>& Too
 				TEXT("unreal.mcp_extension_pipeline"),
 				TEXT("MCP Extension Pipeline"),
 				TEXT("High-level MCP extension workflow: validate schema, dry-run apply, apply snippets, write memory, build editor, request restart, and resume tool test."),
+				InputSchema);
+		}
+
+		{
+			TSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
+			PropertiesObject->SetObjectField(TEXT("memoryKey"), UnrealMcp::MakeStringProperty(TEXT("Project memory key to inspect."), TEXT("mcp.extension.pipeline")));
+			PropertiesObject->SetObjectField(TEXT("includeAllMemory"), UnrealMcp::MakeBoolProperty(TEXT("Whether memory summaries should include full content payloads."), false));
+			PropertiesObject->SetObjectField(TEXT("includeBuildLogTail"), UnrealMcp::MakeBoolProperty(TEXT("Whether to include the latest build log tail."), true));
+			PropertiesObject->SetObjectField(TEXT("buildLogTailLines"), UnrealMcp::MakeNumberProperty(TEXT("Maximum latest build log tail lines."), 80.0));
+
+			TSharedPtr<FJsonObject> InputSchema = UnrealMcp::MakeObjectSchema();
+			InputSchema->SetObjectField(TEXT("properties"), PropertiesObject);
+
+			UnrealMcp::AddToolDefinition(
+				ToolsArray,
+				TEXT("unreal.mcp_pipeline_status"),
+				TEXT("MCP Pipeline Status"),
+				TEXT("Summarizes project memory, last apply manifest, latest build log, test scaffolds, and recommended next extension step."),
+				InputSchema);
+		}
+
+		{
+			TSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
+			PropertiesObject->SetObjectField(TEXT("manifestPath"), UnrealMcp::MakeStringProperty(TEXT("Optional project-local manifest path. Defaults to Saved/UnrealMcp/LastExtensionApply.json.")));
+			PropertiesObject->SetObjectField(TEXT("maxPreviewLines"), UnrealMcp::MakeNumberProperty(TEXT("Maximum changed lines to include in the diff preview."), 120.0));
+			PropertiesObject->SetObjectField(TEXT("includeFullText"), UnrealMcp::MakeBoolProperty(TEXT("Whether to include full before/after source snapshots in structured output."), false));
+
+			TSharedPtr<FJsonObject> InputSchema = UnrealMcp::MakeObjectSchema();
+			InputSchema->SetObjectField(TEXT("properties"), PropertiesObject);
+
+			UnrealMcp::AddToolDefinition(
+				ToolsArray,
+				TEXT("unreal.mcp_diff_last_apply"),
+				TEXT("Diff Last MCP Apply"),
+				TEXT("Reads the last mcp_apply_scaffold manifest and returns a safe before/after source diff preview from backup snapshots."),
+				InputSchema);
+		}
+
+		{
+			TSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
+			PropertiesObject->SetObjectField(TEXT("dryRun"), UnrealMcp::MakeBoolProperty(TEXT("Preview cleanup candidates without deleting anything."), true));
+			PropertiesObject->SetObjectField(TEXT("cleanTestScaffolds"), UnrealMcp::MakeBoolProperty(TEXT("Include Saved/UnrealMcp/TestScaffolds child directories."), true));
+			PropertiesObject->SetObjectField(TEXT("cleanTestRequests"), UnrealMcp::MakeBoolProperty(TEXT("Include Saved/UnrealMcp/TestRequests child directories."), false));
+			PropertiesObject->SetObjectField(TEXT("cleanBuildLogs"), UnrealMcp::MakeBoolProperty(TEXT("Include Saved/UnrealMcp/BuildLogs/*.log files."), false));
+			PropertiesObject->SetObjectField(TEXT("cleanExtensionBackups"), UnrealMcp::MakeBoolProperty(TEXT("Include Saved/UnrealMcp/ExtensionBackups child directories."), false));
+			PropertiesObject->SetObjectField(TEXT("cleanProjectMemory"), UnrealMcp::MakeBoolProperty(TEXT("Include Saved/UnrealMcp/ProjectMemory.json. Use carefully."), false));
+			PropertiesObject->SetObjectField(TEXT("maxAgeDays"), UnrealMcp::MakeNumberProperty(TEXT("Only include artifacts at least this many days old. 0 disables age filtering."), 0.0));
+			PropertiesObject->SetObjectField(TEXT("nameContains"), UnrealMcp::MakeStringProperty(TEXT("Optional case-insensitive path substring filter for targeted cleanup.")));
+
+			TSharedPtr<FJsonObject> InputSchema = UnrealMcp::MakeObjectSchema();
+			InputSchema->SetObjectField(TEXT("properties"), PropertiesObject);
+
+			UnrealMcp::AddToolDefinition(
+				ToolsArray,
+				TEXT("unreal.mcp_clean_test_artifacts"),
+				TEXT("Clean MCP Test Artifacts"),
+				TEXT("Safely previews or deletes generated MCP test scaffolds, test requests, build logs, extension backups, and memory artifacts under Saved/UnrealMcp."),
 				InputSchema);
 		}
 
@@ -12002,6 +12841,21 @@ FUnrealMcpExecutionResult FUnrealMcpModule::ExecuteTool(const FString& ToolName,
 				return UnrealMcp::MakePieBlockedResult(ToolName);
 			}
 			return RunMcpExtensionPipeline(Arguments);
+		}
+
+		if (ToolName == TEXT("unreal.mcp_pipeline_status"))
+		{
+			return UnrealMcp::PipelineStatus(Arguments);
+		}
+
+		if (ToolName == TEXT("unreal.mcp_diff_last_apply"))
+		{
+			return UnrealMcp::DiffLastMcpApply(Arguments);
+		}
+
+		if (ToolName == TEXT("unreal.mcp_clean_test_artifacts"))
+		{
+			return UnrealMcp::CleanMcpTestArtifacts(Arguments);
 		}
 
 				if (ToolName == TEXT("unreal.compile_blueprint"))
