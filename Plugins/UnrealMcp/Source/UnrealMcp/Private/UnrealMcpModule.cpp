@@ -4239,6 +4239,227 @@ namespace UnrealMcp
 			return true;
 		}
 
+		TSharedPtr<FJsonObject> MakeTextDiffObject(const FString& BeforeText, const FString& AfterText, int32 MaxPreviewLines);
+
+		bool CanonicalizeScaffoldSnippetName(const FString& SnippetName, FString& OutSnippetName, FString& OutFailureReason)
+		{
+			const FString CleanName = SnippetName.TrimStartAndEnd();
+			if (CleanName.Equals(TEXT("ToolDefinition.cpp.snippet"), ESearchCase::IgnoreCase)
+				|| CleanName.Equals(TEXT("tool_definition"), ESearchCase::IgnoreCase)
+				|| CleanName.Equals(TEXT("definition"), ESearchCase::IgnoreCase))
+			{
+				OutSnippetName = TEXT("ToolDefinition.cpp.snippet");
+				return true;
+			}
+
+			if (CleanName.Equals(TEXT("ExecuteToolHandler.cpp.snippet"), ESearchCase::IgnoreCase)
+				|| CleanName.Equals(TEXT("handler"), ESearchCase::IgnoreCase)
+				|| CleanName.Equals(TEXT("execute"), ESearchCase::IgnoreCase))
+			{
+				OutSnippetName = TEXT("ExecuteToolHandler.cpp.snippet");
+				return true;
+			}
+
+			if (CleanName.Equals(TEXT("ChatCommand.cpp.snippet"), ESearchCase::IgnoreCase)
+				|| CleanName.Equals(TEXT("chat"), ESearchCase::IgnoreCase)
+				|| CleanName.Equals(TEXT("chat_command"), ESearchCase::IgnoreCase))
+			{
+				OutSnippetName = TEXT("ChatCommand.cpp.snippet");
+				return true;
+			}
+
+			OutFailureReason = TEXT("snippetName must be one of ToolDefinition.cpp.snippet, ExecuteToolHandler.cpp.snippet, or ChatCommand.cpp.snippet.");
+			return false;
+		}
+
+		void AddSnippetIssue(
+			TArray<TSharedPtr<FJsonValue>>& Issues,
+			const FString& Severity,
+			const FString& Code,
+			const FString& Message)
+		{
+			TSharedPtr<FJsonObject> IssueObject = MakeShared<FJsonObject>();
+			IssueObject->SetStringField(TEXT("severity"), Severity);
+			IssueObject->SetStringField(TEXT("code"), Code);
+			IssueObject->SetStringField(TEXT("message"), Message);
+			Issues.Add(MakeShared<FJsonValueObject>(IssueObject));
+		}
+
+		bool ContainsAnyPattern(const FString& Text, const TArray<FString>& Patterns, FString& OutPattern)
+		{
+			for (const FString& Pattern : Patterns)
+			{
+				if (Text.Contains(Pattern, ESearchCase::IgnoreCase))
+				{
+					OutPattern = Pattern;
+					return true;
+				}
+			}
+			return false;
+		}
+
+		TSharedPtr<FJsonObject> ValidateCppSnippetText(
+			const FString& SnippetText,
+			const FString& SnippetName,
+			const FString& ToolName)
+		{
+			TArray<TSharedPtr<FJsonValue>> Issues;
+			int32 ErrorCount = 0;
+			int32 WarningCount = 0;
+			auto AddIssue = [&](const FString& Severity, const FString& Code, const FString& Message)
+			{
+				AddSnippetIssue(Issues, Severity, Code, Message);
+				if (Severity == TEXT("error"))
+				{
+					++ErrorCount;
+				}
+				else
+				{
+					++WarningCount;
+				}
+			};
+
+			const FString CleanSnippetName = SnippetName.TrimStartAndEnd();
+			const FString CleanToolName = ToolName.TrimStartAndEnd();
+			const FString TrimmedSnippet = SnippetText.TrimStartAndEnd();
+			if (TrimmedSnippet.IsEmpty())
+			{
+				AddIssue(TEXT("error"), TEXT("empty_snippet"), TEXT("Snippet text is empty."));
+			}
+			if (SnippetText.Len() > 50000)
+			{
+				AddIssue(TEXT("warning"), TEXT("large_snippet"), TEXT("Snippet is larger than 50k characters; review before applying."));
+			}
+
+			FString MatchedPattern;
+			if (ContainsAnyPattern(SnippetText, {
+				TEXT("FPlatformProcess::ExecProcess"),
+				TEXT("FPlatformProcess::CreateProc"),
+				TEXT(" system("),
+				TEXT("\tsystem("),
+				TEXT("popen(")
+			}, MatchedPattern))
+			{
+				AddIssue(TEXT("error"), TEXT("process_execution"), FString::Printf(TEXT("Snippet contains process execution pattern '%s'."), *MatchedPattern));
+			}
+
+			if (ContainsAnyPattern(SnippetText, {
+				TEXT("IFileManager::Get().Delete"),
+				TEXT("DeleteDirectory("),
+				TEXT("DeleteDirectoryRecursively"),
+				TEXT("FPlatformFileManager::Get().GetPlatformFile().Delete")
+			}, MatchedPattern))
+			{
+				AddIssue(TEXT("error"), TEXT("destructive_file_operation"), FString::Printf(TEXT("Snippet contains destructive file operation pattern '%s'."), *MatchedPattern));
+			}
+
+			if (ContainsAnyPattern(SnippetText, {
+				TEXT("FFileHelper::SaveStringToFile"),
+				TEXT("FFileHelper::SaveArrayToFile"),
+				TEXT("CreateFileWriter("),
+				TEXT("std::ofstream")
+			}, MatchedPattern))
+			{
+				AddIssue(TEXT("error"), TEXT("file_write_operation"), FString::Printf(TEXT("Snippet contains file write pattern '%s'. Generated tools should route file edits through reviewed MCP utilities."), *MatchedPattern));
+			}
+
+			if (ContainsAnyPattern(SnippetText, {
+				TEXT("/Users/"),
+				TEXT("/private/"),
+				TEXT("/etc/"),
+				TEXT("/tmp/"),
+				TEXT("C:\\\\"),
+				TEXT("D:\\\\"),
+				TEXT("../"),
+				TEXT("..\\\\")
+			}, MatchedPattern))
+			{
+				AddIssue(TEXT("warning"), TEXT("external_path_literal"), FString::Printf(TEXT("Snippet contains path-like literal '%s'; verify it cannot write outside the project."), *MatchedPattern));
+			}
+
+			if (ContainsAnyPattern(SnippetText, {
+				TEXT("RunMcpExtensionPipeline("),
+				TEXT("TEXT(\"unreal.mcp_extension_pipeline\")"),
+				TEXT("ExecuteTool(TEXT(\"unreal.mcp_extension_pipeline\")")
+			}, MatchedPattern))
+			{
+				AddIssue(TEXT("error"), TEXT("recursive_pipeline_call"), FString::Printf(TEXT("Snippet contains recursive pipeline call pattern '%s'."), *MatchedPattern));
+			}
+
+			if (ContainsAnyPattern(SnippetText, {
+				TEXT("while (true"),
+				TEXT("while(true"),
+				TEXT("for (;;"),
+				TEXT("for(;;")
+			}, MatchedPattern))
+			{
+				AddIssue(TEXT("error"), TEXT("obvious_infinite_loop"), FString::Printf(TEXT("Snippet contains obvious infinite loop pattern '%s'."), *MatchedPattern));
+			}
+
+			if (SnippetText.Contains(TEXT("ExecuteTool(ToolName"), ESearchCase::IgnoreCase))
+			{
+				AddIssue(TEXT("warning"), TEXT("self_dispatch_risk"), TEXT("Snippet forwards ExecuteTool(ToolName, ...); verify this cannot recursively dispatch itself."));
+			}
+			if (SnippetText.Contains(TEXT("TODO"), ESearchCase::IgnoreCase))
+			{
+				AddIssue(TEXT("warning"), TEXT("todo_marker"), TEXT("Snippet still contains TODO markers."));
+			}
+			if (SnippetText.Contains(TEXT("MakeFlexibleObjectProperty"), ESearchCase::IgnoreCase)
+				|| SnippetText.Contains(TEXT("additionalProperties"), ESearchCase::IgnoreCase))
+			{
+				AddIssue(TEXT("warning"), TEXT("schema_flexibility"), TEXT("Snippet may introduce flexible object schema fields; validate OpenAI compatibility before applying."));
+			}
+
+			if (CleanSnippetName == TEXT("ExecuteToolHandler.cpp.snippet"))
+			{
+				if (!SnippetText.Contains(TEXT("return UnrealMcp::MakeExecutionResult"), ESearchCase::CaseSensitive)
+					&& !SnippetText.Contains(TEXT("return MakeExecutionResult"), ESearchCase::CaseSensitive))
+				{
+					AddIssue(TEXT("error"), TEXT("missing_make_execution_result"), TEXT("ExecuteTool handler snippet must return UnrealMcp::MakeExecutionResult or MakeExecutionResult."));
+				}
+				if (!CleanToolName.IsEmpty() && !SnippetText.Contains(FString::Printf(TEXT("TEXT(\"%s\")"), *CleanToolName), ESearchCase::CaseSensitive))
+				{
+					AddIssue(TEXT("warning"), TEXT("missing_tool_name_literal"), TEXT("ExecuteTool handler snippet does not contain the expected tool name literal."));
+				}
+			}
+			else if (CleanSnippetName == TEXT("ToolDefinition.cpp.snippet"))
+			{
+				if (!SnippetText.Contains(TEXT("AddToolDefinition"), ESearchCase::CaseSensitive))
+				{
+					AddIssue(TEXT("error"), TEXT("missing_add_tool_definition"), TEXT("Tool definition snippet must call UnrealMcp::AddToolDefinition."));
+				}
+				if (!SnippetText.Contains(TEXT("MakeObjectSchema"), ESearchCase::CaseSensitive))
+				{
+					AddIssue(TEXT("error"), TEXT("missing_object_schema"), TEXT("Tool definition snippet should build a fixed object schema with MakeObjectSchema."));
+				}
+				if (!CleanToolName.IsEmpty() && !SnippetText.Contains(FString::Printf(TEXT("TEXT(\"%s\")"), *CleanToolName), ESearchCase::CaseSensitive))
+				{
+					AddIssue(TEXT("warning"), TEXT("missing_tool_name_literal"), TEXT("Tool definition snippet does not contain the expected tool name literal."));
+				}
+			}
+			else if (CleanSnippetName == TEXT("ChatCommand.cpp.snippet"))
+			{
+				if (!SnippetText.Contains(TEXT("ExecuteTool"), ESearchCase::CaseSensitive))
+				{
+					AddIssue(TEXT("warning"), TEXT("missing_execute_tool"), TEXT("Chat command snippet does not call ExecuteTool."));
+				}
+				if (!SnippetText.Contains(TEXT("return"), ESearchCase::CaseSensitive))
+				{
+					AddIssue(TEXT("warning"), TEXT("missing_return"), TEXT("Chat command snippet does not return a result."));
+				}
+			}
+
+			TSharedPtr<FJsonObject> ResultObject = MakeShared<FJsonObject>();
+			ResultObject->SetStringField(TEXT("snippetName"), CleanSnippetName);
+			ResultObject->SetStringField(TEXT("toolName"), CleanToolName);
+			ResultObject->SetBoolField(TEXT("safe"), ErrorCount == 0);
+			ResultObject->SetNumberField(TEXT("errorCount"), ErrorCount);
+			ResultObject->SetNumberField(TEXT("warningCount"), WarningCount);
+			ResultObject->SetNumberField(TEXT("characterCount"), SnippetText.Len());
+			ResultObject->SetArrayField(TEXT("issues"), Issues);
+			return ResultObject;
+		}
+
 		enum class EMcpScaffoldInsertionStatus
 		{
 			WillInsert,
@@ -4387,9 +4608,14 @@ namespace UnrealMcp
 			bool bDryRun = true;
 			bool bApplyChatCommand = true;
 			bool bCreateBackup = true;
+			bool bValidateSnippets = true;
+			bool bAllowUnsafeSnippets = false;
 			Arguments.TryGetBoolField(TEXT("dryRun"), bDryRun);
 			Arguments.TryGetBoolField(TEXT("applyChatCommand"), bApplyChatCommand);
 			Arguments.TryGetBoolField(TEXT("createBackup"), bCreateBackup);
+			Arguments.TryGetBoolField(TEXT("validateSnippets"), bValidateSnippets);
+			Arguments.TryGetBoolField(TEXT("allowUnsafeSnippets"), bAllowUnsafeSnippets);
+			const int32 TargetDiffPreviewLines = FMath::Min(GetPositiveIntArgument(Arguments, TEXT("targetDiffPreviewLines"), 120), 1000);
 
 			TArray<TSharedPtr<FJsonValue>> Issues;
 			FString DefinitionSnippet;
@@ -4405,6 +4631,24 @@ namespace UnrealMcp
 				StructuredContent->SetStringField(TEXT("scaffoldDir"), ScaffoldDirectory);
 				StructuredContent->SetArrayField(TEXT("issues"), Issues);
 				return MakeExecutionResult(FailureReason, StructuredContent, true);
+			}
+
+			TArray<TSharedPtr<FJsonValue>> SnippetValidations;
+			bool bSnippetsSafe = true;
+			if (bValidateSnippets)
+			{
+				TSharedPtr<FJsonObject> DefinitionValidation = ValidateCppSnippetText(DefinitionSnippet, TEXT("ToolDefinition.cpp.snippet"), ToolName);
+				TSharedPtr<FJsonObject> HandlerValidation = ValidateCppSnippetText(HandlerSnippet, TEXT("ExecuteToolHandler.cpp.snippet"), ToolName);
+				bSnippetsSafe &= DefinitionValidation->GetBoolField(TEXT("safe"));
+				bSnippetsSafe &= HandlerValidation->GetBoolField(TEXT("safe"));
+				SnippetValidations.Add(MakeShared<FJsonValueObject>(DefinitionValidation));
+				SnippetValidations.Add(MakeShared<FJsonValueObject>(HandlerValidation));
+				if (bApplyChatCommand)
+				{
+					TSharedPtr<FJsonObject> ChatValidation = ValidateCppSnippetText(ChatCommandSnippet, TEXT("ChatCommand.cpp.snippet"), ToolName);
+					bSnippetsSafe &= ChatValidation->GetBoolField(TEXT("safe"));
+					SnippetValidations.Add(MakeShared<FJsonValueObject>(ChatValidation));
+				}
 			}
 
 			const FString SourcePath = GetMcpModuleSourcePath();
@@ -4477,6 +4721,57 @@ namespace UnrealMcp
 					FString())));
 			}
 
+			const bool bInsertionCanApply = bCanApply;
+			TSharedPtr<FJsonObject> TargetSourceDiff = MakeShared<FJsonObject>();
+			if (bInsertionCanApply)
+			{
+				FString PlannedSourceText = OriginalSourceText;
+				TArray<TSharedPtr<FJsonValue>> PlannedChanges;
+				bool bPlannedChanged = false;
+				PlanOrApplyScaffoldInsertion(
+					PlannedSourceText,
+					OriginalSourceText,
+					TEXT("AppendToolDefinitions"),
+					ToolName,
+					DefinitionSnippet,
+					DefinitionAnchor,
+					ToolNameNeedle,
+					false,
+					PlannedChanges,
+					bPlannedChanged);
+				PlanOrApplyScaffoldInsertion(
+					PlannedSourceText,
+					OriginalSourceText,
+					TEXT("ExecuteTool"),
+					ToolName,
+					HandlerSnippet,
+					HandlerAnchor,
+					ToolNameNeedle,
+					false,
+					PlannedChanges,
+					bPlannedChanged);
+				if (bApplyChatCommand)
+				{
+					PlanOrApplyScaffoldInsertion(
+						PlannedSourceText,
+						OriginalSourceText,
+						TEXT("ExecuteChatCommand"),
+						ToolName,
+						ChatCommandSnippet,
+						ChatCommandAnchor,
+						ChatCommandNeedle,
+						false,
+						PlannedChanges,
+						bPlannedChanged);
+				}
+				TargetSourceDiff = MakeTextDiffObject(OriginalSourceText, PlannedSourceText, TargetDiffPreviewLines);
+			}
+
+			if (bValidateSnippets && !bSnippetsSafe && !bAllowUnsafeSnippets)
+			{
+				bCanApply = false;
+			}
+
 			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
 			StructuredContent->SetStringField(TEXT("action"), TEXT("mcp_apply_scaffold"));
 			StructuredContent->SetStringField(TEXT("toolName"), ToolName);
@@ -4486,13 +4781,18 @@ namespace UnrealMcp
 			StructuredContent->SetBoolField(TEXT("dryRun"), bDryRun);
 			StructuredContent->SetBoolField(TEXT("canApply"), bCanApply);
 			StructuredContent->SetBoolField(TEXT("changed"), bChanged);
+			StructuredContent->SetBoolField(TEXT("validateSnippets"), bValidateSnippets);
+			StructuredContent->SetBoolField(TEXT("snippetsSafe"), bSnippetsSafe);
+			StructuredContent->SetBoolField(TEXT("allowUnsafeSnippets"), bAllowUnsafeSnippets);
 			StructuredContent->SetStringField(TEXT("sourceHashBefore"), SourceHashBefore);
 			StructuredContent->SetArrayField(TEXT("issues"), Issues);
+			StructuredContent->SetArrayField(TEXT("snippetValidations"), SnippetValidations);
 			StructuredContent->SetArrayField(TEXT("changes"), Changes);
+			StructuredContent->SetObjectField(TEXT("targetSourceDiff"), TargetSourceDiff);
 
 			if (!bCanApply)
 			{
-				return MakeExecutionResult(TEXT("Scaffold cannot be applied safely. See changes/issues for conflicts or missing anchors."), StructuredContent, true);
+				return MakeExecutionResult(TEXT("Scaffold cannot be applied safely. See changes, issues, snippetValidations, and targetSourceDiff."), StructuredContent, true);
 			}
 
 			if (bDryRun)
@@ -5115,6 +5415,30 @@ namespace UnrealMcp
 			OutPreviewText = FString::Join(PreviewLines, TEXT("\n"));
 		}
 
+		TSharedPtr<FJsonObject> MakeTextDiffObject(const FString& BeforeText, const FString& AfterText, int32 MaxPreviewLines)
+		{
+			TArray<FString> BeforeLines;
+			TArray<FString> AfterLines;
+			BeforeText.ParseIntoArrayLines(BeforeLines, false);
+			AfterText.ParseIntoArrayLines(AfterLines, false);
+
+			TArray<TSharedPtr<FJsonValue>> ChangedLines;
+			FString PreviewText;
+			int32 ChangedLineCount = 0;
+			bool bTruncated = false;
+			BuildSimpleLineDiffPreview(BeforeText, AfterText, MaxPreviewLines, ChangedLines, PreviewText, ChangedLineCount, bTruncated);
+
+			TSharedPtr<FJsonObject> DiffObject = MakeShared<FJsonObject>();
+			DiffObject->SetNumberField(TEXT("beforeLineCount"), BeforeLines.Num());
+			DiffObject->SetNumberField(TEXT("afterLineCount"), AfterLines.Num());
+			DiffObject->SetNumberField(TEXT("changedLineCount"), ChangedLineCount);
+			DiffObject->SetBoolField(TEXT("hasChanges"), ChangedLineCount > 0);
+			DiffObject->SetBoolField(TEXT("truncated"), bTruncated);
+			DiffObject->SetStringField(TEXT("previewText"), PreviewText);
+			DiffObject->SetArrayField(TEXT("changedLines"), ChangedLines);
+			return DiffObject;
+		}
+
 		FUnrealMcpExecutionResult DiffLastMcpApply(const FJsonObject& Arguments)
 		{
 			FString ManifestPath = GetLatestMcpExtensionManifestPath();
@@ -5226,6 +5550,322 @@ namespace UnrealMcp
 					ToolName.IsEmpty() ? TEXT("<unknown>") : *ToolName,
 					ChangedLineCount,
 					bTruncated ? TEXT("true") : TEXT("false")),
+				StructuredContent,
+				false);
+		}
+
+		FUnrealMcpExecutionResult ValidateCppSnippet(const FJsonObject& Arguments)
+		{
+			FString SnippetText;
+			FString SnippetName = TEXT("ExecuteToolHandler.cpp.snippet");
+			FString ToolName;
+			FString ScaffoldDir;
+			FString OutputRoot;
+			Arguments.TryGetStringField(TEXT("snippetText"), SnippetText);
+			Arguments.TryGetStringField(TEXT("snippetName"), SnippetName);
+			Arguments.TryGetStringField(TEXT("toolName"), ToolName);
+			Arguments.TryGetStringField(TEXT("scaffoldDir"), ScaffoldDir);
+			Arguments.TryGetStringField(TEXT("outputRoot"), OutputRoot);
+
+			FString CanonicalSnippetName;
+			FString FailureReason;
+			if (!CanonicalizeScaffoldSnippetName(SnippetName, CanonicalSnippetName, FailureReason))
+			{
+				return MakeExecutionResult(FailureReason, nullptr, true);
+			}
+
+			FString Source = TEXT("snippetText");
+			FString SnippetPath;
+			if (SnippetText.TrimStartAndEnd().IsEmpty())
+			{
+				TSharedPtr<FJsonObject> ResolveArguments = MakeShared<FJsonObject>();
+				ResolveArguments->SetStringField(TEXT("toolName"), ToolName);
+				ResolveArguments->SetStringField(TEXT("scaffoldDir"), ScaffoldDir);
+				ResolveArguments->SetStringField(TEXT("outputRoot"), OutputRoot);
+				FString ResolvedScaffoldDir;
+				FString ResolvedToolName;
+				if (!ResolveMcpScaffoldDirectory(*ResolveArguments, ResolvedScaffoldDir, ResolvedToolName, FailureReason))
+				{
+					return MakeExecutionResult(FailureReason, nullptr, true);
+				}
+				if (ToolName.TrimStartAndEnd().IsEmpty())
+				{
+					ToolName = ResolvedToolName;
+				}
+				SnippetPath = FPaths::Combine(ResolvedScaffoldDir, CanonicalSnippetName);
+				Source = TEXT("scaffoldFile");
+				if (!FFileHelper::LoadFileToString(SnippetText, *SnippetPath))
+				{
+					return MakeExecutionResult(FString::Printf(TEXT("Failed to read snippet '%s'."), *SnippetPath), nullptr, true);
+				}
+			}
+
+			TSharedPtr<FJsonObject> StructuredContent = ValidateCppSnippetText(SnippetText, CanonicalSnippetName, ToolName);
+			StructuredContent->SetStringField(TEXT("action"), TEXT("mcp_validate_cpp_snippet"));
+			StructuredContent->SetStringField(TEXT("source"), Source);
+			if (!SnippetPath.IsEmpty())
+			{
+				StructuredContent->SetStringField(TEXT("snippetPath"), SnippetPath);
+			}
+
+			const bool bSafe = StructuredContent->GetBoolField(TEXT("safe"));
+			return MakeExecutionResult(
+				FString::Printf(TEXT("C++ snippet validation for %s safe=%s errors=%d warnings=%d."),
+					*CanonicalSnippetName,
+					bSafe ? TEXT("true") : TEXT("false"),
+					static_cast<int32>(StructuredContent->GetNumberField(TEXT("errorCount"))),
+					static_cast<int32>(StructuredContent->GetNumberField(TEXT("warningCount")))),
+				StructuredContent,
+				!bSafe);
+		}
+
+		FUnrealMcpExecutionResult PatchScaffoldSnippet(const FJsonObject& Arguments)
+		{
+			FString SnippetName;
+			if (!Arguments.TryGetStringField(TEXT("snippetName"), SnippetName) || SnippetName.TrimStartAndEnd().IsEmpty())
+			{
+				return MakeExecutionResult(TEXT("snippetName is required."), nullptr, true);
+			}
+
+			FString CanonicalSnippetName;
+			FString FailureReason;
+			if (!CanonicalizeScaffoldSnippetName(SnippetName, CanonicalSnippetName, FailureReason))
+			{
+				return MakeExecutionResult(FailureReason, nullptr, true);
+			}
+
+			FString ToolName;
+			FString ScaffoldDir;
+			FString OutputRoot;
+			Arguments.TryGetStringField(TEXT("toolName"), ToolName);
+			Arguments.TryGetStringField(TEXT("scaffoldDir"), ScaffoldDir);
+			Arguments.TryGetStringField(TEXT("outputRoot"), OutputRoot);
+
+			TSharedPtr<FJsonObject> ResolveArguments = MakeShared<FJsonObject>();
+			ResolveArguments->SetStringField(TEXT("toolName"), ToolName);
+			ResolveArguments->SetStringField(TEXT("scaffoldDir"), ScaffoldDir);
+			ResolveArguments->SetStringField(TEXT("outputRoot"), OutputRoot);
+			FString ResolvedScaffoldDir;
+			FString ResolvedToolName;
+			if (!ResolveMcpScaffoldDirectory(*ResolveArguments, ResolvedScaffoldDir, ResolvedToolName, FailureReason))
+			{
+				return MakeExecutionResult(FailureReason, nullptr, true);
+			}
+			if (ToolName.TrimStartAndEnd().IsEmpty())
+			{
+				ToolName = ResolvedToolName;
+			}
+
+			const FString SnippetPath = FPaths::Combine(ResolvedScaffoldDir, CanonicalSnippetName);
+			FString BeforeText;
+			if (!FFileHelper::LoadFileToString(BeforeText, *SnippetPath))
+			{
+				return MakeExecutionResult(FString::Printf(TEXT("Failed to read snippet '%s'."), *SnippetPath), nullptr, true);
+			}
+
+			FString Mode;
+			FString NewText;
+			FString FindText;
+			FString ReplaceText;
+			FString AppendText;
+			FString PrependText;
+			bool bDryRun = true;
+			bool bCreateBackup = true;
+			bool bReplaceAll = false;
+			bool bAllowUnsafe = false;
+			Arguments.TryGetStringField(TEXT("mode"), Mode);
+			Arguments.TryGetStringField(TEXT("newText"), NewText);
+			Arguments.TryGetStringField(TEXT("findText"), FindText);
+			Arguments.TryGetStringField(TEXT("replaceText"), ReplaceText);
+			Arguments.TryGetStringField(TEXT("appendText"), AppendText);
+			Arguments.TryGetStringField(TEXT("prependText"), PrependText);
+			Arguments.TryGetBoolField(TEXT("dryRun"), bDryRun);
+			Arguments.TryGetBoolField(TEXT("createBackup"), bCreateBackup);
+			Arguments.TryGetBoolField(TEXT("replaceAll"), bReplaceAll);
+			Arguments.TryGetBoolField(TEXT("allowUnsafe"), bAllowUnsafe);
+			const int32 DiffPreviewLines = FMath::Min(GetPositiveIntArgument(Arguments, TEXT("diffPreviewLines"), 120), 1000);
+
+			Mode = Mode.TrimStartAndEnd().ToLower();
+			if (Mode.IsEmpty())
+			{
+				if (!FindText.IsEmpty())
+				{
+					Mode = TEXT("replace_text");
+				}
+				else if (!AppendText.IsEmpty())
+				{
+					Mode = TEXT("append");
+				}
+				else if (!PrependText.IsEmpty())
+				{
+					Mode = TEXT("prepend");
+				}
+				else
+				{
+					Mode = TEXT("replace_all");
+				}
+			}
+
+			FString AfterText = BeforeText;
+			bool bAlreadyApplied = false;
+			if (Mode == TEXT("replace_all"))
+			{
+				AfterText = NewText;
+			}
+			else if (Mode == TEXT("replace_text"))
+			{
+				if (FindText.IsEmpty())
+				{
+					return MakeExecutionResult(TEXT("findText is required when mode=replace_text."), nullptr, true);
+				}
+				if (!AfterText.Contains(FindText, ESearchCase::CaseSensitive))
+				{
+					if (!ReplaceText.IsEmpty() && AfterText.Contains(ReplaceText, ESearchCase::CaseSensitive))
+					{
+						bAlreadyApplied = true;
+					}
+					else
+					{
+						return MakeExecutionResult(TEXT("findText was not found and replaceText does not already appear in the snippet."), nullptr, true);
+					}
+				}
+				else if (bReplaceAll)
+				{
+					AfterText.ReplaceInline(*FindText, *ReplaceText, ESearchCase::CaseSensitive);
+				}
+				else
+				{
+					const int32 Index = AfterText.Find(FindText, ESearchCase::CaseSensitive);
+					AfterText = AfterText.Left(Index) + ReplaceText + AfterText.Mid(Index + FindText.Len());
+				}
+			}
+			else if (Mode == TEXT("append"))
+			{
+				if (AppendText.IsEmpty())
+				{
+					return MakeExecutionResult(TEXT("appendText is required when mode=append."), nullptr, true);
+				}
+				if (AfterText.Contains(AppendText, ESearchCase::CaseSensitive))
+				{
+					bAlreadyApplied = true;
+				}
+				else
+				{
+					AfterText += (AfterText.EndsWith(TEXT("\n")) ? FString() : FString(TEXT("\n"))) + AppendText;
+				}
+			}
+			else if (Mode == TEXT("prepend"))
+			{
+				if (PrependText.IsEmpty())
+				{
+					return MakeExecutionResult(TEXT("prependText is required when mode=prepend."), nullptr, true);
+				}
+				if (AfterText.Contains(PrependText, ESearchCase::CaseSensitive))
+				{
+					bAlreadyApplied = true;
+				}
+				else
+				{
+					AfterText = PrependText + (PrependText.EndsWith(TEXT("\n")) ? FString() : FString(TEXT("\n"))) + AfterText;
+				}
+			}
+			else
+			{
+				return MakeExecutionResult(TEXT("mode must be replace_all, replace_text, append, or prepend."), nullptr, true);
+			}
+
+			const bool bChanged = BeforeText != AfterText;
+			TSharedPtr<FJsonObject> ValidationObject = ValidateCppSnippetText(AfterText, CanonicalSnippetName, ToolName);
+			const bool bSafe = ValidationObject->GetBoolField(TEXT("safe"));
+			TSharedPtr<FJsonObject> DiffObject = MakeTextDiffObject(BeforeText, AfterText, DiffPreviewLines);
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("action"), TEXT("mcp_patch_scaffold_snippet"));
+			StructuredContent->SetStringField(TEXT("toolName"), ToolName);
+			StructuredContent->SetStringField(TEXT("toolId"), SanitizeMcpToolIdForPath(ToolName));
+			StructuredContent->SetStringField(TEXT("scaffoldDir"), ResolvedScaffoldDir);
+			StructuredContent->SetStringField(TEXT("snippetName"), CanonicalSnippetName);
+			StructuredContent->SetStringField(TEXT("snippetPath"), SnippetPath);
+			StructuredContent->SetStringField(TEXT("mode"), Mode);
+			StructuredContent->SetBoolField(TEXT("dryRun"), bDryRun);
+			StructuredContent->SetBoolField(TEXT("changed"), bChanged);
+			StructuredContent->SetBoolField(TEXT("alreadyApplied"), bAlreadyApplied || !bChanged);
+			StructuredContent->SetBoolField(TEXT("createBackup"), bCreateBackup);
+			StructuredContent->SetBoolField(TEXT("allowUnsafe"), bAllowUnsafe);
+			StructuredContent->SetStringField(TEXT("beforeHash"), HashTextForManifest(BeforeText));
+			StructuredContent->SetStringField(TEXT("afterHash"), HashTextForManifest(AfterText));
+			StructuredContent->SetObjectField(TEXT("validation"), ValidationObject);
+			StructuredContent->SetObjectField(TEXT("snippetDiff"), DiffObject);
+
+			if (!bSafe && !bAllowUnsafe)
+			{
+				return MakeExecutionResult(TEXT("Patched snippet failed static safety validation. Pass allowUnsafe=true only after manual review."), StructuredContent, true);
+			}
+
+			if (bDryRun || !bChanged)
+			{
+				return MakeExecutionResult(
+					FString::Printf(TEXT("%s snippet patch for %s changed=%s safe=%s."),
+						bDryRun ? TEXT("Dry run") : TEXT("No-op"),
+						*CanonicalSnippetName,
+						bChanged ? TEXT("true") : TEXT("false"),
+						bSafe ? TEXT("true") : TEXT("false")),
+					StructuredContent,
+					false);
+			}
+
+			FString BackupDirectory;
+			FString BackupBeforePath;
+			FString BackupAfterPath;
+			if (bCreateBackup)
+			{
+				const FString Timestamp = FDateTime::UtcNow().ToString(TEXT("%Y%m%d-%H%M%S"));
+				const FString SnippetId = FPaths::GetBaseFilename(CanonicalSnippetName).Replace(TEXT("."), TEXT("_"));
+				BackupDirectory = FPaths::Combine(GetUnrealMcpSavedRoot(), TEXT("SnippetBackups"), Timestamp + TEXT("_") + SanitizeMcpToolIdForPath(ToolName) + TEXT("_") + SnippetId);
+				BackupBeforePath = FPaths::Combine(BackupDirectory, CanonicalSnippetName + TEXT(".before"));
+				BackupAfterPath = FPaths::Combine(BackupDirectory, CanonicalSnippetName + TEXT(".after"));
+				if (!IFileManager::Get().MakeDirectory(*BackupDirectory, true)
+					|| !FFileHelper::SaveStringToFile(BeforeText, *BackupBeforePath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM)
+					|| !FFileHelper::SaveStringToFile(AfterText, *BackupAfterPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+				{
+					return MakeExecutionResult(FString::Printf(TEXT("Failed to create snippet backup under '%s'."), *BackupDirectory), StructuredContent, true);
+				}
+			}
+
+			if (!FFileHelper::SaveStringToFile(AfterText, *SnippetPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+			{
+				return MakeExecutionResult(FString::Printf(TEXT("Failed to write snippet '%s'."), *SnippetPath), StructuredContent, true);
+			}
+
+			if (bCreateBackup)
+			{
+				TSharedPtr<FJsonObject> ManifestObject = MakeShared<FJsonObject>();
+				ManifestObject->SetStringField(TEXT("action"), TEXT("mcp_patch_scaffold_snippet"));
+				ManifestObject->SetStringField(TEXT("toolName"), ToolName);
+				ManifestObject->SetStringField(TEXT("scaffoldDir"), ResolvedScaffoldDir);
+				ManifestObject->SetStringField(TEXT("snippetName"), CanonicalSnippetName);
+				ManifestObject->SetStringField(TEXT("snippetPath"), SnippetPath);
+				ManifestObject->SetStringField(TEXT("backupDirectory"), BackupDirectory);
+				ManifestObject->SetStringField(TEXT("backupBeforePath"), BackupBeforePath);
+				ManifestObject->SetStringField(TEXT("backupAfterPath"), BackupAfterPath);
+				ManifestObject->SetStringField(TEXT("beforeHash"), HashTextForManifest(BeforeText));
+				ManifestObject->SetStringField(TEXT("afterHash"), HashTextForManifest(AfterText));
+				ManifestObject->SetStringField(TEXT("patchedAtUtc"), FDateTime::UtcNow().ToIso8601());
+				ManifestObject->SetObjectField(TEXT("validation"), ValidationObject);
+				FString ManifestFailure;
+				const FString ManifestPath = FPaths::Combine(BackupDirectory, TEXT("Manifest.json"));
+				if (!SaveJsonObjectToFile(ManifestObject, ManifestPath, ManifestFailure))
+				{
+					return MakeExecutionResult(ManifestFailure, StructuredContent, true);
+				}
+				StructuredContent->SetStringField(TEXT("backupDirectory"), BackupDirectory);
+				StructuredContent->SetStringField(TEXT("backupBeforePath"), BackupBeforePath);
+				StructuredContent->SetStringField(TEXT("backupAfterPath"), BackupAfterPath);
+				StructuredContent->SetStringField(TEXT("manifestPath"), ManifestPath);
+			}
+
+			return MakeExecutionResult(
+				FString::Printf(TEXT("Patched %s for %s. Backup: %s"), *CanonicalSnippetName, *ToolName, BackupDirectory.IsEmpty() ? TEXT("<none>") : *BackupDirectory),
 				StructuredContent,
 				false);
 		}
@@ -9050,6 +9690,54 @@ void FUnrealMcpModule::AppendToolDefinitions(TArray<TSharedPtr<FJsonValue>>& Too
 
 		{
 			TSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
+			PropertiesObject->SetObjectField(TEXT("snippetText"), UnrealMcp::MakeStringProperty(TEXT("Raw C++ snippet text to validate. If empty, reads scaffoldDir/toolName + snippetName.")));
+			PropertiesObject->SetObjectField(TEXT("snippetName"), UnrealMcp::MakeStringProperty(TEXT("Snippet file or alias: ToolDefinition.cpp.snippet, ExecuteToolHandler.cpp.snippet, ChatCommand.cpp.snippet."), TEXT("ExecuteToolHandler.cpp.snippet")));
+			PropertiesObject->SetObjectField(TEXT("toolName"), UnrealMcp::MakeStringProperty(TEXT("Expected MCP tool name for tool-name literal checks.")));
+			PropertiesObject->SetObjectField(TEXT("scaffoldDir"), UnrealMcp::MakeStringProperty(TEXT("Project-relative or absolute scaffold directory to read when snippetText is empty.")));
+			PropertiesObject->SetObjectField(TEXT("outputRoot"), UnrealMcp::MakeStringProperty(TEXT("Project-relative scaffold root used with toolName."), TEXT("Tools/UnrealMcpToolScaffolds")));
+
+			TSharedPtr<FJsonObject> InputSchema = UnrealMcp::MakeObjectSchema();
+			InputSchema->SetObjectField(TEXT("properties"), PropertiesObject);
+
+			UnrealMcp::AddToolDefinition(
+				ToolsArray,
+				TEXT("unreal.mcp_validate_cpp_snippet"),
+				TEXT("Validate C++ Snippet"),
+				TEXT("Runs static safety checks against MCP scaffold C++ snippets before applying them to the plugin source."),
+				InputSchema);
+		}
+
+		{
+			TSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
+			PropertiesObject->SetObjectField(TEXT("toolName"), UnrealMcp::MakeStringProperty(TEXT("MCP tool name whose scaffold snippet should be patched. Used when scaffoldDir is empty.")));
+			PropertiesObject->SetObjectField(TEXT("scaffoldDir"), UnrealMcp::MakeStringProperty(TEXT("Project-relative or absolute scaffold directory containing the snippet.")));
+			PropertiesObject->SetObjectField(TEXT("outputRoot"), UnrealMcp::MakeStringProperty(TEXT("Project-relative scaffold root used with toolName."), TEXT("Tools/UnrealMcpToolScaffolds")));
+			PropertiesObject->SetObjectField(TEXT("snippetName"), UnrealMcp::MakeStringProperty(TEXT("Snippet file or alias: ToolDefinition.cpp.snippet, ExecuteToolHandler.cpp.snippet, ChatCommand.cpp.snippet.")));
+			PropertiesObject->SetObjectField(TEXT("mode"), UnrealMcp::MakeStringProperty(TEXT("Patch mode: replace_all, replace_text, append, or prepend. Auto-selected when empty.")));
+			PropertiesObject->SetObjectField(TEXT("newText"), UnrealMcp::MakeStringProperty(TEXT("Replacement text for replace_all mode.")));
+			PropertiesObject->SetObjectField(TEXT("findText"), UnrealMcp::MakeStringProperty(TEXT("Exact text to find for replace_text mode.")));
+			PropertiesObject->SetObjectField(TEXT("replaceText"), UnrealMcp::MakeStringProperty(TEXT("Replacement text for replace_text mode.")));
+			PropertiesObject->SetObjectField(TEXT("appendText"), UnrealMcp::MakeStringProperty(TEXT("Text to append when mode=append.")));
+			PropertiesObject->SetObjectField(TEXT("prependText"), UnrealMcp::MakeStringProperty(TEXT("Text to prepend when mode=prepend.")));
+			PropertiesObject->SetObjectField(TEXT("replaceAll"), UnrealMcp::MakeBoolProperty(TEXT("Replace all findText occurrences instead of just the first."), false));
+			PropertiesObject->SetObjectField(TEXT("dryRun"), UnrealMcp::MakeBoolProperty(TEXT("Preview snippet changes without writing the file."), true));
+			PropertiesObject->SetObjectField(TEXT("createBackup"), UnrealMcp::MakeBoolProperty(TEXT("Create a timestamped snippet backup before writing."), true));
+			PropertiesObject->SetObjectField(TEXT("allowUnsafe"), UnrealMcp::MakeBoolProperty(TEXT("Allow writing snippets that fail static validation. Use only after manual review."), false));
+			PropertiesObject->SetObjectField(TEXT("diffPreviewLines"), UnrealMcp::MakeNumberProperty(TEXT("Maximum snippet diff preview lines."), 120.0));
+
+			TSharedPtr<FJsonObject> InputSchema = UnrealMcp::MakeObjectSchema();
+			InputSchema->SetObjectField(TEXT("properties"), PropertiesObject);
+
+			UnrealMcp::AddToolDefinition(
+				ToolsArray,
+				TEXT("unreal.mcp_patch_scaffold_snippet"),
+				TEXT("Patch MCP Scaffold Snippet"),
+				TEXT("Safely patches a generated MCP scaffold snippet with dry-run diff, static validation, idempotence checks, and backups."),
+				InputSchema);
+		}
+
+		{
+			TSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
 			PropertiesObject->SetObjectField(TEXT("toolName"), UnrealMcp::MakeStringProperty(TEXT("Existing MCP tool name to validate. Used when schemaJson is empty.")));
 			PropertiesObject->SetObjectField(TEXT("schemaJson"), UnrealMcp::MakeStringProperty(TEXT("Raw JSON object schema to validate. If set, this takes precedence over toolName.")));
 			PropertiesObject->SetObjectField(TEXT("returnNormalizedSchema"), UnrealMcp::MakeBoolProperty(TEXT("Whether to include the normalized schema in structured output."), true));
@@ -9119,6 +9807,9 @@ void FUnrealMcpModule::AppendToolDefinitions(TArray<TSharedPtr<FJsonValue>>& Too
 			PropertiesObject->SetObjectField(TEXT("dryRun"), UnrealMcp::MakeBoolProperty(TEXT("Preview changes without modifying source."), true));
 			PropertiesObject->SetObjectField(TEXT("applyChatCommand"), UnrealMcp::MakeBoolProperty(TEXT("Whether to apply ChatCommand.cpp.snippet."), true));
 			PropertiesObject->SetObjectField(TEXT("createBackup"), UnrealMcp::MakeBoolProperty(TEXT("Whether to create rollback backup and manifest when dryRun=false."), true));
+			PropertiesObject->SetObjectField(TEXT("validateSnippets"), UnrealMcp::MakeBoolProperty(TEXT("Whether to run C++ snippet safety validation before applying."), true));
+			PropertiesObject->SetObjectField(TEXT("allowUnsafeSnippets"), UnrealMcp::MakeBoolProperty(TEXT("Allow applying snippets that fail static validation. Use only after manual review."), false));
+			PropertiesObject->SetObjectField(TEXT("targetDiffPreviewLines"), UnrealMcp::MakeNumberProperty(TEXT("Maximum target source diff preview lines returned during dry run/apply."), 120.0));
 
 			TSharedPtr<FJsonObject> InputSchema = UnrealMcp::MakeObjectSchema();
 			InputSchema->SetObjectField(TEXT("properties"), PropertiesObject);
@@ -13152,6 +13843,20 @@ FUnrealMcpExecutionResult FUnrealMcpModule::ExecuteTool(const FString& ToolName,
 			TArray<TSharedPtr<FJsonValue>> ToolsArray;
 			AppendToolDefinitions(ToolsArray);
 			return UnrealMcp::InspectMcpScaffold(Arguments, ToolsArray);
+		}
+
+		if (ToolName == TEXT("unreal.mcp_validate_cpp_snippet"))
+		{
+			return UnrealMcp::ValidateCppSnippet(Arguments);
+		}
+
+		if (ToolName == TEXT("unreal.mcp_patch_scaffold_snippet"))
+		{
+			if (UnrealMcp::IsEditorPlaying())
+			{
+				return UnrealMcp::MakePieBlockedResult(ToolName);
+			}
+			return UnrealMcp::PatchScaffoldSnippet(Arguments);
 		}
 
 		if (ToolName == TEXT("unreal.mcp_validate_tool_schema"))

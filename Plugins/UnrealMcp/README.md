@@ -68,6 +68,8 @@ Editor action tools:
 - `unreal.scaffold_mcp_tool`
 - `unreal.mcp_list_scaffolds`
 - `unreal.mcp_inspect_scaffold`
+- `unreal.mcp_validate_cpp_snippet`
+- `unreal.mcp_patch_scaffold_snippet`
 - `unreal.mcp_validate_tool_schema`
 - `unreal.mcp_apply_scaffold`
 - `unreal.mcp_rollback_last_extension`
@@ -292,6 +294,18 @@ MCP extension safety checks:
 ```text
 /tool unreal.mcp_apply_scaffold {"toolName":"unreal.my_custom_tool","dryRun":false}
 ```
+
+Validate or patch generated snippets before applying them:
+
+```text
+/tool unreal.mcp_validate_cpp_snippet {"toolName":"unreal.my_custom_tool","snippetName":"ExecuteToolHandler.cpp.snippet"}
+```
+
+```text
+/tool unreal.mcp_patch_scaffold_snippet {"toolName":"unreal.my_custom_tool","snippetName":"ExecuteToolHandler.cpp.snippet","findText":"TODO","replaceText":"Reviewed by the snippet safety layer.","dryRun":true}
+```
+
+`unreal.mcp_validate_cpp_snippet` checks generated C++ snippets for risky patterns such as process execution, destructive file operations, external path literals, recursive pipeline calls, obvious infinite loops, missing handler returns, and flexible schema warnings. `unreal.mcp_patch_scaffold_snippet` can edit `ToolDefinition.cpp.snippet`, `ExecuteToolHandler.cpp.snippet`, or `ChatCommand.cpp.snippet` with dry-run diff previews, idempotence checks, backups, and the same static validation gate.
 
 Build the editor after applying snippets:
 
