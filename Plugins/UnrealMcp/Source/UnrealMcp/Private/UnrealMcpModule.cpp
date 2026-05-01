@@ -4055,6 +4055,33 @@ namespace UnrealMcp
 			return FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UnrealMcp/LastExtensionApply.json")));
 		}
 
+		FString GetMcpExtensionLockPath()
+		{
+			return FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UnrealMcp/ExtensionSession.lock")));
+		}
+
+		FString GetMcpProjectStateBackupRoot()
+		{
+			return FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UnrealMcp/ProjectStateBackups")));
+		}
+
+		FString GetMcpModuleHeaderPath()
+		{
+			return FPaths::ConvertRelativePathToFull(FPaths::Combine(
+				FPaths::ProjectDir(),
+				TEXT("Plugins/UnrealMcp/Source/UnrealMcp/Public/UnrealMcpModule.h")));
+		}
+
+		FString GetProjectReadmePath()
+		{
+			return FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectDir(), TEXT("README.md")));
+		}
+
+		FString GetPluginReadmePath()
+		{
+			return FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectDir(), TEXT("Plugins/UnrealMcp/README.md")));
+		}
+
 		bool LoadJsonObjectFromFile(const FString& FilePath, TSharedPtr<FJsonObject>& OutObject, FString& OutFailureReason)
 		{
 			FString JsonText;
@@ -5059,6 +5086,218 @@ namespace UnrealMcp
 			return true;
 		}
 
+		FString MakePathRelativeToProject(const FString& Path)
+		{
+			FString RelativePath = FPaths::ConvertRelativePathToFull(Path);
+			FString ProjectDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+			FPaths::NormalizeFilename(RelativePath);
+			FPaths::NormalizeDirectoryName(ProjectDir);
+			FPaths::MakePathRelativeTo(RelativePath, *ProjectDir);
+			return RelativePath;
+		}
+
+		bool ParseIsoUtc(const FString& IsoText, FDateTime& OutDateTime)
+		{
+			if (IsoText.TrimStartAndEnd().IsEmpty())
+			{
+				return false;
+			}
+			return FDateTime::ParseIso8601(*IsoText, OutDateTime);
+		}
+
+		bool IsExtensionLockStale(const TSharedPtr<FJsonObject>& LockObject)
+		{
+			if (!LockObject.IsValid())
+			{
+				return true;
+			}
+
+			FString ExpiresAtUtc;
+			if (!LockObject->TryGetStringField(TEXT("expiresAtUtc"), ExpiresAtUtc))
+			{
+				return true;
+			}
+
+			FDateTime ExpiresAt;
+			if (!ParseIsoUtc(ExpiresAtUtc, ExpiresAt))
+			{
+				return true;
+			}
+
+			return FDateTime::UtcNow() >= ExpiresAt;
+		}
+
+		TSharedPtr<FJsonObject> MakeExtensionLockObject(
+			const FString& SessionId,
+			const FString& Owner,
+			const FString& Reason,
+			int32 TtlSeconds)
+		{
+			const FDateTime Now = FDateTime::UtcNow();
+			const int32 SafeTtlSeconds = FMath::Clamp(TtlSeconds, 30, 86400);
+
+			TSharedPtr<FJsonObject> LockObject = MakeShared<FJsonObject>();
+			LockObject->SetStringField(TEXT("sessionId"), SessionId);
+			LockObject->SetStringField(TEXT("owner"), Owner.TrimStartAndEnd().IsEmpty() ? TEXT("Unreal MCP Chat") : Owner.TrimStartAndEnd());
+			LockObject->SetStringField(TEXT("reason"), Reason.TrimStartAndEnd());
+			LockObject->SetStringField(TEXT("createdAtUtc"), Now.ToIso8601());
+			LockObject->SetStringField(TEXT("refreshedAtUtc"), Now.ToIso8601());
+			LockObject->SetStringField(TEXT("expiresAtUtc"), (Now + FTimespan::FromSeconds(SafeTtlSeconds)).ToIso8601());
+			LockObject->SetNumberField(TEXT("ttlSeconds"), SafeTtlSeconds);
+			return LockObject;
+		}
+
+		bool TryAcquireExtensionSessionLock(
+			const FString& Owner,
+			const FString& Reason,
+			int32 TtlSeconds,
+			bool bForce,
+			FString& OutSessionId,
+			TSharedPtr<FJsonObject>& OutLockObject,
+			FString& OutFailureReason)
+		{
+			OutSessionId = FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphens);
+			const FString LockPath = GetMcpExtensionLockPath();
+
+			TSharedPtr<FJsonObject> ExistingLock;
+			if (FPaths::FileExists(LockPath))
+			{
+				FString LoadFailure;
+				if (LoadJsonObjectFromFile(LockPath, ExistingLock, LoadFailure) && ExistingLock.IsValid() && !IsExtensionLockStale(ExistingLock) && !bForce)
+				{
+					FString ExistingSessionId;
+					FString ExistingOwner;
+					FString ExpiresAtUtc;
+					ExistingLock->TryGetStringField(TEXT("sessionId"), ExistingSessionId);
+					ExistingLock->TryGetStringField(TEXT("owner"), ExistingOwner);
+					ExistingLock->TryGetStringField(TEXT("expiresAtUtc"), ExpiresAtUtc);
+					OutFailureReason = FString::Printf(
+						TEXT("MCP extension session is locked by '%s' (sessionId=%s, expiresAtUtc=%s). Pass force=true only if you are sure that session is dead."),
+						ExistingOwner.IsEmpty() ? TEXT("<unknown>") : *ExistingOwner,
+						ExistingSessionId.IsEmpty() ? TEXT("<unknown>") : *ExistingSessionId,
+						ExpiresAtUtc.IsEmpty() ? TEXT("<unknown>") : *ExpiresAtUtc);
+					OutLockObject = ExistingLock;
+					return false;
+				}
+			}
+
+			OutLockObject = MakeExtensionLockObject(OutSessionId, Owner, Reason, TtlSeconds);
+			FString SaveFailure;
+			if (!SaveJsonObjectToFile(OutLockObject, LockPath, SaveFailure))
+			{
+				OutFailureReason = SaveFailure;
+				return false;
+			}
+			OutLockObject->SetStringField(TEXT("lockPath"), LockPath);
+			return true;
+		}
+
+		bool ReleaseExtensionSessionLock(const FString& SessionId, bool bForce, FString& OutFailureReason)
+		{
+			const FString LockPath = GetMcpExtensionLockPath();
+			if (!FPaths::FileExists(LockPath))
+			{
+				return true;
+			}
+
+			TSharedPtr<FJsonObject> ExistingLock;
+			if (!LoadJsonObjectFromFile(LockPath, ExistingLock, OutFailureReason))
+			{
+				if (bForce)
+				{
+					IFileManager::Get().Delete(*LockPath, false, true, true);
+					return true;
+				}
+				return false;
+			}
+
+			FString ExistingSessionId;
+			ExistingLock->TryGetStringField(TEXT("sessionId"), ExistingSessionId);
+			if (!bForce && !ExistingSessionId.Equals(SessionId, ESearchCase::CaseSensitive))
+			{
+				OutFailureReason = FString::Printf(
+					TEXT("Refusing to release lock owned by a different session. Existing=%s requested=%s."),
+					*ExistingSessionId,
+					*SessionId);
+				return false;
+			}
+
+			if (!IFileManager::Get().Delete(*LockPath, false, true, true))
+			{
+				OutFailureReason = FString::Printf(TEXT("Failed to delete lock file '%s'."), *LockPath);
+				return false;
+			}
+			return true;
+		}
+
+		class FScopedMcpExtensionSessionLock
+		{
+		public:
+			FScopedMcpExtensionSessionLock(const FString& ToolName, const FJsonObject& Arguments)
+			{
+				bool bSkipLock = false;
+				bool bForceLock = false;
+				double TtlSecondsDouble = 900.0;
+				FString Owner = TEXT("Unreal MCP Chat");
+				Arguments.TryGetBoolField(TEXT("skipLock"), bSkipLock);
+				Arguments.TryGetBoolField(TEXT("forceLock"), bForceLock);
+				Arguments.TryGetNumberField(TEXT("lockTtlSeconds"), TtlSecondsDouble);
+				Arguments.TryGetStringField(TEXT("lockOwner"), Owner);
+
+				if (bSkipLock)
+				{
+					bAcquired = true;
+					bOwnsLock = false;
+					return;
+				}
+
+				const int32 TtlSeconds = FMath::Clamp(static_cast<int32>(TtlSecondsDouble), 30, 86400);
+				const FString Reason = FString::Printf(TEXT("Executing %s"), *ToolName);
+				bAcquired = TryAcquireExtensionSessionLock(Owner, Reason, TtlSeconds, bForceLock, SessionId, LockObject, FailureReason);
+				bOwnsLock = bAcquired;
+			}
+
+			~FScopedMcpExtensionSessionLock()
+			{
+				if (bOwnsLock && !SessionId.IsEmpty())
+				{
+					FString ReleaseFailure;
+					ReleaseExtensionSessionLock(SessionId, false, ReleaseFailure);
+				}
+			}
+
+			bool IsAcquired() const
+			{
+				return bAcquired;
+			}
+
+			FString GetFailureReason() const
+			{
+				return FailureReason;
+			}
+
+			TSharedPtr<FJsonObject> MakeStructuredContent(const FString& Action) const
+			{
+				TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+				StructuredContent->SetStringField(TEXT("action"), Action);
+				StructuredContent->SetBoolField(TEXT("locked"), bAcquired);
+				StructuredContent->SetStringField(TEXT("lockPath"), GetMcpExtensionLockPath());
+				StructuredContent->SetStringField(TEXT("sessionId"), SessionId);
+				if (LockObject.IsValid())
+				{
+					StructuredContent->SetObjectField(TEXT("lock"), LockObject);
+				}
+				return StructuredContent;
+			}
+
+		private:
+			bool bAcquired = false;
+			bool bOwnsLock = false;
+			FString SessionId;
+			FString FailureReason;
+			TSharedPtr<FJsonObject> LockObject;
+		};
+
 		FString TailLines(const FString& Text, int32 MaxLines)
 		{
 			TArray<FString> Lines;
@@ -5070,6 +5309,409 @@ namespace UnrealMcp
 				Tail.Add(Lines[Index]);
 			}
 			return FString::Join(Tail, TEXT("\n"));
+		}
+
+		void CollectExtensionManifestPaths(TArray<FString>& OutManifestPaths)
+		{
+			OutManifestPaths.Reset();
+			IFileManager::Get().FindFilesRecursive(
+				OutManifestPaths,
+				*GetMcpExtensionBackupRoot(),
+				TEXT("Manifest.json"),
+				true,
+				false);
+
+			const FString LatestManifestPath = GetLatestMcpExtensionManifestPath();
+			if (FPaths::FileExists(LatestManifestPath))
+			{
+				OutManifestPaths.AddUnique(LatestManifestPath);
+			}
+
+			OutManifestPaths.Sort([](const FString& A, const FString& B)
+			{
+				const FFileStatData StatA = IFileManager::Get().GetStatData(*A);
+				const FFileStatData StatB = IFileManager::Get().GetStatData(*B);
+				if (StatA.ModificationTime == StatB.ModificationTime)
+				{
+					return A > B;
+				}
+				return StatA.ModificationTime > StatB.ModificationTime;
+			});
+		}
+
+		bool AddProjectStateBackupFile(
+			const FString& SourcePath,
+			const FString& BackupDirectory,
+			bool bDryRun,
+			TArray<TSharedPtr<FJsonValue>>& Files,
+			FString& OutFailureReason)
+		{
+			const FString FullSourcePath = FPaths::ConvertRelativePathToFull(SourcePath);
+			const bool bExists = FPaths::FileExists(FullSourcePath);
+			const FString RelativePath = MakePathRelativeToProject(FullSourcePath);
+			const FString BackupPath = FPaths::Combine(BackupDirectory, RelativePath);
+
+			TSharedPtr<FJsonObject> FileObject = MakeShared<FJsonObject>();
+			FileObject->SetStringField(TEXT("sourcePath"), FullSourcePath);
+			FileObject->SetStringField(TEXT("relativePath"), RelativePath);
+			FileObject->SetStringField(TEXT("backupPath"), BackupPath);
+			FileObject->SetBoolField(TEXT("exists"), bExists);
+
+			if (bExists)
+			{
+				FString SourceText;
+				if (!FFileHelper::LoadFileToString(SourceText, *FullSourcePath))
+				{
+					OutFailureReason = FString::Printf(TEXT("Failed to read source file '%s'."), *FullSourcePath);
+					return false;
+				}
+
+				FileObject->SetStringField(TEXT("hash"), HashTextForManifest(SourceText));
+				FileObject->SetNumberField(TEXT("sizeBytes"), SourceText.Len());
+				if (!bDryRun)
+				{
+					const FString BackupPathDirectory = FPaths::GetPath(BackupPath);
+					if (!IFileManager::Get().MakeDirectory(*BackupPathDirectory, true))
+					{
+						OutFailureReason = FString::Printf(TEXT("Failed to create backup directory '%s'."), *BackupPathDirectory);
+						return false;
+					}
+					if (!FFileHelper::SaveStringToFile(SourceText, *BackupPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+					{
+						OutFailureReason = FString::Printf(TEXT("Failed to write backup file '%s'."), *BackupPath);
+						return false;
+					}
+				}
+			}
+
+			Files.Add(MakeShared<FJsonValueObject>(FileObject));
+			return true;
+		}
+
+		FUnrealMcpExecutionResult BackupProjectState(const FJsonObject& Arguments)
+		{
+			FString Label = TEXT("manual");
+			FString Reason;
+			bool bIncludeSource = true;
+			bool bIncludeReadmes = true;
+			bool bIncludeProjectMemory = true;
+			bool bIncludeManifests = true;
+			bool bIncludeBuildLogs = false;
+			bool bDryRun = false;
+
+			Arguments.TryGetStringField(TEXT("label"), Label);
+			Arguments.TryGetStringField(TEXT("reason"), Reason);
+			Arguments.TryGetBoolField(TEXT("includeSource"), bIncludeSource);
+			Arguments.TryGetBoolField(TEXT("includeReadmes"), bIncludeReadmes);
+			Arguments.TryGetBoolField(TEXT("includeProjectMemory"), bIncludeProjectMemory);
+			Arguments.TryGetBoolField(TEXT("includeManifests"), bIncludeManifests);
+			Arguments.TryGetBoolField(TEXT("includeBuildLogs"), bIncludeBuildLogs);
+			Arguments.TryGetBoolField(TEXT("dryRun"), bDryRun);
+
+			const FString SafeLabel = SanitizeMcpToolIdForPath(Label.TrimStartAndEnd().IsEmpty() ? TEXT("manual") : Label.TrimStartAndEnd());
+			const FString Timestamp = FDateTime::UtcNow().ToString(TEXT("%Y%m%d-%H%M%S"));
+			const FString BackupDirectory = FPaths::Combine(GetMcpProjectStateBackupRoot(), FString::Printf(TEXT("%s_%s"), *Timestamp, *SafeLabel));
+
+			TArray<FString> SourcePaths;
+			if (bIncludeSource)
+			{
+				SourcePaths.Add(GetMcpModuleSourcePath());
+				SourcePaths.Add(GetMcpModuleHeaderPath());
+			}
+			if (bIncludeReadmes)
+			{
+				SourcePaths.Add(GetProjectReadmePath());
+				SourcePaths.Add(GetPluginReadmePath());
+			}
+			if (bIncludeProjectMemory)
+			{
+				SourcePaths.Add(GetProjectMemoryFilePath());
+			}
+			if (bIncludeManifests)
+			{
+				TArray<FString> ManifestPaths;
+				CollectExtensionManifestPaths(ManifestPaths);
+				for (const FString& ManifestPath : ManifestPaths)
+				{
+					SourcePaths.AddUnique(ManifestPath);
+				}
+			}
+			if (bIncludeBuildLogs)
+			{
+				TArray<FString> BuildLogPaths;
+				IFileManager::Get().FindFilesRecursive(BuildLogPaths, *GetMcpBuildLogRoot(), TEXT("*.log"), true, false);
+				BuildLogPaths.Sort([](const FString& A, const FString& B)
+				{
+					return IFileManager::Get().GetStatData(*A).ModificationTime > IFileManager::Get().GetStatData(*B).ModificationTime;
+				});
+				const int32 MaxBuildLogs = FMath::Min(5, BuildLogPaths.Num());
+				for (int32 Index = 0; Index < MaxBuildLogs; ++Index)
+				{
+					SourcePaths.AddUnique(BuildLogPaths[Index]);
+				}
+			}
+
+			TArray<TSharedPtr<FJsonValue>> Files;
+			FString FailureReason;
+			for (const FString& SourcePath : SourcePaths)
+			{
+				if (!AddProjectStateBackupFile(SourcePath, BackupDirectory, bDryRun, Files, FailureReason))
+				{
+					return MakeExecutionResult(FailureReason, nullptr, true);
+				}
+			}
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("action"), TEXT("mcp_backup_project_state"));
+			StructuredContent->SetStringField(TEXT("label"), Label);
+			StructuredContent->SetStringField(TEXT("reason"), Reason);
+			StructuredContent->SetStringField(TEXT("backupDirectory"), BackupDirectory);
+			StructuredContent->SetBoolField(TEXT("dryRun"), bDryRun);
+			StructuredContent->SetArrayField(TEXT("files"), Files);
+
+			if (!bDryRun)
+			{
+				TSharedPtr<FJsonObject> ManifestObject = MakeShared<FJsonObject>();
+				ManifestObject->SetStringField(TEXT("action"), TEXT("mcp_backup_project_state"));
+				ManifestObject->SetStringField(TEXT("label"), Label);
+				ManifestObject->SetStringField(TEXT("reason"), Reason);
+				ManifestObject->SetStringField(TEXT("createdAtUtc"), FDateTime::UtcNow().ToIso8601());
+				ManifestObject->SetStringField(TEXT("backupDirectory"), BackupDirectory);
+				ManifestObject->SetArrayField(TEXT("files"), Files);
+				FString ManifestFailure;
+				const FString ManifestPath = FPaths::Combine(BackupDirectory, TEXT("Manifest.json"));
+				if (!SaveJsonObjectToFile(ManifestObject, ManifestPath, ManifestFailure))
+				{
+					return MakeExecutionResult(ManifestFailure, StructuredContent, true);
+				}
+				StructuredContent->SetStringField(TEXT("manifestPath"), ManifestPath);
+			}
+
+			return MakeExecutionResult(
+				bDryRun
+					? FString::Printf(TEXT("Dry run project state backup would capture %d files."), Files.Num())
+					: FString::Printf(TEXT("Backed up project state to %s."), *BackupDirectory),
+				StructuredContent,
+				false);
+		}
+
+		FUnrealMcpExecutionResult LockExtensionSession(const FJsonObject& Arguments)
+		{
+			FString Mode = TEXT("status");
+			FString SessionId;
+			FString Owner = TEXT("Unreal MCP Chat");
+			FString Reason;
+			bool bForce = false;
+			double TtlSecondsDouble = 900.0;
+
+			Arguments.TryGetStringField(TEXT("mode"), Mode);
+			Arguments.TryGetStringField(TEXT("sessionId"), SessionId);
+			Arguments.TryGetStringField(TEXT("owner"), Owner);
+			Arguments.TryGetStringField(TEXT("reason"), Reason);
+			Arguments.TryGetBoolField(TEXT("force"), bForce);
+			Arguments.TryGetNumberField(TEXT("ttlSeconds"), TtlSecondsDouble);
+			Mode = Mode.TrimStartAndEnd().ToLower();
+
+			const FString LockPath = GetMcpExtensionLockPath();
+			TSharedPtr<FJsonObject> ExistingLock;
+			FString FailureReason;
+			const bool bHasExistingLock = FPaths::FileExists(LockPath) && LoadJsonObjectFromFile(LockPath, ExistingLock, FailureReason);
+			const bool bExistingLockStale = !bHasExistingLock || IsExtensionLockStale(ExistingLock);
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("action"), TEXT("mcp_lock_extension_session"));
+			StructuredContent->SetStringField(TEXT("mode"), Mode);
+			StructuredContent->SetStringField(TEXT("lockPath"), LockPath);
+			StructuredContent->SetBoolField(TEXT("hasExistingLock"), bHasExistingLock);
+			StructuredContent->SetBoolField(TEXT("existingLockStale"), bExistingLockStale);
+			if (ExistingLock.IsValid())
+			{
+				StructuredContent->SetObjectField(TEXT("existingLock"), ExistingLock);
+			}
+
+			if (Mode == TEXT("status") || Mode.IsEmpty())
+			{
+				StructuredContent->SetBoolField(TEXT("locked"), bHasExistingLock && !bExistingLockStale);
+				return MakeExecutionResult(
+					bHasExistingLock && !bExistingLockStale ? TEXT("MCP extension session is locked.") : TEXT("No active MCP extension session lock."),
+					StructuredContent,
+					false);
+			}
+
+			if (Mode == TEXT("acquire"))
+			{
+				FString NewSessionId;
+				TSharedPtr<FJsonObject> NewLock;
+				if (!TryAcquireExtensionSessionLock(Owner, Reason, static_cast<int32>(TtlSecondsDouble), bForce, NewSessionId, NewLock, FailureReason))
+				{
+					StructuredContent->SetStringField(TEXT("failureReason"), FailureReason);
+					return MakeExecutionResult(FailureReason, StructuredContent, true);
+				}
+				StructuredContent->SetBoolField(TEXT("locked"), true);
+				StructuredContent->SetStringField(TEXT("sessionId"), NewSessionId);
+				StructuredContent->SetObjectField(TEXT("lock"), NewLock);
+				return MakeExecutionResult(FString::Printf(TEXT("Acquired MCP extension session lock %s."), *NewSessionId), StructuredContent, false);
+			}
+
+			if (Mode == TEXT("release"))
+			{
+				if (SessionId.TrimStartAndEnd().IsEmpty() && !bForce)
+				{
+					return MakeExecutionResult(TEXT("sessionId is required for release unless force=true."), StructuredContent, true);
+				}
+				if (!ReleaseExtensionSessionLock(SessionId.TrimStartAndEnd(), bForce, FailureReason))
+				{
+					StructuredContent->SetStringField(TEXT("failureReason"), FailureReason);
+					return MakeExecutionResult(FailureReason, StructuredContent, true);
+				}
+				StructuredContent->SetBoolField(TEXT("locked"), false);
+				return MakeExecutionResult(TEXT("Released MCP extension session lock."), StructuredContent, false);
+			}
+
+			if (Mode == TEXT("refresh"))
+			{
+				if (!bHasExistingLock)
+				{
+					return MakeExecutionResult(TEXT("No lock exists to refresh."), StructuredContent, true);
+				}
+
+				FString ExistingSessionId;
+				ExistingLock->TryGetStringField(TEXT("sessionId"), ExistingSessionId);
+				if (!bForce && !ExistingSessionId.Equals(SessionId.TrimStartAndEnd(), ESearchCase::CaseSensitive))
+				{
+					return MakeExecutionResult(TEXT("Refusing to refresh lock owned by a different session."), StructuredContent, true);
+				}
+
+				TSharedPtr<FJsonObject> RefreshedLock = MakeExtensionLockObject(ExistingSessionId, Owner, Reason, static_cast<int32>(TtlSecondsDouble));
+				FString SaveFailure;
+				if (!SaveJsonObjectToFile(RefreshedLock, LockPath, SaveFailure))
+				{
+					return MakeExecutionResult(SaveFailure, StructuredContent, true);
+				}
+				StructuredContent->SetBoolField(TEXT("locked"), true);
+				StructuredContent->SetObjectField(TEXT("lock"), RefreshedLock);
+				return MakeExecutionResult(TEXT("Refreshed MCP extension session lock."), StructuredContent, false);
+			}
+
+			return MakeExecutionResult(TEXT("mode must be one of status, acquire, release, or refresh."), StructuredContent, true);
+		}
+
+		FUnrealMcpExecutionResult RollbackToManifest(const FJsonObject& Arguments)
+		{
+			FString ManifestPath;
+			FString ToolName;
+			FString Selector = TEXT("latest");
+			bool bDryRun = false;
+			bool bForce = false;
+			bool bCreatePreRollbackBackup = true;
+			double ManifestIndexDouble = -1.0;
+
+			Arguments.TryGetStringField(TEXT("manifestPath"), ManifestPath);
+			Arguments.TryGetStringField(TEXT("toolName"), ToolName);
+			Arguments.TryGetStringField(TEXT("selector"), Selector);
+			Arguments.TryGetBoolField(TEXT("dryRun"), bDryRun);
+			Arguments.TryGetBoolField(TEXT("force"), bForce);
+			Arguments.TryGetBoolField(TEXT("createPreRollbackBackup"), bCreatePreRollbackBackup);
+			Arguments.TryGetNumberField(TEXT("manifestIndex"), ManifestIndexDouble);
+
+			TArray<FString> ManifestPaths;
+			CollectExtensionManifestPaths(ManifestPaths);
+
+			TArray<FString> CandidatePaths;
+			if (!ManifestPath.TrimStartAndEnd().IsEmpty())
+			{
+				FString ResolvedManifestPath;
+				FString FailureReason;
+				if (!ResolveProjectPathInsideProject(ManifestPath, ResolvedManifestPath, FailureReason))
+				{
+					return MakeExecutionResult(FailureReason, nullptr, true);
+				}
+				CandidatePaths.Add(ResolvedManifestPath);
+			}
+			else
+			{
+				for (const FString& CandidatePath : ManifestPaths)
+				{
+					if (ToolName.TrimStartAndEnd().IsEmpty())
+					{
+						CandidatePaths.Add(CandidatePath);
+						continue;
+					}
+
+					TSharedPtr<FJsonObject> CandidateObject;
+					FString FailureReason;
+					if (LoadJsonObjectFromFile(CandidatePath, CandidateObject, FailureReason) && CandidateObject.IsValid())
+					{
+						FString CandidateToolName;
+						CandidateObject->TryGetStringField(TEXT("toolName"), CandidateToolName);
+						if (CandidateToolName.Equals(ToolName.TrimStartAndEnd(), ESearchCase::IgnoreCase))
+						{
+							CandidatePaths.Add(CandidatePath);
+						}
+					}
+				}
+			}
+
+			TArray<TSharedPtr<FJsonValue>> CandidateObjects;
+			for (const FString& CandidatePath : CandidatePaths)
+			{
+				TSharedPtr<FJsonObject> CandidateObject = MakeShared<FJsonObject>();
+				CandidateObject->SetStringField(TEXT("manifestPath"), CandidatePath);
+				CandidateObject->SetObjectField(TEXT("file"), MakeFileInfoObject(CandidatePath));
+				CandidateObjects.Add(MakeShared<FJsonValueObject>(CandidateObject));
+			}
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("action"), TEXT("mcp_rollback_to_manifest"));
+			StructuredContent->SetStringField(TEXT("toolName"), ToolName);
+			StructuredContent->SetStringField(TEXT("selector"), Selector);
+			StructuredContent->SetBoolField(TEXT("dryRun"), bDryRun);
+			StructuredContent->SetBoolField(TEXT("force"), bForce);
+			StructuredContent->SetArrayField(TEXT("candidates"), CandidateObjects);
+
+			if (CandidatePaths.Num() == 0)
+			{
+				return MakeExecutionResult(TEXT("No matching extension manifest was found."), StructuredContent, true);
+			}
+
+			int32 SelectedIndex = FMath::RoundToInt(ManifestIndexDouble);
+			if (SelectedIndex < 0)
+			{
+				SelectedIndex = Selector.TrimStartAndEnd().Equals(TEXT("oldest"), ESearchCase::IgnoreCase) ? CandidatePaths.Num() - 1 : 0;
+			}
+			if (!CandidatePaths.IsValidIndex(SelectedIndex))
+			{
+				return MakeExecutionResult(TEXT("manifestIndex is outside the available candidate range."), StructuredContent, true);
+			}
+
+			const FString SelectedManifestPath = CandidatePaths[SelectedIndex];
+			StructuredContent->SetNumberField(TEXT("selectedIndex"), SelectedIndex);
+			StructuredContent->SetStringField(TEXT("selectedManifestPath"), SelectedManifestPath);
+
+			if (!bDryRun && bCreatePreRollbackBackup)
+			{
+				TSharedPtr<FJsonObject> BackupArguments = MakeShared<FJsonObject>();
+				BackupArguments->SetStringField(TEXT("label"), TEXT("pre_rollback"));
+				BackupArguments->SetStringField(TEXT("reason"), FString::Printf(TEXT("Pre-rollback snapshot before restoring manifest %s."), *SelectedManifestPath));
+				BackupArguments->SetBoolField(TEXT("includeBuildLogs"), false);
+				const FUnrealMcpExecutionResult BackupResult = BackupProjectState(*BackupArguments);
+				StructuredContent->SetObjectField(TEXT("preRollbackBackup"), BackupResult.StructuredContent.IsValid() ? BackupResult.StructuredContent : MakeShared<FJsonObject>());
+				if (BackupResult.bIsError)
+				{
+					return MakeExecutionResult(BackupResult.Text, StructuredContent, true);
+				}
+			}
+
+			TSharedPtr<FJsonObject> RollbackArguments = MakeShared<FJsonObject>();
+			RollbackArguments->SetStringField(TEXT("manifestPath"), SelectedManifestPath);
+			RollbackArguments->SetBoolField(TEXT("dryRun"), bDryRun);
+			RollbackArguments->SetBoolField(TEXT("force"), bForce);
+			const FUnrealMcpExecutionResult RollbackResult = RollbackLastMcpExtension(*RollbackArguments);
+			if (RollbackResult.StructuredContent.IsValid())
+			{
+				StructuredContent->SetObjectField(TEXT("rollback"), RollbackResult.StructuredContent);
+			}
+			return MakeExecutionResult(RollbackResult.Text, StructuredContent, RollbackResult.bIsError);
 		}
 
 		TSharedPtr<FJsonObject> MakeMemoryEntrySummary(const TSharedPtr<FJsonObject>& EntryObject, bool bIncludeContent)
@@ -6237,6 +6879,236 @@ namespace UnrealMcp
 			StructuredContent->SetNumberField(TEXT("errorCount"), ErrorLines.Num());
 			StructuredContent->SetArrayField(TEXT("errors"), ErrorLines);
 			StructuredContent->SetArrayField(TEXT("keyLogLines"), KeyLines);
+		}
+
+		FString ResolveBuildSourceFilePath(const FString& FilePath)
+		{
+			FString TrimmedPath = FilePath.TrimStartAndEnd();
+			if (TrimmedPath.IsEmpty())
+			{
+				return FString();
+			}
+
+			if (FPaths::FileExists(TrimmedPath))
+			{
+				return FPaths::ConvertRelativePathToFull(TrimmedPath);
+			}
+
+			const TArray<FString> CandidateRoots = {
+				FPaths::ProjectDir(),
+				FPaths::EngineDir()
+			};
+			for (const FString& Root : CandidateRoots)
+			{
+				const FString CandidatePath = FPaths::ConvertRelativePathToFull(FPaths::Combine(Root, TrimmedPath));
+				if (FPaths::FileExists(CandidatePath))
+				{
+					return CandidatePath;
+				}
+			}
+
+			return TrimmedPath;
+		}
+
+		TSharedPtr<FJsonObject> MakeSourceContextObject(const FString& SourcePath, int32 LineNumber, int32 ContextLines)
+		{
+			TSharedPtr<FJsonObject> ContextObject = MakeShared<FJsonObject>();
+			ContextObject->SetStringField(TEXT("path"), SourcePath);
+			ContextObject->SetNumberField(TEXT("line"), LineNumber);
+			ContextObject->SetBoolField(TEXT("available"), false);
+
+			if (SourcePath.IsEmpty() || LineNumber <= 0 || !FPaths::FileExists(SourcePath))
+			{
+				return ContextObject;
+			}
+
+			FString SourceText;
+			if (!FFileHelper::LoadFileToString(SourceText, *SourcePath))
+			{
+				return ContextObject;
+			}
+
+			TArray<FString> Lines;
+			SourceText.ParseIntoArrayLines(Lines, false);
+			const int32 ZeroBasedLine = LineNumber - 1;
+			const int32 FirstLine = FMath::Clamp(ZeroBasedLine - FMath::Max(0, ContextLines), 0, FMath::Max(0, Lines.Num() - 1));
+			const int32 LastLine = FMath::Clamp(ZeroBasedLine + FMath::Max(0, ContextLines), 0, FMath::Max(0, Lines.Num() - 1));
+
+			TArray<TSharedPtr<FJsonValue>> ContextLinesArray;
+			for (int32 Index = FirstLine; Index <= LastLine && Lines.IsValidIndex(Index); ++Index)
+			{
+				TSharedPtr<FJsonObject> LineObject = MakeShared<FJsonObject>();
+				LineObject->SetNumberField(TEXT("line"), Index + 1);
+				LineObject->SetStringField(TEXT("text"), Lines[Index]);
+				LineObject->SetBoolField(TEXT("isErrorLine"), Index == ZeroBasedLine);
+				ContextLinesArray.Add(MakeShared<FJsonValueObject>(LineObject));
+			}
+
+			ContextObject->SetBoolField(TEXT("available"), ContextLinesArray.Num() > 0);
+			ContextObject->SetArrayField(TEXT("lines"), ContextLinesArray);
+			return ContextObject;
+		}
+
+		FString GuessCompileErrorCause(const FString& Message)
+		{
+			const FString Lower = Message.ToLower();
+			if (Lower.Contains(TEXT("undeclared identifier")) || Lower.Contains(TEXT("use of undeclared identifier")) || Lower.Contains(TEXT("was not declared")))
+			{
+				return TEXT("A symbol is missing, misspelled, out of scope, or requires an include/header declaration.");
+			}
+			if (Lower.Contains(TEXT("no member named")) || Lower.Contains(TEXT("has no member")) || Lower.Contains(TEXT("is not a member")))
+			{
+				return TEXT("The code is calling a member that does not exist for this type, often due to an Unreal API mismatch or wrong object type.");
+			}
+			if (Lower.Contains(TEXT("cannot convert")) || Lower.Contains(TEXT("no viable conversion")) || Lower.Contains(TEXT("cannot initialize")) || Lower.Contains(TEXT("incompatible")))
+			{
+				return TEXT("A type mismatch or invalid implicit conversion is likely near the reported line.");
+			}
+			if (Lower.Contains(TEXT("expected ';'")) || Lower.Contains(TEXT("expected expression")) || Lower.Contains(TEXT("expected ')'")) || Lower.Contains(TEXT("expected '}'")))
+			{
+				return TEXT("A syntax issue such as missing punctuation, mismatched parentheses/braces, or malformed statement is likely near the reported line.");
+			}
+			if (Lower.Contains(TEXT("cannot open include")) || Lower.Contains(TEXT("file not found")) || Lower.Contains(TEXT("no such file")))
+			{
+				return TEXT("An include path, module dependency, generated header, or file path is missing.");
+			}
+			if (Lower.Contains(TEXT("undefined symbol")) || Lower.Contains(TEXT("unresolved external")) || Lower.Contains(TEXT("linker command failed")))
+			{
+				return TEXT("A function or symbol is declared but not linked/defined, or a Build.cs module dependency is missing.");
+			}
+			if (Lower.Contains(TEXT("generated.h")))
+			{
+				return TEXT("Unreal Header Tool ordering or reflection markup may be wrong; generated.h must usually be the final include in a UObject header.");
+			}
+			return TEXT("Review the nearby source context and preceding build errors; this may be a cascading compiler error.");
+		}
+
+		TArray<TSharedPtr<FJsonValue>> MakeSuggestedFixesForCompileError(const FString& Message)
+		{
+			TArray<TSharedPtr<FJsonValue>> SuggestedFixes;
+			const FString Lower = Message.ToLower();
+			if (Lower.Contains(TEXT("undeclared identifier")) || Lower.Contains(TEXT("use of undeclared identifier")))
+			{
+				SuggestedFixes.Add(MakeShared<FJsonValueString>(TEXT("Check spelling and scope of the reported symbol.")));
+				SuggestedFixes.Add(MakeShared<FJsonValueString>(TEXT("Add the required declaration or include the header that defines the symbol.")));
+			}
+			else if (Lower.Contains(TEXT("no member named")) || Lower.Contains(TEXT("has no member")))
+			{
+				SuggestedFixes.Add(MakeShared<FJsonValueString>(TEXT("Inspect the expression before the member access and confirm its actual type.")));
+				SuggestedFixes.Add(MakeShared<FJsonValueString>(TEXT("Update the call to the correct Unreal API/member for this engine version.")));
+			}
+			else if (Lower.Contains(TEXT("expected")))
+			{
+				SuggestedFixes.Add(MakeShared<FJsonValueString>(TEXT("Check the current and previous line for missing semicolons, braces, parentheses, or commas.")));
+				SuggestedFixes.Add(MakeShared<FJsonValueString>(TEXT("If this followed an automatic snippet insertion, diff the inserted block boundaries first.")));
+			}
+			else if (Lower.Contains(TEXT("cannot convert")) || Lower.Contains(TEXT("no viable conversion")))
+			{
+				SuggestedFixes.Add(MakeShared<FJsonValueString>(TEXT("Confirm the expected parameter/property type and add an explicit conversion only if safe.")));
+				SuggestedFixes.Add(MakeShared<FJsonValueString>(TEXT("Prefer matching Unreal types exactly, especially FString/FName/FText and TSharedPtr variants.")));
+			}
+			else
+			{
+				SuggestedFixes.Add(MakeShared<FJsonValueString>(TEXT("Fix the earliest reported error first; later errors may be cascading.")));
+				SuggestedFixes.Add(MakeShared<FJsonValueString>(TEXT("Run unreal.mcp_diff_last_apply if this happened after applying a scaffold.")));
+			}
+			return SuggestedFixes;
+		}
+
+		FUnrealMcpExecutionResult CompileErrorFixPlan(const FJsonObject& Arguments)
+		{
+			FString BuildLogPath;
+			bool bIncludeSourceContext = true;
+			bool bAutoPatch = false;
+			bool bDryRun = true;
+			double MaxErrorsDouble = 8.0;
+			double ContextLinesDouble = 4.0;
+
+			Arguments.TryGetStringField(TEXT("buildLogPath"), BuildLogPath);
+			Arguments.TryGetBoolField(TEXT("includeSourceContext"), bIncludeSourceContext);
+			Arguments.TryGetBoolField(TEXT("autoPatch"), bAutoPatch);
+			Arguments.TryGetBoolField(TEXT("dryRun"), bDryRun);
+			Arguments.TryGetNumberField(TEXT("maxErrors"), MaxErrorsDouble);
+			Arguments.TryGetNumberField(TEXT("contextLines"), ContextLinesDouble);
+
+			if (BuildLogPath.TrimStartAndEnd().IsEmpty())
+			{
+				if (!FindNewestFile(GetMcpBuildLogRoot(), TEXT("*.log"), BuildLogPath))
+				{
+					return MakeExecutionResult(TEXT("No build log was found. Run unreal.mcp_build_editor first or pass buildLogPath."), nullptr, true);
+				}
+			}
+
+			FString ResolvedBuildLogPath;
+			FString FailureReason;
+			if (!ResolveProjectPathInsideProject(BuildLogPath, ResolvedBuildLogPath, FailureReason))
+			{
+				return MakeExecutionResult(FailureReason, nullptr, true);
+			}
+
+			FString LogText;
+			if (!FFileHelper::LoadFileToString(LogText, *ResolvedBuildLogPath))
+			{
+				return MakeExecutionResult(FString::Printf(TEXT("Failed to read build log '%s'."), *ResolvedBuildLogPath), nullptr, true);
+			}
+
+			TArray<FString> Lines;
+			LogText.ParseIntoArrayLines(Lines, false);
+			const int32 MaxErrors = FMath::Clamp(static_cast<int32>(MaxErrorsDouble), 1, 50);
+			const int32 ContextLines = FMath::Clamp(static_cast<int32>(ContextLinesDouble), 0, 20);
+
+			TArray<TSharedPtr<FJsonValue>> ErrorPlans;
+			for (const FString& Line : Lines)
+			{
+				if (!LooksLikeBuildErrorLine(Line))
+				{
+					continue;
+				}
+
+				TSharedPtr<FJsonObject> ErrorObject = MakeBuildLineObject(Line);
+				FString FilePath;
+				FString Message;
+				double LineNumberDouble = 0.0;
+				ErrorObject->TryGetStringField(TEXT("file"), FilePath);
+				ErrorObject->TryGetStringField(TEXT("message"), Message);
+				ErrorObject->TryGetNumberField(TEXT("line"), LineNumberDouble);
+
+				const FString ResolvedSourcePath = ResolveBuildSourceFilePath(FilePath);
+				ErrorObject->SetStringField(TEXT("resolvedFile"), ResolvedSourcePath);
+				ErrorObject->SetStringField(TEXT("probableCause"), GuessCompileErrorCause(Message));
+				ErrorObject->SetArrayField(TEXT("suggestedFixes"), MakeSuggestedFixesForCompileError(Message));
+				if (bIncludeSourceContext)
+				{
+					ErrorObject->SetObjectField(TEXT("sourceContext"), MakeSourceContextObject(ResolvedSourcePath, static_cast<int32>(LineNumberDouble), ContextLines));
+				}
+				ErrorObject->SetBoolField(TEXT("autoPatchSupported"), false);
+				ErrorObject->SetStringField(TEXT("autoPatchReason"), TEXT("No deterministic safe patch pattern matched. Use this fix plan to patch the scaffold/source intentionally."));
+
+				ErrorPlans.Add(MakeShared<FJsonValueObject>(ErrorObject));
+				if (ErrorPlans.Num() >= MaxErrors)
+				{
+					break;
+				}
+			}
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("action"), TEXT("mcp_compile_error_fix_plan"));
+			StructuredContent->SetStringField(TEXT("buildLogPath"), ResolvedBuildLogPath);
+			StructuredContent->SetBoolField(TEXT("includeSourceContext"), bIncludeSourceContext);
+			StructuredContent->SetBoolField(TEXT("autoPatch"), bAutoPatch);
+			StructuredContent->SetBoolField(TEXT("dryRun"), bDryRun);
+			StructuredContent->SetBoolField(TEXT("patchApplied"), false);
+			StructuredContent->SetStringField(TEXT("autoPatchStatus"), bAutoPatch ? TEXT("requested_but_no_safe_patch_matched") : TEXT("not_requested"));
+			StructuredContent->SetNumberField(TEXT("plannedErrorCount"), ErrorPlans.Num());
+			StructuredContent->SetArrayField(TEXT("fixPlan"), ErrorPlans);
+			StructuredContent->SetStringField(TEXT("nextStep"), TEXT("Patch the earliest root-cause error, rebuild with unreal.mcp_build_editor, then rerun this tool if errors remain."));
+
+			return MakeExecutionResult(
+				ErrorPlans.Num() > 0
+					? FString::Printf(TEXT("Generated compile error fix plan for %d error(s)."), ErrorPlans.Num())
+					: TEXT("No compiler error lines were detected in the build log."),
+				StructuredContent,
+				false);
 		}
 
 		void WriteBuildTestMemory(
@@ -10449,6 +11321,89 @@ void FUnrealMcpModule::AppendToolDefinitions(TArray<TSharedPtr<FJsonValue>>& Too
 
 		{
 			TSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
+			PropertiesObject->SetObjectField(TEXT("mode"), UnrealMcp::MakeStringProperty(TEXT("Lock mode: status, acquire, release, or refresh."), TEXT("status")));
+			PropertiesObject->SetObjectField(TEXT("sessionId"), UnrealMcp::MakeStringProperty(TEXT("Session id for release/refresh.")));
+			PropertiesObject->SetObjectField(TEXT("owner"), UnrealMcp::MakeStringProperty(TEXT("Human-readable lock owner."), TEXT("Unreal MCP Chat")));
+			PropertiesObject->SetObjectField(TEXT("reason"), UnrealMcp::MakeStringProperty(TEXT("Why this extension session is locked.")));
+			PropertiesObject->SetObjectField(TEXT("ttlSeconds"), UnrealMcp::MakeNumberProperty(TEXT("Lock TTL in seconds, clamped to 30..86400."), 900.0));
+			PropertiesObject->SetObjectField(TEXT("force"), UnrealMcp::MakeBoolProperty(TEXT("Override a stale or foreign lock. Use carefully."), false));
+
+			TSharedPtr<FJsonObject> InputSchema = UnrealMcp::MakeObjectSchema();
+			InputSchema->SetObjectField(TEXT("properties"), PropertiesObject);
+
+			UnrealMcp::AddToolDefinition(
+				ToolsArray,
+				TEXT("unreal.mcp_lock_extension_session"),
+				TEXT("Lock MCP Extension Session"),
+				TEXT("Acquires, refreshes, releases, or inspects the MCP extension lock used to avoid simultaneous source edits/builds/tests."),
+				InputSchema);
+		}
+
+		{
+			TSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
+			PropertiesObject->SetObjectField(TEXT("label"), UnrealMcp::MakeStringProperty(TEXT("Short label for the snapshot directory."), TEXT("manual")));
+			PropertiesObject->SetObjectField(TEXT("reason"), UnrealMcp::MakeStringProperty(TEXT("Why this project state backup is being created.")));
+			PropertiesObject->SetObjectField(TEXT("includeSource"), UnrealMcp::MakeBoolProperty(TEXT("Include Unreal MCP source/header files."), true));
+			PropertiesObject->SetObjectField(TEXT("includeReadmes"), UnrealMcp::MakeBoolProperty(TEXT("Include root and plugin README files."), true));
+			PropertiesObject->SetObjectField(TEXT("includeProjectMemory"), UnrealMcp::MakeBoolProperty(TEXT("Include Saved/UnrealMcp/ProjectMemory.json."), true));
+			PropertiesObject->SetObjectField(TEXT("includeManifests"), UnrealMcp::MakeBoolProperty(TEXT("Include extension apply manifests."), true));
+			PropertiesObject->SetObjectField(TEXT("includeBuildLogs"), UnrealMcp::MakeBoolProperty(TEXT("Include the latest few build logs."), false));
+			PropertiesObject->SetObjectField(TEXT("dryRun"), UnrealMcp::MakeBoolProperty(TEXT("Preview snapshot contents without writing backup files."), false));
+
+			TSharedPtr<FJsonObject> InputSchema = UnrealMcp::MakeObjectSchema();
+			InputSchema->SetObjectField(TEXT("properties"), PropertiesObject);
+
+			UnrealMcp::AddToolDefinition(
+				ToolsArray,
+				TEXT("unreal.mcp_backup_project_state"),
+				TEXT("Backup MCP Project State"),
+				TEXT("Snapshots Unreal MCP source, README, project memory, manifests, and optional build logs before high-risk extension changes."),
+				InputSchema);
+		}
+
+		{
+			TSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
+			PropertiesObject->SetObjectField(TEXT("manifestPath"), UnrealMcp::MakeStringProperty(TEXT("Specific project-local/absolute manifest to restore. If empty, selects from ExtensionBackups.")));
+			PropertiesObject->SetObjectField(TEXT("toolName"), UnrealMcp::MakeStringProperty(TEXT("Optional toolName filter when manifestPath is empty.")));
+			PropertiesObject->SetObjectField(TEXT("selector"), UnrealMcp::MakeStringProperty(TEXT("Manifest selector when manifestPath is empty: latest or oldest."), TEXT("latest")));
+			PropertiesObject->SetObjectField(TEXT("manifestIndex"), UnrealMcp::MakeNumberProperty(TEXT("Optional zero-based candidate index after filtering/sorting; -1 uses selector."), -1.0));
+			PropertiesObject->SetObjectField(TEXT("dryRun"), UnrealMcp::MakeBoolProperty(TEXT("Preview rollback without restoring source."), false));
+			PropertiesObject->SetObjectField(TEXT("force"), UnrealMcp::MakeBoolProperty(TEXT("Restore even if current source hash differs from the apply manifest."), false));
+			PropertiesObject->SetObjectField(TEXT("createPreRollbackBackup"), UnrealMcp::MakeBoolProperty(TEXT("Snapshot current project state before a real rollback."), true));
+
+			TSharedPtr<FJsonObject> InputSchema = UnrealMcp::MakeObjectSchema();
+			InputSchema->SetObjectField(TEXT("properties"), PropertiesObject);
+
+			UnrealMcp::AddToolDefinition(
+				ToolsArray,
+				TEXT("unreal.mcp_rollback_to_manifest"),
+				TEXT("Rollback MCP To Manifest"),
+				TEXT("Restores an MCP extension from a selected historical apply manifest, not only the latest one, with optional pre-rollback snapshot."),
+				InputSchema);
+		}
+
+		{
+			TSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
+			PropertiesObject->SetObjectField(TEXT("buildLogPath"), UnrealMcp::MakeStringProperty(TEXT("Project-local/absolute build log path. Defaults to newest Saved/UnrealMcp/BuildLogs/*.log.")));
+			PropertiesObject->SetObjectField(TEXT("maxErrors"), UnrealMcp::MakeNumberProperty(TEXT("Maximum compiler errors to analyze."), 8.0));
+			PropertiesObject->SetObjectField(TEXT("contextLines"), UnrealMcp::MakeNumberProperty(TEXT("Source context lines before/after each error."), 4.0));
+			PropertiesObject->SetObjectField(TEXT("includeSourceContext"), UnrealMcp::MakeBoolProperty(TEXT("Include nearby source lines for each parsed error."), true));
+			PropertiesObject->SetObjectField(TEXT("autoPatch"), UnrealMcp::MakeBoolProperty(TEXT("Attempt only deterministic safe patches when available."), false));
+			PropertiesObject->SetObjectField(TEXT("dryRun"), UnrealMcp::MakeBoolProperty(TEXT("Preview any autoPatch changes without writing files."), true));
+
+			TSharedPtr<FJsonObject> InputSchema = UnrealMcp::MakeObjectSchema();
+			InputSchema->SetObjectField(TEXT("properties"), PropertiesObject);
+
+			UnrealMcp::AddToolDefinition(
+				ToolsArray,
+				TEXT("unreal.mcp_compile_error_fix_plan"),
+				TEXT("Compile Error Fix Plan"),
+				TEXT("Parses build logs into error file/line/source context, probable cause, suggested fixes, and safe auto-patch status."),
+				InputSchema);
+		}
+
+		{
+			TSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
 			PropertiesObject->SetObjectField(TEXT("toolName"), UnrealMcp::MakeStringProperty(TEXT("Tool name whose schema/scaffold should drive generated MCP tests.")));
 			PropertiesObject->SetObjectField(TEXT("scaffoldDir"), UnrealMcp::MakeStringProperty(TEXT("Project-relative or absolute scaffold directory. Tests are written under scaffoldDir/Tests by default.")));
 			PropertiesObject->SetObjectField(TEXT("testsDir"), UnrealMcp::MakeStringProperty(TEXT("Project-relative or absolute test output directory. Defaults to scaffoldDir/Tests.")));
@@ -10561,6 +11516,7 @@ void FUnrealMcpModule::AppendToolDefinitions(TArray<TSharedPtr<FJsonValue>>& Too
 			PropertiesObject->SetObjectField(TEXT("dryRunOnly"), UnrealMcp::MakeBoolProperty(TEXT("Only run validate and apply dry run; skip apply/build/test."), false));
 			PropertiesObject->SetObjectField(TEXT("applyChatCommand"), UnrealMcp::MakeBoolProperty(TEXT("Whether to apply optional ChatCommand.cpp.snippet."), true));
 			PropertiesObject->SetObjectField(TEXT("createBackup"), UnrealMcp::MakeBoolProperty(TEXT("Whether to create rollback backup during real apply."), true));
+			PropertiesObject->SetObjectField(TEXT("backupProjectState"), UnrealMcp::MakeBoolProperty(TEXT("Create a broad project-state snapshot before real apply/build/test changes."), true));
 			PropertiesObject->SetObjectField(TEXT("writeProjectMemory"), UnrealMcp::MakeBoolProperty(TEXT("Whether to write pipeline state into project memory."), true));
 
 			TSharedPtr<FJsonObject> InputSchema = UnrealMcp::MakeObjectSchema();
@@ -14550,6 +15506,11 @@ FUnrealMcpExecutionResult FUnrealMcpModule::ExecuteTool(const FString& ToolName,
 			{
 				return UnrealMcp::MakePieBlockedResult(ToolName);
 			}
+			UnrealMcp::FScopedMcpExtensionSessionLock ScopedLock(ToolName, Arguments);
+			if (!ScopedLock.IsAcquired())
+			{
+				return UnrealMcp::MakeExecutionResult(ScopedLock.GetFailureReason(), ScopedLock.MakeStructuredContent(TEXT("mcp_extension_lock_failed")), true);
+			}
 			return UnrealMcp::ApplyMcpScaffold(Arguments);
 		}
 
@@ -14559,7 +15520,46 @@ FUnrealMcpExecutionResult FUnrealMcpModule::ExecuteTool(const FString& ToolName,
 			{
 				return UnrealMcp::MakePieBlockedResult(ToolName);
 			}
+			UnrealMcp::FScopedMcpExtensionSessionLock ScopedLock(ToolName, Arguments);
+			if (!ScopedLock.IsAcquired())
+			{
+				return UnrealMcp::MakeExecutionResult(ScopedLock.GetFailureReason(), ScopedLock.MakeStructuredContent(TEXT("mcp_extension_lock_failed")), true);
+			}
 			return UnrealMcp::RollbackLastMcpExtension(Arguments);
+		}
+
+		if (ToolName == TEXT("unreal.mcp_lock_extension_session"))
+		{
+			return UnrealMcp::LockExtensionSession(Arguments);
+		}
+
+		if (ToolName == TEXT("unreal.mcp_backup_project_state"))
+		{
+			UnrealMcp::FScopedMcpExtensionSessionLock ScopedLock(ToolName, Arguments);
+			if (!ScopedLock.IsAcquired())
+			{
+				return UnrealMcp::MakeExecutionResult(ScopedLock.GetFailureReason(), ScopedLock.MakeStructuredContent(TEXT("mcp_extension_lock_failed")), true);
+			}
+			return UnrealMcp::BackupProjectState(Arguments);
+		}
+
+		if (ToolName == TEXT("unreal.mcp_rollback_to_manifest"))
+		{
+			if (UnrealMcp::IsEditorPlaying())
+			{
+				return UnrealMcp::MakePieBlockedResult(ToolName);
+			}
+			UnrealMcp::FScopedMcpExtensionSessionLock ScopedLock(ToolName, Arguments);
+			if (!ScopedLock.IsAcquired())
+			{
+				return UnrealMcp::MakeExecutionResult(ScopedLock.GetFailureReason(), ScopedLock.MakeStructuredContent(TEXT("mcp_extension_lock_failed")), true);
+			}
+			return UnrealMcp::RollbackToManifest(Arguments);
+		}
+
+		if (ToolName == TEXT("unreal.mcp_compile_error_fix_plan"))
+		{
+			return UnrealMcp::CompileErrorFixPlan(Arguments);
 		}
 
 		if (ToolName == TEXT("unreal.mcp_generate_tests"))
@@ -14568,6 +15568,11 @@ FUnrealMcpExecutionResult FUnrealMcpModule::ExecuteTool(const FString& ToolName,
 			{
 				return UnrealMcp::MakePieBlockedResult(ToolName);
 			}
+			UnrealMcp::FScopedMcpExtensionSessionLock ScopedLock(ToolName, Arguments);
+			if (!ScopedLock.IsAcquired())
+			{
+				return UnrealMcp::MakeExecutionResult(ScopedLock.GetFailureReason(), ScopedLock.MakeStructuredContent(TEXT("mcp_extension_lock_failed")), true);
+			}
 			TArray<TSharedPtr<FJsonValue>> ToolsArray;
 			AppendToolDefinitions(ToolsArray);
 			return UnrealMcp::GenerateMcpTests(Arguments, ToolsArray);
@@ -14575,16 +15580,31 @@ FUnrealMcpExecutionResult FUnrealMcpModule::ExecuteTool(const FString& ToolName,
 
 		if (ToolName == TEXT("unreal.mcp_build_editor"))
 		{
+			UnrealMcp::FScopedMcpExtensionSessionLock ScopedLock(ToolName, Arguments);
+			if (!ScopedLock.IsAcquired())
+			{
+				return UnrealMcp::MakeExecutionResult(ScopedLock.GetFailureReason(), ScopedLock.MakeStructuredContent(TEXT("mcp_extension_lock_failed")), true);
+			}
 			return UnrealMcp::BuildEditor(Arguments);
 		}
 
 		if (ToolName == TEXT("unreal.mcp_run_tool_test"))
 		{
+			UnrealMcp::FScopedMcpExtensionSessionLock ScopedLock(ToolName, Arguments);
+			if (!ScopedLock.IsAcquired())
+			{
+				return UnrealMcp::MakeExecutionResult(ScopedLock.GetFailureReason(), ScopedLock.MakeStructuredContent(TEXT("mcp_extension_lock_failed")), true);
+			}
 			return RunMcpToolTest(Arguments);
 		}
 
 		if (ToolName == TEXT("unreal.mcp_run_test_suite"))
 		{
+			UnrealMcp::FScopedMcpExtensionSessionLock ScopedLock(ToolName, Arguments);
+			if (!ScopedLock.IsAcquired())
+			{
+				return UnrealMcp::MakeExecutionResult(ScopedLock.GetFailureReason(), ScopedLock.MakeStructuredContent(TEXT("mcp_extension_lock_failed")), true);
+			}
 			return RunMcpTestSuite(Arguments);
 		}
 
@@ -14593,6 +15613,11 @@ FUnrealMcpExecutionResult FUnrealMcpModule::ExecuteTool(const FString& ToolName,
 			if (UnrealMcp::IsEditorPlaying())
 			{
 				return UnrealMcp::MakePieBlockedResult(ToolName);
+			}
+			UnrealMcp::FScopedMcpExtensionSessionLock ScopedLock(ToolName, Arguments);
+			if (!ScopedLock.IsAcquired())
+			{
+				return UnrealMcp::MakeExecutionResult(ScopedLock.GetFailureReason(), ScopedLock.MakeStructuredContent(TEXT("mcp_extension_lock_failed")), true);
 			}
 			return RunMcpExtensionPipeline(Arguments);
 		}
@@ -16100,6 +17125,7 @@ FUnrealMcpExecutionResult FUnrealMcpModule::RunMcpExtensionPipeline(const FJsonO
 	bool bDryRunOnly = false;
 	bool bApplyChatCommand = true;
 	bool bCreateBackup = true;
+	bool bBackupProjectState = true;
 	bool bWriteProjectMemory = true;
 
 	Arguments.TryGetStringField(TEXT("mode"), Mode);
@@ -16119,6 +17145,7 @@ FUnrealMcpExecutionResult FUnrealMcpModule::RunMcpExtensionPipeline(const FJsonO
 	Arguments.TryGetBoolField(TEXT("dryRunOnly"), bDryRunOnly);
 	Arguments.TryGetBoolField(TEXT("applyChatCommand"), bApplyChatCommand);
 	Arguments.TryGetBoolField(TEXT("createBackup"), bCreateBackup);
+	Arguments.TryGetBoolField(TEXT("backupProjectState"), bBackupProjectState);
 	Arguments.TryGetBoolField(TEXT("writeProjectMemory"), bWriteProjectMemory);
 
 	Mode = Mode.TrimStartAndEnd().ToLower();
@@ -16316,6 +17343,31 @@ FUnrealMcpExecutionResult FUnrealMcpModule::RunMcpExtensionPipeline(const FJsonO
 			TEXT("dryRunOnly=true; skipped apply/build/test."))));
 	}
 
+	if (bSucceeded && !bDryRunOnly && bBackupProjectState && (bApply || bBuild || bRunTest))
+	{
+		TSharedPtr<FJsonObject> BackupArguments = MakeShared<FJsonObject>();
+		BackupArguments->SetStringField(TEXT("label"), FString::Printf(TEXT("pipeline_%s"), *ToolName));
+		BackupArguments->SetStringField(TEXT("reason"), FString::Printf(TEXT("Pre-pipeline snapshot before applying/building/testing MCP tool %s."), *ToolName));
+		BackupArguments->SetBoolField(TEXT("includeBuildLogs"), false);
+		const FUnrealMcpExecutionResult BackupResult = UnrealMcp::BackupProjectState(*BackupArguments);
+		Steps.Add(MakeShared<FJsonValueObject>(UnrealMcp::MakePipelineStepObject(
+			TEXT("backup_project_state"),
+			BackupResult.bIsError ? TEXT("failed") : TEXT("completed"),
+			BackupResult.Text,
+			&BackupResult)));
+		if (BackupResult.bIsError)
+		{
+			bSucceeded = false;
+		}
+	}
+	else if (bDryRunOnly || !bBackupProjectState)
+	{
+		Steps.Add(MakeShared<FJsonValueObject>(UnrealMcp::MakePipelineStepObject(
+			TEXT("backup_project_state"),
+			TEXT("skipped"),
+			bDryRunOnly ? TEXT("dryRunOnly=true.") : TEXT("backupProjectState=false."))));
+	}
+
 	if (bSucceeded && bApply)
 	{
 		TSharedPtr<FJsonObject> ApplyArguments = MakeShared<FJsonObject>();
@@ -16442,6 +17494,7 @@ FUnrealMcpExecutionResult FUnrealMcpModule::RunMcpExtensionPipeline(const FJsonO
 	StructuredContent->SetBoolField(TEXT("buildSucceeded"), bBuildSucceeded);
 	StructuredContent->SetBoolField(TEXT("generateTests"), bGenerateTests);
 	StructuredContent->SetBoolField(TEXT("runTestSuite"), bRunTestSuite);
+	StructuredContent->SetBoolField(TEXT("backupProjectState"), bBackupProjectState);
 	StructuredContent->SetStringField(TEXT("restartAdvice"), TEXT("If requiresRestart=true, close and reopen Unreal Editor, then call unreal.mcp_extension_pipeline with mode=resume_test and the same memoryKey."));
 	StructuredContent->SetStringField(TEXT("supervisorCommand"), FString::Printf(TEXT("python3 Tools/unreal_mcp_supervisor.py resume-test --memory-key %s"), *MemoryKey));
 	StructuredContent->SetArrayField(TEXT("steps"), Steps);

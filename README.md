@@ -97,6 +97,10 @@ Unreal MCP currently supports:
   - `unreal.mcp_validate_tool_schema`
   - `unreal.mcp_apply_scaffold`
   - `unreal.mcp_rollback_last_extension`
+  - `unreal.mcp_lock_extension_session`
+  - `unreal.mcp_backup_project_state`
+  - `unreal.mcp_rollback_to_manifest`
+  - `unreal.mcp_compile_error_fix_plan`
   - `unreal.mcp_generate_tests`
   - `unreal.mcp_build_editor`
   - `unreal.mcp_run_tool_test`
@@ -179,9 +183,13 @@ Useful first-stage extension checks:
 /tool unreal.mcp_patch_scaffold_snippet {"toolName":"unreal.my_custom_tool","snippetName":"ExecuteToolHandler.cpp.snippet","findText":"TODO","replaceText":"Reviewed by the snippet safety layer.","dryRun":true}
 /tool unreal.mcp_apply_scaffold {"toolName":"unreal.my_custom_tool","dryRun":true}
 /tool unreal.mcp_apply_scaffold {"toolName":"unreal.my_custom_tool","dryRun":false}
+/tool unreal.mcp_lock_extension_session {"mode":"status"}
+/tool unreal.mcp_backup_project_state {"label":"before_custom_tool","reason":"Snapshot before applying a new MCP extension."}
 /tool unreal.mcp_rollback_last_extension {"dryRun":true}
+/tool unreal.mcp_rollback_to_manifest {"toolName":"unreal.my_custom_tool","selector":"latest","dryRun":true}
 /tool unreal.mcp_generate_tests {"toolName":"unreal.my_custom_tool","scaffoldDir":"Tools/UnrealMcpToolScaffolds/my_custom_tool"}
 /tool unreal.mcp_build_editor {"toolName":"unreal.my_custom_tool","scaffoldDir":"Tools/UnrealMcpToolScaffolds/my_custom_tool","writeProjectMemory":true}
+/tool unreal.mcp_compile_error_fix_plan {"maxErrors":5,"contextLines":4}
 /tool unreal.mcp_run_tool_test {"memoryKey":"mcp.extension.build_test","readProjectMemory":true}
 /tool unreal.mcp_run_test_suite {"memoryKey":"mcp.extension.build_test","readProjectMemory":true}
 /tool unreal.mcp_extension_pipeline {"toolName":"unreal.my_custom_tool","memoryKey":"mcp.extension.pipeline"}
@@ -200,6 +208,10 @@ Build/test handoff note:
 - `unreal.mcp_validate_cpp_snippet` statically checks generated C++ snippets for risky operations before source integration, including process execution, destructive file operations, recursive pipeline calls, obvious infinite loops, missing handler returns, and flexible schema warnings.
 - `unreal.mcp_patch_scaffold_snippet` edits `ToolDefinition.cpp.snippet`, `ExecuteToolHandler.cpp.snippet`, or `ChatCommand.cpp.snippet` with dry-run diff preview, idempotence checks, backup creation, and the same static validation gate.
 - `unreal.mcp_apply_scaffold` validates snippets before integration by default and returns both snippet validation results and a target source diff preview so Chat can review the change before writing plugin source.
+- `unreal.mcp_lock_extension_session` creates a short-lived lock under `Saved/UnrealMcp/ExtensionSession.lock` so two Chat/supervisor sessions do not apply, build, test, or roll back source at the same time.
+- `unreal.mcp_backup_project_state` snapshots MCP source/header files, root/plugin README files, project memory, extension manifests, and optional build logs under `Saved/UnrealMcp/ProjectStateBackups`.
+- `unreal.mcp_rollback_to_manifest` can restore a selected historical `ExtensionBackups/*/Manifest.json`, not only `LastExtensionApply.json`, and can create a pre-rollback project-state backup first.
+- `unreal.mcp_compile_error_fix_plan` reads the newest build log or a passed `buildLogPath`, extracts compiler errors with file/line/source context, guesses likely causes, and returns suggested fixes before another build.
 - `unreal.mcp_generate_tests` creates `Tests/valid_basic.json`, `Tests/missing_required.json`, `Tests/boundary_values.json`, and `Tests/wrong_type.json` from a loaded tool schema, scaffold README schema, or `TestRequest.json`.
 - `unreal.mcp_build_editor` runs Unreal Build Tool for `MyProjectEditor`, captures a build log under `Saved/UnrealMcp/BuildLogs`, parses key error lines, and writes restart handoff state into project memory.
 - Because the tool is invoked from a running editor, newly compiled plugin code is not loaded until Unreal Editor is restarted.

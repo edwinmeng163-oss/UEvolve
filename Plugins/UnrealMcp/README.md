@@ -73,6 +73,10 @@ Editor action tools:
 - `unreal.mcp_validate_tool_schema`
 - `unreal.mcp_apply_scaffold`
 - `unreal.mcp_rollback_last_extension`
+- `unreal.mcp_lock_extension_session`
+- `unreal.mcp_backup_project_state`
+- `unreal.mcp_rollback_to_manifest`
+- `unreal.mcp_compile_error_fix_plan`
 - `unreal.mcp_generate_tests`
 - `unreal.mcp_build_editor`
 - `unreal.mcp_run_tool_test`
@@ -309,6 +313,22 @@ Validate or patch generated snippets before applying them:
 
 `unreal.mcp_validate_cpp_snippet` checks generated C++ snippets for risky patterns such as process execution, destructive file operations, external path literals, recursive pipeline calls, obvious infinite loops, missing handler returns, and flexible schema warnings. `unreal.mcp_patch_scaffold_snippet` can edit `ToolDefinition.cpp.snippet`, `ExecuteToolHandler.cpp.snippet`, or `ChatCommand.cpp.snippet` with dry-run diff previews, idempotence checks, backups, and the same static validation gate.
 
+Protect a risky MCP extension session:
+
+```text
+/tool unreal.mcp_lock_extension_session {"mode":"status"}
+```
+
+`unreal.mcp_lock_extension_session` manages `Saved/UnrealMcp/ExtensionSession.lock`. The high-risk extension tools also acquire this lock automatically while applying, building, testing, running the pipeline, or rolling back, which helps prevent two Chat/supervisor sessions from editing plugin source at once.
+
+Create a project-state snapshot:
+
+```text
+/tool unreal.mcp_backup_project_state {"label":"before_custom_tool","reason":"Snapshot before applying a new MCP extension."}
+```
+
+This captures MCP source/header files, root/plugin README files, project memory, extension manifests, and optionally recent build logs under `Saved/UnrealMcp/ProjectStateBackups`.
+
 Generate a schema-derived test suite:
 
 ```text
@@ -324,6 +344,14 @@ Build the editor after applying snippets:
 ```
 
 `unreal.mcp_build_editor` captures UBT output under `Saved/UnrealMcp/BuildLogs`, parses success/failure plus key error lines, and writes a restart handoff memory entry. Since this command runs from an already-open editor, newly built plugin code still requires an Unreal Editor restart before fresh tools appear in `tools/list`.
+
+If the build fails, generate a fix plan:
+
+```text
+/tool unreal.mcp_compile_error_fix_plan {"maxErrors":5,"contextLines":4}
+```
+
+The fix planner reads the newest build log unless `buildLogPath` is provided, extracts compiler errors with file/line/source context, guesses likely causes, and returns suggested fixes. It only reports `patchApplied=true` when a deterministic safe auto-patch is actually available.
 
 After restart, run the generated test request:
 
@@ -381,6 +409,12 @@ The supervisor script runs outside Unreal Editor, so it can close/reopen the edi
 ```text
 /tool unreal.mcp_rollback_last_extension {"dryRun":true}
 ```
+
+```text
+/tool unreal.mcp_rollback_to_manifest {"toolName":"unreal.my_custom_tool","selector":"latest","dryRun":true}
+```
+
+`unreal.mcp_rollback_to_manifest` can restore a selected historical `Saved/UnrealMcp/ExtensionBackups/*/Manifest.json`, not only the latest apply manifest. A real rollback creates a pre-rollback project-state backup by default.
 
 ```text
 /tool unreal.mcp_tool_audit {}
