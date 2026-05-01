@@ -3776,6 +3776,9 @@ namespace UnrealMcp
 			return FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UnrealMcp/ProjectMemory.json")));
 		}
 
+		bool ResolveProjectPathInsideProject(const FString& RequestedPath, FString& OutPath, FString& OutFailureReason);
+		TSharedPtr<FJsonObject> MakeFileInfoObject(const FString& Path);
+
 		TSharedPtr<FJsonObject> MakeEmptyProjectMemory()
 		{
 			TSharedPtr<FJsonObject> MemoryObject = MakeShared<FJsonObject>();
@@ -4021,6 +4024,767 @@ namespace UnrealMcp
 					*KeySuffix),
 				StructuredContent,
 				false);
+		}
+
+		TArray<TSharedPtr<FJsonValue>> GetMemoryEntryTags(const TSharedPtr<FJsonObject>& EntryObject)
+		{
+			TArray<TSharedPtr<FJsonValue>> TagValues;
+			const TArray<TSharedPtr<FJsonValue>>* ExistingTags = nullptr;
+			if (EntryObject.IsValid() && EntryObject->TryGetArrayField(TEXT("tags"), ExistingTags) && ExistingTags)
+			{
+				TagValues = *ExistingTags;
+			}
+			return TagValues;
+		}
+
+		bool MemoryEntryHasTag(const TSharedPtr<FJsonObject>& EntryObject, const FString& Tag)
+		{
+			if (!EntryObject.IsValid() || Tag.TrimStartAndEnd().IsEmpty())
+			{
+				return true;
+			}
+
+			const TArray<TSharedPtr<FJsonValue>> Tags = GetMemoryEntryTags(EntryObject);
+			for (const TSharedPtr<FJsonValue>& TagValue : Tags)
+			{
+				if (TagValue.IsValid() && TagValue->Type == EJson::String && TagValue->AsString().Equals(Tag, ESearchCase::IgnoreCase))
+				{
+					return true;
+				}
+			}
+			return false;
+		}
+
+		TSharedPtr<FJsonObject> MakeProjectMemorySummary(const TSharedPtr<FJsonObject>& EntryObject, bool bIncludeContent)
+		{
+			TSharedPtr<FJsonObject> SummaryObject = MakeShared<FJsonObject>();
+			if (!EntryObject.IsValid())
+			{
+				return SummaryObject;
+			}
+
+			FString Key;
+			FString Summary;
+			FString Status;
+			FString NextStep;
+			FString UpdatedAtUtc;
+			EntryObject->TryGetStringField(TEXT("key"), Key);
+			EntryObject->TryGetStringField(TEXT("summary"), Summary);
+			EntryObject->TryGetStringField(TEXT("status"), Status);
+			EntryObject->TryGetStringField(TEXT("nextStep"), NextStep);
+			EntryObject->TryGetStringField(TEXT("updatedAtUtc"), UpdatedAtUtc);
+			SummaryObject->SetStringField(TEXT("key"), Key);
+			SummaryObject->SetStringField(TEXT("summary"), Summary);
+			SummaryObject->SetStringField(TEXT("status"), Status);
+			SummaryObject->SetStringField(TEXT("nextStep"), NextStep);
+			SummaryObject->SetStringField(TEXT("updatedAtUtc"), UpdatedAtUtc);
+			SummaryObject->SetArrayField(TEXT("tags"), GetMemoryEntryTags(EntryObject));
+			if (bIncludeContent)
+			{
+				const TSharedPtr<FJsonObject>* ContentObject = nullptr;
+				if (EntryObject->TryGetObjectField(TEXT("content"), ContentObject) && ContentObject && (*ContentObject).IsValid())
+				{
+					SummaryObject->SetObjectField(TEXT("content"), *ContentObject);
+				}
+			}
+			return SummaryObject;
+		}
+
+		FUnrealMcpExecutionResult ProjectMemoryView(const FJsonObject& Arguments)
+		{
+			FString KeyFilter;
+			FString StatusFilter;
+			FString TagFilter;
+			bool bIncludeContent = false;
+			bool bSortDescending = true;
+			double MaxEntriesDouble = 50.0;
+			Arguments.TryGetStringField(TEXT("keyFilter"), KeyFilter);
+			Arguments.TryGetStringField(TEXT("status"), StatusFilter);
+			Arguments.TryGetStringField(TEXT("tag"), TagFilter);
+			Arguments.TryGetBoolField(TEXT("includeContent"), bIncludeContent);
+			Arguments.TryGetBoolField(TEXT("sortDescending"), bSortDescending);
+			Arguments.TryGetNumberField(TEXT("maxEntries"), MaxEntriesDouble);
+			KeyFilter = KeyFilter.TrimStartAndEnd();
+			StatusFilter = StatusFilter.TrimStartAndEnd();
+			TagFilter = TagFilter.TrimStartAndEnd();
+			const int32 MaxEntries = FMath::Clamp(static_cast<int32>(MaxEntriesDouble), 1, 500);
+
+			FString FailureReason;
+			TSharedPtr<FJsonObject> MemoryObject;
+			if (!LoadProjectMemory(MemoryObject, FailureReason))
+			{
+				return MakeExecutionResult(FailureReason, nullptr, true);
+			}
+
+			TArray<TSharedPtr<FJsonObject>> MatchedObjects;
+			const TArray<TSharedPtr<FJsonValue>>* Entries = nullptr;
+			if (MemoryObject->TryGetArrayField(TEXT("entries"), Entries) && Entries)
+			{
+				for (const TSharedPtr<FJsonValue>& EntryValue : *Entries)
+				{
+					if (!EntryValue.IsValid() || EntryValue->Type != EJson::Object || !EntryValue->AsObject().IsValid())
+					{
+						continue;
+					}
+
+					TSharedPtr<FJsonObject> EntryObject = EntryValue->AsObject();
+					FString ExistingKey;
+					FString ExistingStatus;
+					EntryObject->TryGetStringField(TEXT("key"), ExistingKey);
+					EntryObject->TryGetStringField(TEXT("status"), ExistingStatus);
+					if (!KeyFilter.IsEmpty() && !ExistingKey.Contains(KeyFilter, ESearchCase::IgnoreCase))
+					{
+						continue;
+					}
+					if (!StatusFilter.IsEmpty() && !ExistingStatus.Equals(StatusFilter, ESearchCase::IgnoreCase))
+					{
+						continue;
+					}
+					if (!MemoryEntryHasTag(EntryObject, TagFilter))
+					{
+						continue;
+					}
+					MatchedObjects.Add(EntryObject);
+				}
+			}
+
+			MatchedObjects.Sort([bSortDescending](const TSharedPtr<FJsonObject>& A, const TSharedPtr<FJsonObject>& B)
+			{
+				FString ATime;
+				FString BTime;
+				if (A.IsValid())
+				{
+					A->TryGetStringField(TEXT("updatedAtUtc"), ATime);
+				}
+				if (B.IsValid())
+				{
+					B->TryGetStringField(TEXT("updatedAtUtc"), BTime);
+				}
+				return bSortDescending ? ATime > BTime : ATime < BTime;
+			});
+
+			TArray<TSharedPtr<FJsonValue>> Results;
+			const int32 ResultCount = FMath::Min(MaxEntries, MatchedObjects.Num());
+			for (int32 Index = 0; Index < ResultCount; ++Index)
+			{
+				Results.Add(MakeShared<FJsonValueObject>(MakeProjectMemorySummary(MatchedObjects[Index], bIncludeContent)));
+			}
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("action"), TEXT("project_memory_view"));
+			StructuredContent->SetStringField(TEXT("path"), GetProjectMemoryFilePath());
+			StructuredContent->SetStringField(TEXT("keyFilter"), KeyFilter);
+			StructuredContent->SetStringField(TEXT("status"), StatusFilter);
+			StructuredContent->SetStringField(TEXT("tag"), TagFilter);
+			StructuredContent->SetBoolField(TEXT("includeContent"), bIncludeContent);
+			StructuredContent->SetNumberField(TEXT("matchedCount"), MatchedObjects.Num());
+			StructuredContent->SetNumberField(TEXT("returnedCount"), Results.Num());
+			StructuredContent->SetArrayField(TEXT("entries"), Results);
+
+			return MakeExecutionResult(
+				FString::Printf(TEXT("Viewed %d project memory entr%s (%d returned)."),
+					MatchedObjects.Num(),
+					MatchedObjects.Num() == 1 ? TEXT("y") : TEXT("ies"),
+					Results.Num()),
+				StructuredContent,
+				false);
+		}
+
+		void JsonObjectMergeInto(TSharedPtr<FJsonObject>& TargetObject, const TSharedPtr<FJsonObject>& PatchObject)
+		{
+			if (!TargetObject.IsValid())
+			{
+				TargetObject = MakeShared<FJsonObject>();
+			}
+			if (!PatchObject.IsValid())
+			{
+				return;
+			}
+			for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : PatchObject->Values)
+			{
+				TargetObject->SetField(Pair.Key, Pair.Value);
+			}
+		}
+
+		FUnrealMcpExecutionResult ProjectMemoryEdit(const FJsonObject& Arguments)
+		{
+			FString Key;
+			FString Summary;
+			FString Status;
+			FString NextStep;
+			FString ContentJson;
+			FString ContentMode = TEXT("merge");
+			FString TagsMode = TEXT("replace");
+			bool bCreateIfMissing = false;
+			bool bDryRun = false;
+			Arguments.TryGetStringField(TEXT("key"), Key);
+			Arguments.TryGetStringField(TEXT("summary"), Summary);
+			Arguments.TryGetStringField(TEXT("status"), Status);
+			Arguments.TryGetStringField(TEXT("nextStep"), NextStep);
+			Arguments.TryGetStringField(TEXT("contentJson"), ContentJson);
+			Arguments.TryGetStringField(TEXT("contentMode"), ContentMode);
+			Arguments.TryGetStringField(TEXT("tagsMode"), TagsMode);
+			Arguments.TryGetBoolField(TEXT("createIfMissing"), bCreateIfMissing);
+			Arguments.TryGetBoolField(TEXT("dryRun"), bDryRun);
+			Key = Key.TrimStartAndEnd();
+			ContentMode = ContentMode.TrimStartAndEnd().ToLower();
+			TagsMode = TagsMode.TrimStartAndEnd().ToLower();
+			if (Key.IsEmpty())
+			{
+				return MakeExecutionResult(TEXT("key is required."), nullptr, true);
+			}
+
+			TArray<FString> Tags;
+			const bool bHasTags = TryGetStringArrayField(Arguments, TEXT("tags"), Tags);
+
+			TSharedPtr<FJsonObject> PatchContent;
+			if (!ContentJson.TrimStartAndEnd().IsEmpty())
+			{
+				if (!LoadJsonObject(ContentJson, PatchContent) || !PatchContent.IsValid())
+				{
+					return MakeExecutionResult(TEXT("contentJson must be a valid JSON object."), nullptr, true);
+				}
+			}
+
+			FString FailureReason;
+			TSharedPtr<FJsonObject> MemoryObject;
+			if (!LoadProjectMemory(MemoryObject, FailureReason))
+			{
+				return MakeExecutionResult(FailureReason, nullptr, true);
+			}
+
+			TArray<TSharedPtr<FJsonValue>> Entries;
+			const TArray<TSharedPtr<FJsonValue>>* ExistingEntries = nullptr;
+			if (MemoryObject->TryGetArrayField(TEXT("entries"), ExistingEntries) && ExistingEntries)
+			{
+				Entries = *ExistingEntries;
+			}
+
+			int32 ExistingIndex = INDEX_NONE;
+			TSharedPtr<FJsonObject> EntryObject;
+			for (int32 Index = 0; Index < Entries.Num(); ++Index)
+			{
+				if (!Entries[Index].IsValid() || Entries[Index]->Type != EJson::Object || !Entries[Index]->AsObject().IsValid())
+				{
+					continue;
+				}
+				FString ExistingKey;
+				Entries[Index]->AsObject()->TryGetStringField(TEXT("key"), ExistingKey);
+				if (ExistingKey == Key)
+				{
+					ExistingIndex = Index;
+					EntryObject = Entries[Index]->AsObject();
+					break;
+				}
+			}
+
+			if (!EntryObject.IsValid())
+			{
+				if (!bCreateIfMissing)
+				{
+					return MakeExecutionResult(FString::Printf(TEXT("No project memory entry exists for key '%s'."), *Key), nullptr, true);
+				}
+				EntryObject = MakeShared<FJsonObject>();
+				EntryObject->SetStringField(TEXT("key"), Key);
+				EntryObject->SetObjectField(TEXT("content"), MakeShared<FJsonObject>());
+			}
+
+			TSharedPtr<FJsonObject> BeforeObject = MakeProjectMemorySummary(EntryObject, true);
+			if (Arguments.HasField(TEXT("summary")))
+			{
+				EntryObject->SetStringField(TEXT("summary"), Summary);
+			}
+			if (Arguments.HasField(TEXT("status")))
+			{
+				EntryObject->SetStringField(TEXT("status"), Status);
+			}
+			if (Arguments.HasField(TEXT("nextStep")))
+			{
+				EntryObject->SetStringField(TEXT("nextStep"), NextStep);
+			}
+			if (PatchContent.IsValid())
+			{
+				if (ContentMode == TEXT("replace"))
+				{
+					EntryObject->SetObjectField(TEXT("content"), PatchContent);
+				}
+				else
+				{
+					const TSharedPtr<FJsonObject>* ExistingContent = nullptr;
+					TSharedPtr<FJsonObject> ContentObject = MakeShared<FJsonObject>();
+					if (EntryObject->TryGetObjectField(TEXT("content"), ExistingContent) && ExistingContent && (*ExistingContent).IsValid())
+					{
+						ContentObject = *ExistingContent;
+					}
+					JsonObjectMergeInto(ContentObject, PatchContent);
+					EntryObject->SetObjectField(TEXT("content"), ContentObject);
+				}
+			}
+			if (bHasTags)
+			{
+				TArray<TSharedPtr<FJsonValue>> ExistingTagValues = TagsMode == TEXT("append") || TagsMode == TEXT("remove")
+					? GetMemoryEntryTags(EntryObject)
+					: TArray<TSharedPtr<FJsonValue>>();
+				if (TagsMode == TEXT("remove"))
+				{
+					ExistingTagValues.RemoveAll([&Tags](const TSharedPtr<FJsonValue>& TagValue)
+					{
+						if (!TagValue.IsValid() || TagValue->Type != EJson::String)
+						{
+							return false;
+						}
+						for (const FString& Tag : Tags)
+						{
+							if (TagValue->AsString().Equals(Tag, ESearchCase::IgnoreCase))
+							{
+								return true;
+							}
+						}
+						return false;
+					});
+				}
+				else
+				{
+					for (const FString& Tag : Tags)
+					{
+						const FString CleanTag = Tag.TrimStartAndEnd();
+						if (CleanTag.IsEmpty())
+						{
+							continue;
+						}
+						bool bAlreadyExists = false;
+						for (const TSharedPtr<FJsonValue>& ExistingTagValue : ExistingTagValues)
+						{
+							if (ExistingTagValue.IsValid() && ExistingTagValue->Type == EJson::String && ExistingTagValue->AsString().Equals(CleanTag, ESearchCase::IgnoreCase))
+							{
+								bAlreadyExists = true;
+								break;
+							}
+						}
+						if (!bAlreadyExists)
+						{
+							ExistingTagValues.Add(MakeShared<FJsonValueString>(CleanTag));
+						}
+					}
+				}
+				EntryObject->SetArrayField(TEXT("tags"), ExistingTagValues);
+			}
+
+			const FString Timestamp = FDateTime::UtcNow().ToIso8601();
+			EntryObject->SetStringField(TEXT("updatedAtUtc"), Timestamp);
+			if (ExistingIndex == INDEX_NONE)
+			{
+				Entries.Add(MakeShared<FJsonValueObject>(EntryObject));
+			}
+			else
+			{
+				Entries[ExistingIndex] = MakeShared<FJsonValueObject>(EntryObject);
+			}
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("action"), TEXT("project_memory_edit"));
+			StructuredContent->SetStringField(TEXT("path"), GetProjectMemoryFilePath());
+			StructuredContent->SetStringField(TEXT("key"), Key);
+			StructuredContent->SetBoolField(TEXT("created"), ExistingIndex == INDEX_NONE);
+			StructuredContent->SetBoolField(TEXT("dryRun"), bDryRun);
+			StructuredContent->SetObjectField(TEXT("before"), BeforeObject);
+			StructuredContent->SetObjectField(TEXT("after"), MakeProjectMemorySummary(EntryObject, true));
+
+			if (!bDryRun)
+			{
+				MemoryObject->SetStringField(TEXT("updatedAtUtc"), Timestamp);
+				MemoryObject->SetArrayField(TEXT("entries"), Entries);
+				if (!SaveProjectMemory(MemoryObject, FailureReason))
+				{
+					return MakeExecutionResult(FailureReason, StructuredContent, true);
+				}
+			}
+
+			return MakeExecutionResult(
+				bDryRun
+					? FString::Printf(TEXT("Dry run edited project memory key '%s'."), *Key)
+					: FString::Printf(TEXT("Edited project memory key '%s'."), *Key),
+				StructuredContent,
+				false);
+		}
+
+		FUnrealMcpExecutionResult ProjectMemoryDelete(const FJsonObject& Arguments)
+		{
+			FString Key;
+			bool bDryRun = true;
+			Arguments.TryGetStringField(TEXT("key"), Key);
+			Arguments.TryGetBoolField(TEXT("dryRun"), bDryRun);
+			Key = Key.TrimStartAndEnd();
+			if (Key.IsEmpty())
+			{
+				return MakeExecutionResult(TEXT("key is required."), nullptr, true);
+			}
+
+			FString FailureReason;
+			TSharedPtr<FJsonObject> MemoryObject;
+			if (!LoadProjectMemory(MemoryObject, FailureReason))
+			{
+				return MakeExecutionResult(FailureReason, nullptr, true);
+			}
+
+			TArray<TSharedPtr<FJsonValue>> Entries;
+			const TArray<TSharedPtr<FJsonValue>>* ExistingEntries = nullptr;
+			if (MemoryObject->TryGetArrayField(TEXT("entries"), ExistingEntries) && ExistingEntries)
+			{
+				Entries = *ExistingEntries;
+			}
+
+			TSharedPtr<FJsonObject> DeletedEntry;
+			const int32 RemovedCount = Entries.RemoveAll([&Key, &DeletedEntry](const TSharedPtr<FJsonValue>& EntryValue)
+			{
+				if (!EntryValue.IsValid() || EntryValue->Type != EJson::Object || !EntryValue->AsObject().IsValid())
+				{
+					return false;
+				}
+				FString ExistingKey;
+				EntryValue->AsObject()->TryGetStringField(TEXT("key"), ExistingKey);
+				if (ExistingKey == Key)
+				{
+					DeletedEntry = EntryValue->AsObject();
+					return true;
+				}
+				return false;
+			});
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("action"), TEXT("project_memory_delete"));
+			StructuredContent->SetStringField(TEXT("path"), GetProjectMemoryFilePath());
+			StructuredContent->SetStringField(TEXT("key"), Key);
+			StructuredContent->SetBoolField(TEXT("dryRun"), bDryRun);
+			StructuredContent->SetNumberField(TEXT("removedCount"), RemovedCount);
+			if (DeletedEntry.IsValid())
+			{
+				StructuredContent->SetObjectField(TEXT("deletedEntry"), MakeProjectMemorySummary(DeletedEntry, true));
+			}
+
+			if (RemovedCount == 0)
+			{
+				return MakeExecutionResult(FString::Printf(TEXT("No project memory entry exists for key '%s'."), *Key), StructuredContent, true);
+			}
+
+			if (!bDryRun)
+			{
+				MemoryObject->SetStringField(TEXT("updatedAtUtc"), FDateTime::UtcNow().ToIso8601());
+				MemoryObject->SetArrayField(TEXT("entries"), Entries);
+				if (!SaveProjectMemory(MemoryObject, FailureReason))
+				{
+					return MakeExecutionResult(FailureReason, StructuredContent, true);
+				}
+			}
+
+			return MakeExecutionResult(
+				bDryRun
+					? FString::Printf(TEXT("Dry run would delete project memory key '%s'."), *Key)
+					: FString::Printf(TEXT("Deleted project memory key '%s'."), *Key),
+				StructuredContent,
+				false);
+		}
+
+		FString GetDefaultProjectSkillRoot()
+		{
+			return FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectDir(), TEXT("Tools/UnrealMcpSkills")));
+		}
+
+		FString SkillNameFromPath(const FString& SkillPath)
+		{
+			if (FPaths::GetCleanFilename(SkillPath).Equals(TEXT("SKILL.md"), ESearchCase::IgnoreCase))
+			{
+				return FPaths::GetCleanFilename(FPaths::GetPath(SkillPath));
+			}
+			FString Name = FPaths::GetBaseFilename(SkillPath);
+			Name.RemoveFromEnd(TEXT(".skill"), ESearchCase::IgnoreCase);
+			return Name;
+		}
+
+		FString ExtractSkillTitle(const FString& SkillText, const FString& Fallback)
+		{
+			TArray<FString> Lines;
+			SkillText.ParseIntoArrayLines(Lines, false);
+			for (const FString& Line : Lines)
+			{
+				FString CleanLine = Line.TrimStartAndEnd();
+				if (CleanLine.StartsWith(TEXT("#")))
+				{
+					CleanLine.RemoveFromStart(TEXT("#"));
+					return CleanLine.TrimStartAndEnd();
+				}
+			}
+			return Fallback;
+		}
+
+		FString ExtractSkillDescription(const FString& SkillText)
+		{
+			TArray<FString> Lines;
+			SkillText.ParseIntoArrayLines(Lines, false);
+			bool bPassedTitle = false;
+			for (const FString& Line : Lines)
+			{
+				const FString CleanLine = Line.TrimStartAndEnd();
+				if (CleanLine.IsEmpty())
+				{
+					continue;
+				}
+				if (CleanLine.StartsWith(TEXT("#")))
+				{
+					bPassedTitle = true;
+					continue;
+				}
+				if (bPassedTitle)
+				{
+					return CleanLine.Left(600);
+				}
+			}
+			return FString();
+		}
+
+		void CollectSkillPathsFromRoot(const FString& RootPath, TArray<FString>& OutSkillPaths)
+		{
+			if (!FPaths::DirectoryExists(RootPath))
+			{
+				return;
+			}
+			TArray<FString> SkillMdFiles;
+			TArray<FString> SkillFiles;
+			IFileManager::Get().FindFilesRecursive(SkillMdFiles, *RootPath, TEXT("SKILL.md"), true, false);
+			IFileManager::Get().FindFilesRecursive(SkillFiles, *RootPath, TEXT("*.skill"), true, false);
+			for (const FString& SkillPath : SkillMdFiles)
+			{
+				OutSkillPaths.AddUnique(SkillPath);
+			}
+			for (const FString& SkillPath : SkillFiles)
+			{
+				OutSkillPaths.AddUnique(SkillPath);
+			}
+			OutSkillPaths.Sort();
+		}
+
+		TSharedPtr<FJsonObject> MakeSkillInfoObject(const FString& SkillPath, bool bIncludeText, int32 MaxPreviewChars)
+		{
+			TSharedPtr<FJsonObject> SkillObject = MakeShared<FJsonObject>();
+			const FString SkillName = SkillNameFromPath(SkillPath);
+			SkillObject->SetStringField(TEXT("name"), SkillName);
+			SkillObject->SetStringField(TEXT("path"), SkillPath);
+			SkillObject->SetObjectField(TEXT("file"), MakeFileInfoObject(SkillPath));
+
+			FString SkillText;
+			if (FFileHelper::LoadFileToString(SkillText, *SkillPath))
+			{
+				SkillObject->SetStringField(TEXT("title"), ExtractSkillTitle(SkillText, SkillName));
+				SkillObject->SetStringField(TEXT("description"), ExtractSkillDescription(SkillText));
+				SkillObject->SetStringField(TEXT("preview"), SkillText.Left(FMath::Max(0, MaxPreviewChars)));
+				if (bIncludeText)
+				{
+					SkillObject->SetStringField(TEXT("text"), SkillText);
+				}
+			}
+			else
+			{
+				SkillObject->SetStringField(TEXT("title"), SkillName);
+				SkillObject->SetStringField(TEXT("description"), TEXT("Failed to read skill text."));
+			}
+			return SkillObject;
+		}
+
+		bool ResolveSkillPathFromArguments(const FJsonObject& Arguments, FString& OutSkillPath, FString& OutFailureReason)
+		{
+			FString SkillPath;
+			FString SkillName;
+			Arguments.TryGetStringField(TEXT("skillPath"), SkillPath);
+			Arguments.TryGetStringField(TEXT("skillName"), SkillName);
+			SkillPath = SkillPath.TrimStartAndEnd();
+			SkillName = SkillName.TrimStartAndEnd();
+
+			if (!SkillPath.IsEmpty())
+			{
+				return ResolveProjectPathInsideProject(SkillPath, OutSkillPath, OutFailureReason);
+			}
+
+			if (SkillName.IsEmpty())
+			{
+				OutFailureReason = TEXT("Provide either skillPath or skillName.");
+				return false;
+			}
+
+			TArray<FString> Roots;
+			TryGetStringArrayField(Arguments, TEXT("roots"), Roots);
+			if (Roots.Num() == 0)
+			{
+				Roots.Add(TEXT("Tools/UnrealMcpSkills"));
+			}
+
+			TArray<FString> SkillPaths;
+			for (const FString& Root : Roots)
+			{
+				FString ResolvedRoot;
+				if (ResolveProjectPathInsideProject(Root, ResolvedRoot, OutFailureReason))
+				{
+					CollectSkillPathsFromRoot(ResolvedRoot, SkillPaths);
+				}
+			}
+
+			for (const FString& CandidatePath : SkillPaths)
+			{
+				if (SkillNameFromPath(CandidatePath).Equals(SkillName, ESearchCase::IgnoreCase))
+				{
+					OutSkillPath = CandidatePath;
+					return true;
+				}
+			}
+
+			OutFailureReason = FString::Printf(TEXT("No project skill named '%s' was found."), *SkillName);
+			return false;
+		}
+
+		FUnrealMcpExecutionResult SkillList(const FJsonObject& Arguments)
+		{
+			TArray<FString> Roots;
+			TryGetStringArrayField(Arguments, TEXT("roots"), Roots);
+			if (Roots.Num() == 0)
+			{
+				Roots.Add(TEXT("Tools/UnrealMcpSkills"));
+			}
+			FString NameFilter;
+			bool bIncludeText = false;
+			double MaxPreviewCharsDouble = 1200.0;
+			Arguments.TryGetStringField(TEXT("nameFilter"), NameFilter);
+			Arguments.TryGetBoolField(TEXT("includeText"), bIncludeText);
+			Arguments.TryGetNumberField(TEXT("maxPreviewChars"), MaxPreviewCharsDouble);
+			const int32 MaxPreviewChars = FMath::Clamp(static_cast<int32>(MaxPreviewCharsDouble), 0, 20000);
+
+			TArray<TSharedPtr<FJsonValue>> RootObjects;
+			TArray<FString> SkillPaths;
+			FString FailureReason;
+			for (const FString& Root : Roots)
+			{
+				FString ResolvedRoot;
+				if (!ResolveProjectPathInsideProject(Root, ResolvedRoot, FailureReason))
+				{
+					return MakeExecutionResult(FailureReason, nullptr, true);
+				}
+				TSharedPtr<FJsonObject> RootObject = MakeShared<FJsonObject>();
+				RootObject->SetStringField(TEXT("root"), ResolvedRoot);
+				RootObject->SetBoolField(TEXT("exists"), FPaths::DirectoryExists(ResolvedRoot));
+				RootObjects.Add(MakeShared<FJsonValueObject>(RootObject));
+				CollectSkillPathsFromRoot(ResolvedRoot, SkillPaths);
+			}
+
+			TArray<TSharedPtr<FJsonValue>> SkillObjects;
+			for (const FString& SkillPath : SkillPaths)
+			{
+				const FString SkillName = SkillNameFromPath(SkillPath);
+				if (!NameFilter.TrimStartAndEnd().IsEmpty() && !SkillName.Contains(NameFilter.TrimStartAndEnd(), ESearchCase::IgnoreCase))
+				{
+					continue;
+				}
+				SkillObjects.Add(MakeShared<FJsonValueObject>(MakeSkillInfoObject(SkillPath, bIncludeText, MaxPreviewChars)));
+			}
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("action"), TEXT("skill_list"));
+			StructuredContent->SetArrayField(TEXT("roots"), RootObjects);
+			StructuredContent->SetStringField(TEXT("nameFilter"), NameFilter);
+			StructuredContent->SetNumberField(TEXT("skillCount"), SkillObjects.Num());
+			StructuredContent->SetArrayField(TEXT("skills"), SkillObjects);
+			return MakeExecutionResult(FString::Printf(TEXT("Found %d project skill%s."), SkillObjects.Num(), SkillObjects.Num() == 1 ? TEXT("") : TEXT("s")), StructuredContent, false);
+		}
+
+		FUnrealMcpExecutionResult SkillRead(const FJsonObject& Arguments)
+		{
+			bool bIncludeText = true;
+			double MaxPreviewCharsDouble = 4000.0;
+			Arguments.TryGetBoolField(TEXT("includeText"), bIncludeText);
+			Arguments.TryGetNumberField(TEXT("maxPreviewChars"), MaxPreviewCharsDouble);
+
+			FString SkillPath;
+			FString FailureReason;
+			if (!ResolveSkillPathFromArguments(Arguments, SkillPath, FailureReason))
+			{
+				return MakeExecutionResult(FailureReason, nullptr, true);
+			}
+
+			TSharedPtr<FJsonObject> SkillObject = MakeSkillInfoObject(SkillPath, bIncludeText, FMath::Clamp(static_cast<int32>(MaxPreviewCharsDouble), 0, 50000));
+			SkillObject->SetStringField(TEXT("action"), TEXT("skill_read"));
+			return MakeExecutionResult(FString::Printf(TEXT("Read project skill '%s'."), *SkillObject->GetStringField(TEXT("name"))), SkillObject, false);
+		}
+
+		FUnrealMcpExecutionResult SkillApply(const FJsonObject& Arguments)
+		{
+			FString Task;
+			FString MemoryKey;
+			bool bWriteMemory = true;
+			bool bIncludeFullText = true;
+			Arguments.TryGetStringField(TEXT("task"), Task);
+			Arguments.TryGetStringField(TEXT("memoryKey"), MemoryKey);
+			Arguments.TryGetBoolField(TEXT("writeMemory"), bWriteMemory);
+			Arguments.TryGetBoolField(TEXT("includeFullText"), bIncludeFullText);
+
+			FString SkillPath;
+			FString FailureReason;
+			if (!ResolveSkillPathFromArguments(Arguments, SkillPath, FailureReason))
+			{
+				return MakeExecutionResult(FailureReason, nullptr, true);
+			}
+
+			FString SkillText;
+			if (!FFileHelper::LoadFileToString(SkillText, *SkillPath))
+			{
+				return MakeExecutionResult(FString::Printf(TEXT("Failed to read skill '%s'."), *SkillPath), nullptr, true);
+			}
+
+			const FString SkillName = SkillNameFromPath(SkillPath);
+			if (MemoryKey.TrimStartAndEnd().IsEmpty())
+			{
+				MemoryKey = FString::Printf(TEXT("skill.%s.last_apply"), *SkillName);
+			}
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("action"), TEXT("skill_apply"));
+			StructuredContent->SetStringField(TEXT("skillName"), SkillName);
+			StructuredContent->SetStringField(TEXT("skillPath"), SkillPath);
+			StructuredContent->SetStringField(TEXT("task"), Task);
+			StructuredContent->SetStringField(TEXT("memoryKey"), MemoryKey);
+			StructuredContent->SetStringField(TEXT("title"), ExtractSkillTitle(SkillText, SkillName));
+			StructuredContent->SetStringField(TEXT("description"), ExtractSkillDescription(SkillText));
+			StructuredContent->SetStringField(TEXT("applicationPrompt"), FString::Printf(
+				TEXT("Apply the project skill '%s' from %s to the current task. Follow the SKILL.md instructions first, then continue with normal MCP tool safety checks."),
+				*SkillName,
+				*SkillPath));
+			if (bIncludeFullText)
+			{
+				StructuredContent->SetStringField(TEXT("skillText"), SkillText);
+			}
+			else
+			{
+				StructuredContent->SetStringField(TEXT("skillPreview"), SkillText.Left(4000));
+			}
+
+			if (bWriteMemory)
+			{
+				TSharedPtr<FJsonObject> ContentObject = MakeShared<FJsonObject>();
+				ContentObject->SetStringField(TEXT("skillName"), SkillName);
+				ContentObject->SetStringField(TEXT("skillPath"), SkillPath);
+				ContentObject->SetStringField(TEXT("task"), Task);
+				ContentObject->SetStringField(TEXT("appliedAtUtc"), FDateTime::UtcNow().ToIso8601());
+				TSharedPtr<FJsonObject> MemoryArgs = MakeShared<FJsonObject>();
+				MemoryArgs->SetStringField(TEXT("key"), MemoryKey);
+				MemoryArgs->SetStringField(TEXT("summary"), FString::Printf(TEXT("Applied project skill %s."), *SkillName));
+				MemoryArgs->SetStringField(TEXT("status"), TEXT("applied"));
+				MemoryArgs->SetStringField(TEXT("nextStep"), TEXT("Use returned skillText/applicationPrompt as the instruction context for this task."));
+				MemoryArgs->SetStringField(TEXT("contentJson"), JsonObjectToString(ContentObject));
+				MemoryArgs->SetArrayField(TEXT("tags"), MakeJsonStringArray({ TEXT("skill"), SkillName }));
+				FUnrealMcpExecutionResult MemoryResult = ProjectMemoryWrite(*MemoryArgs);
+				if (MemoryResult.StructuredContent.IsValid())
+				{
+					StructuredContent->SetObjectField(TEXT("memoryWrite"), MemoryResult.StructuredContent);
+				}
+			}
+
+			return MakeExecutionResult(FString::Printf(TEXT("Applied project skill '%s'."), *SkillName), StructuredContent, false);
 		}
 
 		FString HashTextForManifest(const FString& Text)
@@ -11459,6 +12223,124 @@ void FUnrealMcpModule::AppendToolDefinitions(TArray<TSharedPtr<FJsonValue>>& Too
 
 		{
 			TSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
+			PropertiesObject->SetObjectField(TEXT("keyFilter"), UnrealMcp::MakeStringProperty(TEXT("Optional case-insensitive substring filter for memory keys.")));
+			PropertiesObject->SetObjectField(TEXT("status"), UnrealMcp::MakeStringProperty(TEXT("Optional exact status filter.")));
+			PropertiesObject->SetObjectField(TEXT("tag"), UnrealMcp::MakeStringProperty(TEXT("Optional tag filter.")));
+			PropertiesObject->SetObjectField(TEXT("includeContent"), UnrealMcp::MakeBoolProperty(TEXT("Whether to include detailed content payloads."), false));
+			PropertiesObject->SetObjectField(TEXT("maxEntries"), UnrealMcp::MakeNumberProperty(TEXT("Maximum entries to return."), 50.0));
+			PropertiesObject->SetObjectField(TEXT("sortDescending"), UnrealMcp::MakeBoolProperty(TEXT("Sort newest updatedAtUtc entries first."), true));
+
+			TSharedPtr<FJsonObject> InputSchema = UnrealMcp::MakeObjectSchema();
+			InputSchema->SetObjectField(TEXT("properties"), PropertiesObject);
+
+			UnrealMcp::AddToolDefinition(
+				ToolsArray,
+				TEXT("unreal.project_memory_view"),
+				TEXT("Project Memory View"),
+				TEXT("Views persistent project memory with key/status/tag filters and optional content payloads."),
+				InputSchema);
+		}
+
+		{
+			TSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
+			PropertiesObject->SetObjectField(TEXT("key"), UnrealMcp::MakeStringProperty(TEXT("Memory entry key to edit.")));
+			PropertiesObject->SetObjectField(TEXT("summary"), UnrealMcp::MakeStringProperty(TEXT("Optional new summary. Omit to preserve.")));
+			PropertiesObject->SetObjectField(TEXT("status"), UnrealMcp::MakeStringProperty(TEXT("Optional new status. Omit to preserve.")));
+			PropertiesObject->SetObjectField(TEXT("nextStep"), UnrealMcp::MakeStringProperty(TEXT("Optional new next step. Omit to preserve.")));
+			PropertiesObject->SetObjectField(TEXT("contentJson"), UnrealMcp::MakeStringProperty(TEXT("Optional JSON object to merge or replace into content.")));
+			PropertiesObject->SetObjectField(TEXT("contentMode"), UnrealMcp::MakeStringProperty(TEXT("Content update mode: merge or replace."), TEXT("merge")));
+			PropertiesObject->SetObjectField(TEXT("tags"), UnrealMcp::MakeStringArrayProperty(TEXT("Optional tags to replace, append, or remove.")));
+			PropertiesObject->SetObjectField(TEXT("tagsMode"), UnrealMcp::MakeStringProperty(TEXT("Tags update mode: replace, append, or remove."), TEXT("replace")));
+			PropertiesObject->SetObjectField(TEXT("createIfMissing"), UnrealMcp::MakeBoolProperty(TEXT("Create the memory entry if it does not exist."), false));
+			PropertiesObject->SetObjectField(TEXT("dryRun"), UnrealMcp::MakeBoolProperty(TEXT("Preview the edit without writing ProjectMemory.json."), false));
+
+			TSharedPtr<FJsonObject> InputSchema = UnrealMcp::MakeObjectSchema();
+			InputSchema->SetObjectField(TEXT("properties"), PropertiesObject);
+
+			UnrealMcp::AddToolDefinition(
+				ToolsArray,
+				TEXT("unreal.project_memory_edit"),
+				TEXT("Project Memory Edit"),
+				TEXT("Edits one persistent project memory entry with field-level updates, content merge/replace, tags modes, and dry run."),
+				InputSchema);
+		}
+
+		{
+			TSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
+			PropertiesObject->SetObjectField(TEXT("key"), UnrealMcp::MakeStringProperty(TEXT("Memory entry key to delete.")));
+			PropertiesObject->SetObjectField(TEXT("dryRun"), UnrealMcp::MakeBoolProperty(TEXT("Preview deletion without writing ProjectMemory.json."), true));
+
+			TSharedPtr<FJsonObject> InputSchema = UnrealMcp::MakeObjectSchema();
+			InputSchema->SetObjectField(TEXT("properties"), PropertiesObject);
+
+			UnrealMcp::AddToolDefinition(
+				ToolsArray,
+				TEXT("unreal.project_memory_delete"),
+				TEXT("Project Memory Delete"),
+				TEXT("Deletes one persistent project memory entry. Defaults to dryRun=true for safety."),
+				InputSchema);
+		}
+
+		{
+			TSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
+			PropertiesObject->SetObjectField(TEXT("roots"), UnrealMcp::MakeStringArrayProperty(TEXT("Project-relative skill roots to scan. Defaults to Tools/UnrealMcpSkills.")));
+			PropertiesObject->SetObjectField(TEXT("nameFilter"), UnrealMcp::MakeStringProperty(TEXT("Optional case-insensitive skill name filter.")));
+			PropertiesObject->SetObjectField(TEXT("includeText"), UnrealMcp::MakeBoolProperty(TEXT("Include full skill text in results."), false));
+			PropertiesObject->SetObjectField(TEXT("maxPreviewChars"), UnrealMcp::MakeNumberProperty(TEXT("Maximum preview characters per skill."), 1200.0));
+
+			TSharedPtr<FJsonObject> InputSchema = UnrealMcp::MakeObjectSchema();
+			InputSchema->SetObjectField(TEXT("properties"), PropertiesObject);
+
+			UnrealMcp::AddToolDefinition(
+				ToolsArray,
+				TEXT("unreal.skill_list"),
+				TEXT("Skill List"),
+				TEXT("Lists project-local SKILL.md or *.skill files that Chat can read and apply as reusable task instructions."),
+				InputSchema);
+		}
+
+		{
+			TSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
+			PropertiesObject->SetObjectField(TEXT("skillName"), UnrealMcp::MakeStringProperty(TEXT("Project skill name to read. Used when skillPath is empty.")));
+			PropertiesObject->SetObjectField(TEXT("skillPath"), UnrealMcp::MakeStringProperty(TEXT("Project-relative or absolute path to SKILL.md or *.skill.")));
+			PropertiesObject->SetObjectField(TEXT("roots"), UnrealMcp::MakeStringArrayProperty(TEXT("Project-relative skill roots to search by skillName.")));
+			PropertiesObject->SetObjectField(TEXT("includeText"), UnrealMcp::MakeBoolProperty(TEXT("Include full skill text."), true));
+			PropertiesObject->SetObjectField(TEXT("maxPreviewChars"), UnrealMcp::MakeNumberProperty(TEXT("Maximum preview characters."), 4000.0));
+
+			TSharedPtr<FJsonObject> InputSchema = UnrealMcp::MakeObjectSchema();
+			InputSchema->SetObjectField(TEXT("properties"), PropertiesObject);
+
+			UnrealMcp::AddToolDefinition(
+				ToolsArray,
+				TEXT("unreal.skill_read"),
+				TEXT("Skill Read"),
+				TEXT("Reads one project-local skill and returns title, description, preview, and optionally full text."),
+				InputSchema);
+		}
+
+		{
+			TSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
+			PropertiesObject->SetObjectField(TEXT("skillName"), UnrealMcp::MakeStringProperty(TEXT("Project skill name to apply. Used when skillPath is empty.")));
+			PropertiesObject->SetObjectField(TEXT("skillPath"), UnrealMcp::MakeStringProperty(TEXT("Project-relative or absolute path to SKILL.md or *.skill.")));
+			PropertiesObject->SetObjectField(TEXT("roots"), UnrealMcp::MakeStringArrayProperty(TEXT("Project-relative skill roots to search by skillName.")));
+			PropertiesObject->SetObjectField(TEXT("task"), UnrealMcp::MakeStringProperty(TEXT("Current task/context this skill should be applied to.")));
+			PropertiesObject->SetObjectField(TEXT("memoryKey"), UnrealMcp::MakeStringProperty(TEXT("Optional project memory key for recording skill application.")));
+			PropertiesObject->SetObjectField(TEXT("writeMemory"), UnrealMcp::MakeBoolProperty(TEXT("Record skill application into project memory."), true));
+			PropertiesObject->SetObjectField(TEXT("includeFullText"), UnrealMcp::MakeBoolProperty(TEXT("Return full skill text instead of a shorter preview."), true));
+
+			TSharedPtr<FJsonObject> InputSchema = UnrealMcp::MakeObjectSchema();
+			InputSchema->SetObjectField(TEXT("properties"), PropertiesObject);
+
+			UnrealMcp::AddToolDefinition(
+				ToolsArray,
+				TEXT("unreal.skill_apply"),
+				TEXT("Skill Apply"),
+				TEXT("Applies a project-local skill by returning its instructions and optionally recording the application in project memory."),
+				InputSchema);
+		}
+
+		{
+			TSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
 			PropertiesObject->SetObjectField(TEXT("toolName"), UnrealMcp::MakeStringProperty(TEXT("Tool name whose scaffold should be applied. Used when scaffoldDir is empty.")));
 			PropertiesObject->SetObjectField(TEXT("scaffoldDir"), UnrealMcp::MakeStringProperty(TEXT("Project-relative or absolute scaffold directory containing generated snippet files.")));
 			PropertiesObject->SetObjectField(TEXT("outputRoot"), UnrealMcp::MakeStringProperty(TEXT("Project-relative scaffold root used with toolName."), TEXT("Tools/UnrealMcpToolScaffolds")));
@@ -15703,6 +16585,36 @@ FUnrealMcpExecutionResult FUnrealMcpModule::ExecuteTool(const FString& ToolName,
 		if (ToolName == TEXT("unreal.project_memory_read"))
 		{
 			return UnrealMcp::ProjectMemoryRead(Arguments);
+		}
+
+		if (ToolName == TEXT("unreal.project_memory_view"))
+		{
+			return UnrealMcp::ProjectMemoryView(Arguments);
+		}
+
+		if (ToolName == TEXT("unreal.project_memory_edit"))
+		{
+			return UnrealMcp::ProjectMemoryEdit(Arguments);
+		}
+
+		if (ToolName == TEXT("unreal.project_memory_delete"))
+		{
+			return UnrealMcp::ProjectMemoryDelete(Arguments);
+		}
+
+		if (ToolName == TEXT("unreal.skill_list"))
+		{
+			return UnrealMcp::SkillList(Arguments);
+		}
+
+		if (ToolName == TEXT("unreal.skill_read"))
+		{
+			return UnrealMcp::SkillRead(Arguments);
+		}
+
+		if (ToolName == TEXT("unreal.skill_apply"))
+		{
+			return UnrealMcp::SkillApply(Arguments);
 		}
 
 		if (ToolName == TEXT("unreal.mcp_apply_scaffold"))

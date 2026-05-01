@@ -89,6 +89,12 @@ Editor action tools:
 - `unreal.mcp_tool_audit`
 - `unreal.project_memory_write`
 - `unreal.project_memory_read`
+- `unreal.project_memory_view`
+- `unreal.project_memory_edit`
+- `unreal.project_memory_delete`
+- `unreal.skill_list`
+- `unreal.skill_read`
+- `unreal.skill_apply`
 - `unreal.save_dirty_packages`
 
 ## Endpoint
@@ -450,6 +456,34 @@ Restart handoff memory:
 ```text
 /tool unreal.project_memory_read {"key":"mcp_extension","includeContent":true}
 ```
+
+```text
+/tool unreal.project_memory_view {"tag":"mcp","includeContent":false}
+```
+
+```text
+/tool unreal.project_memory_edit {"key":"mcp_extension","status":"in_progress","contentJson":"{\"phase\":\"memory-skill\"}","contentMode":"merge","tags":["mcp","memory"],"tagsMode":"append"}
+```
+
+```text
+/tool unreal.project_memory_delete {"key":"temporary_memory","dryRun":true}
+```
+
+Project-local skills:
+
+```text
+/tool unreal.skill_list {}
+```
+
+```text
+/tool unreal.skill_read {"skillName":"mcp-self-extension"}
+```
+
+```text
+/tool unreal.skill_apply {"skillName":"mcp-self-extension","task":"Extend Unreal MCP safely from Editor Chat."}
+```
+
+The project skill tools scan `Tools/UnrealMcpSkills` by default for `SKILL.md` or `*.skill` files. Applying a skill returns the instruction text to Chat and can record the skill/task in project memory.
 
 ## Quick Test
 

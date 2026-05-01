@@ -114,6 +114,13 @@ Unreal MCP currently supports:
 - Restart-resilient project memory:
   - `unreal.project_memory_write`
   - `unreal.project_memory_read`
+  - `unreal.project_memory_view`
+  - `unreal.project_memory_edit`
+  - `unreal.project_memory_delete`
+- Project-local skills:
+  - `unreal.skill_list`
+  - `unreal.skill_read`
+  - `unreal.skill_apply`
 - Saving dirty packages.
 
 ## In-Editor Chat Usage
@@ -201,6 +208,12 @@ Useful first-stage extension checks:
 /tool unreal.mcp_tool_audit {}
 /tool unreal.project_memory_write {"key":"mcp_extension","summary":"Resume MCP extension work after editor restart.","status":"in_progress","nextStep":"Run schema validation and tool audit after rebuilding.","contentJson":"{\"target\":\"self-extension\"}","tags":["mcp","restart"]}
 /tool unreal.project_memory_read {"key":"mcp_extension","includeContent":true}
+/tool unreal.project_memory_view {"tag":"mcp","includeContent":false}
+/tool unreal.project_memory_edit {"key":"mcp_extension","status":"in_progress","contentJson":"{\"phase\":\"memory-skill\"}","contentMode":"merge","tags":["mcp","memory"],"tagsMode":"append"}
+/tool unreal.project_memory_delete {"key":"temporary_memory","dryRun":true}
+/tool unreal.skill_list {}
+/tool unreal.skill_read {"skillName":"mcp-self-extension"}
+/tool unreal.skill_apply {"skillName":"mcp-self-extension","task":"Extend Unreal MCP safely from Editor Chat."}
 ```
 
 Build/test handoff note:
@@ -224,6 +237,8 @@ Build/test handoff note:
 - `unreal.mcp_pipeline_status` summarizes the current extension memory entry, last apply manifest, latest build log, saved test scaffolds, extension backups, and recommended next step.
 - `unreal.mcp_diff_last_apply` reads `Saved/UnrealMcp/LastExtensionApply.json` and returns a before/after source diff preview from the backup snapshots created by `mcp_apply_scaffold`.
 - `unreal.mcp_clean_test_artifacts` defaults to `dryRun:true` and only previews generated `Saved/UnrealMcp/TestScaffolds`; destructive cleanup must explicitly set `dryRun:false`, and optional filters such as `nameContains` should be used for targeted cleanup.
+- `unreal.project_memory_view`, `unreal.project_memory_edit`, and `unreal.project_memory_delete` turn `Saved/UnrealMcp/ProjectMemory.json` into a manageable long-term project memory store with filters, field-level edits, content merge/replace, tag modes, dry-run edits, and safe dry-run deletion.
+- `unreal.skill_list`, `unreal.skill_read`, and `unreal.skill_apply` scan project-local `SKILL.md` or `*.skill` files under `Tools/UnrealMcpSkills` by default. Applying a skill returns its instructions to Chat and can write a memory record of the applied skill/task.
 
 External supervisor:
 
