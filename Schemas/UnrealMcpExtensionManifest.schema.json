@@ -1,0 +1,163 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/unreal-mcp/schemas/UnrealMcpExtensionManifest.schema.json",
+  "title": "Unreal MCP Extension Apply Manifest",
+  "description": "Manifest written by unreal.mcp_apply_scaffold after a real source integration.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "action",
+    "schemaVersion",
+    "manifestSchema",
+    "toolName",
+    "toolId",
+    "scaffoldDir",
+    "sourcePath",
+    "backupDirectory",
+    "backupSourcePath",
+    "afterSourcePath",
+    "sourceHashBefore",
+    "sourceHashAfter",
+    "appliedAtUtc",
+    "changes"
+  ],
+  "properties": {
+    "action": {
+      "const": "mcp_apply_scaffold"
+    },
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "manifestSchema": {
+      "type": "string",
+      "const": "UnrealMcpExtensionManifest.v1"
+    },
+    "sessionId": {
+      "type": "string",
+      "description": "Extension lock session id active during apply. Empty when skipLock was used."
+    },
+    "toolName": {
+      "type": "string",
+      "pattern": "^unreal\\.[a-z0-9]+(_[a-z0-9]+)*$"
+    },
+    "toolId": {
+      "type": "string",
+      "pattern": "^[a-z0-9_]+$"
+    },
+    "scaffoldDir": {
+      "type": "string"
+    },
+    "sourcePath": {
+      "type": "string"
+    },
+    "backupDirectory": {
+      "type": "string"
+    },
+    "backupSourcePath": {
+      "type": "string"
+    },
+    "afterSourcePath": {
+      "type": "string"
+    },
+    "sourceHashBefore": {
+      "type": "string"
+    },
+    "sourceHashAfter": {
+      "type": "string"
+    },
+    "appliedAtUtc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "conflictCount": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "missingAnchorCount": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "conflictPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "exactSnippetIsIdempotent",
+        "conflictNeedleBlocksApply",
+        "missingAnchorBlocksApply",
+        "unsafeSnippetBlocksApplyByDefault",
+        "conflictDetector"
+      ],
+      "properties": {
+        "exactSnippetIsIdempotent": {
+          "type": "boolean"
+        },
+        "conflictNeedleBlocksApply": {
+          "type": "boolean"
+        },
+        "missingAnchorBlocksApply": {
+          "type": "boolean"
+        },
+        "unsafeSnippetBlocksApplyByDefault": {
+          "type": "boolean"
+        },
+        "conflictDetector": {
+          "type": "string"
+        }
+      }
+    },
+    "rolledBack": {
+      "type": "boolean"
+    },
+    "rolledBackAtUtc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "changes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "section",
+          "status",
+          "message",
+          "offset",
+          "preview"
+        ],
+        "properties": {
+          "section": {
+            "type": "string",
+            "enum": [
+              "AppendToolDefinitions",
+              "ExecuteTool",
+              "ExecuteChatCommand"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "will_insert",
+              "inserted",
+              "skipped_already_integrated",
+              "skipped_optional_missing",
+              "conflict",
+              "missing_anchor",
+              "unknown"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": -1
+          },
+          "preview": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

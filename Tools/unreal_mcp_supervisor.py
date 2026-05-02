@@ -321,6 +321,8 @@ def render_supervisor_install_readme(
 
 Generated helper files for running `Tools/unreal_mcp_supervisor.py` outside Unreal Editor.
 
+These files contain local absolute paths and are normally ignored by Git. Shared path-neutral templates live in `Tools/UnrealMcpSupervisorTemplates/`, and the full operating guide lives in `Docs/Supervisor.md`.
+
 ## macOS
 
 Run the shortcut command:

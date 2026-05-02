@@ -1,0 +1,10 @@
+#!/bin/zsh
+set -euo pipefail
+
+cd '{{PROJECT_ROOT}}'
+
+python3 '{{SUPERVISOR}}' \
+  --url '{{MCP_URL}}' \
+  --uproject '{{UPROJECT}}' \
+  --log-dir '{{LOG_DIR}}' \
+  pipeline --auto-restart --args-json '{{ARGS_JSON}}'

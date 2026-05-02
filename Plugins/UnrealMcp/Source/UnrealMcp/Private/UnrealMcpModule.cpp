@@ -5042,6 +5042,13 @@ namespace UnrealMcp
 			}
 		}
 
+		static constexpr int32 GUnrealMcpExtensionManifestSchemaVersion = 1;
+
+		const TCHAR* GetUnrealMcpExtensionManifestSchemaName()
+		{
+			return TEXT("UnrealMcpExtensionManifest.v1");
+		}
+
 		TSharedPtr<FJsonObject> MakeInsertionChangeObject(
 			const FString& Section,
 			EMcpScaffoldInsertionStatus Status,
@@ -5056,6 +5063,55 @@ namespace UnrealMcp
 			ChangeObject->SetNumberField(TEXT("offset"), Offset);
 			ChangeObject->SetStringField(TEXT("preview"), Preview);
 			return ChangeObject;
+		}
+
+		int32 CountScaffoldChangesByStatus(const TArray<TSharedPtr<FJsonValue>>& Changes, const FString& Status)
+		{
+			int32 Count = 0;
+			for (const TSharedPtr<FJsonValue>& ChangeValue : Changes)
+			{
+				TSharedPtr<FJsonObject> ChangeObject;
+				if (ChangeValue.IsValid())
+				{
+					ChangeObject = ChangeValue->AsObject();
+				}
+				if (!ChangeObject.IsValid())
+				{
+					continue;
+				}
+
+				FString ChangeStatus;
+				if (ChangeObject->TryGetStringField(TEXT("status"), ChangeStatus) && ChangeStatus == Status)
+				{
+					++Count;
+				}
+			}
+			return Count;
+		}
+
+		TSharedPtr<FJsonObject> MakeScaffoldConflictPolicyObject()
+		{
+			TSharedPtr<FJsonObject> PolicyObject = MakeShared<FJsonObject>();
+			PolicyObject->SetBoolField(TEXT("exactSnippetIsIdempotent"), true);
+			PolicyObject->SetBoolField(TEXT("conflictNeedleBlocksApply"), true);
+			PolicyObject->SetBoolField(TEXT("missingAnchorBlocksApply"), true);
+			PolicyObject->SetBoolField(TEXT("unsafeSnippetBlocksApplyByDefault"), true);
+			PolicyObject->SetStringField(TEXT("conflictDetector"), TEXT("PlanOrApplyScaffoldInsertion"));
+			return PolicyObject;
+		}
+
+		FString GetActiveExtensionSessionIdForManifest()
+		{
+			TSharedPtr<FJsonObject> LockObject;
+			FString FailureReason;
+			if (!LoadJsonObjectFromFile(GetMcpExtensionLockPath(), LockObject, FailureReason) || !LockObject.IsValid())
+			{
+				return FString();
+			}
+
+			FString SessionId;
+			LockObject->TryGetStringField(TEXT("sessionId"), SessionId);
+			return SessionId;
 		}
 
 		bool PlanOrApplyScaffoldInsertion(
@@ -5323,8 +5379,16 @@ namespace UnrealMcp
 				bCanApply = false;
 			}
 
+			const int32 ConflictCount = CountScaffoldChangesByStatus(Changes, TEXT("conflict"));
+			const int32 MissingAnchorCount = CountScaffoldChangesByStatus(Changes, TEXT("missing_anchor"));
+			const FString ExtensionSessionId = GetActiveExtensionSessionIdForManifest();
+			const TSharedPtr<FJsonObject> ConflictPolicy = MakeScaffoldConflictPolicyObject();
+
 			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
 			StructuredContent->SetStringField(TEXT("action"), TEXT("mcp_apply_scaffold"));
+			StructuredContent->SetNumberField(TEXT("manifestSchemaVersion"), GUnrealMcpExtensionManifestSchemaVersion);
+			StructuredContent->SetStringField(TEXT("manifestSchema"), GetUnrealMcpExtensionManifestSchemaName());
+			StructuredContent->SetStringField(TEXT("sessionId"), ExtensionSessionId);
 			StructuredContent->SetStringField(TEXT("toolName"), ToolName);
 			StructuredContent->SetStringField(TEXT("toolId"), SanitizeMcpToolIdForPath(ToolName));
 			StructuredContent->SetStringField(TEXT("scaffoldDir"), ScaffoldDirectory);
@@ -5336,6 +5400,9 @@ namespace UnrealMcp
 			StructuredContent->SetBoolField(TEXT("snippetsSafe"), bSnippetsSafe);
 			StructuredContent->SetBoolField(TEXT("allowUnsafeSnippets"), bAllowUnsafeSnippets);
 			StructuredContent->SetStringField(TEXT("sourceHashBefore"), SourceHashBefore);
+			StructuredContent->SetNumberField(TEXT("conflictCount"), ConflictCount);
+			StructuredContent->SetNumberField(TEXT("missingAnchorCount"), MissingAnchorCount);
+			StructuredContent->SetObjectField(TEXT("conflictPolicy"), ConflictPolicy);
 			StructuredContent->SetArrayField(TEXT("issues"), Issues);
 			StructuredContent->SetArrayField(TEXT("snippetValidations"), SnippetValidations);
 			StructuredContent->SetArrayField(TEXT("changes"), Changes);
@@ -5395,19 +5462,25 @@ namespace UnrealMcp
 			StructuredContent->SetStringField(TEXT("backupSourcePath"), BackupSourcePath);
 			StructuredContent->SetStringField(TEXT("afterSourcePath"), AfterSourcePath);
 
-			TSharedPtr<FJsonObject> ManifestObject = MakeShared<FJsonObject>();
-			ManifestObject->SetStringField(TEXT("action"), TEXT("mcp_apply_scaffold"));
-			ManifestObject->SetStringField(TEXT("toolName"), ToolName);
-			ManifestObject->SetStringField(TEXT("toolId"), SanitizeMcpToolIdForPath(ToolName));
-			ManifestObject->SetStringField(TEXT("scaffoldDir"), ScaffoldDirectory);
-			ManifestObject->SetStringField(TEXT("sourcePath"), SourcePath);
-			ManifestObject->SetStringField(TEXT("backupDirectory"), BackupDirectory);
+				TSharedPtr<FJsonObject> ManifestObject = MakeShared<FJsonObject>();
+				ManifestObject->SetStringField(TEXT("action"), TEXT("mcp_apply_scaffold"));
+				ManifestObject->SetNumberField(TEXT("schemaVersion"), GUnrealMcpExtensionManifestSchemaVersion);
+				ManifestObject->SetStringField(TEXT("manifestSchema"), GetUnrealMcpExtensionManifestSchemaName());
+				ManifestObject->SetStringField(TEXT("sessionId"), ExtensionSessionId);
+				ManifestObject->SetStringField(TEXT("toolName"), ToolName);
+				ManifestObject->SetStringField(TEXT("toolId"), SanitizeMcpToolIdForPath(ToolName));
+				ManifestObject->SetStringField(TEXT("scaffoldDir"), ScaffoldDirectory);
+				ManifestObject->SetStringField(TEXT("sourcePath"), SourcePath);
+				ManifestObject->SetStringField(TEXT("backupDirectory"), BackupDirectory);
 			ManifestObject->SetStringField(TEXT("backupSourcePath"), BackupSourcePath);
 			ManifestObject->SetStringField(TEXT("afterSourcePath"), AfterSourcePath);
-			ManifestObject->SetStringField(TEXT("sourceHashBefore"), SourceHashBefore);
-			ManifestObject->SetStringField(TEXT("sourceHashAfter"), SourceHashAfter);
-			ManifestObject->SetStringField(TEXT("appliedAtUtc"), FDateTime::UtcNow().ToIso8601());
-			ManifestObject->SetArrayField(TEXT("changes"), Changes);
+				ManifestObject->SetStringField(TEXT("sourceHashBefore"), SourceHashBefore);
+				ManifestObject->SetStringField(TEXT("sourceHashAfter"), SourceHashAfter);
+				ManifestObject->SetStringField(TEXT("appliedAtUtc"), FDateTime::UtcNow().ToIso8601());
+				ManifestObject->SetNumberField(TEXT("conflictCount"), ConflictCount);
+				ManifestObject->SetNumberField(TEXT("missingAnchorCount"), MissingAnchorCount);
+				ManifestObject->SetObjectField(TEXT("conflictPolicy"), ConflictPolicy);
+				ManifestObject->SetArrayField(TEXT("changes"), Changes);
 
 			if (bCreateBackup)
 			{

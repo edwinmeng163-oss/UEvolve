@@ -51,6 +51,7 @@ Self-extension tools should preserve these rules:
 - Lock during apply/build/test/rollback.
 - Backup before source mutation.
 - Manifest after source mutation.
+- Manifest includes `schemaVersion`, `manifestSchema`, active `sessionId`, conflict counts, conflict policy, and source hashes.
 - Build log capture after compile.
 - Test suite after restart.
 - Rollback path if build or test fails.

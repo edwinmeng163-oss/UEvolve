@@ -21,6 +21,12 @@ The self-extension pipeline lets Unreal MCP add new MCP tools from inside Editor
 
 Versioned core tests live in `Tools/UnrealMcpTests/Core`. Generated tests remain local under `Saved/UnrealMcp/TestScaffolds`.
 
+Shared contracts:
+
+- Tool names follow [Tool Naming](ToolNaming.md).
+- Real apply manifests follow [Extension Manifest Schema](ManifestSchema.md).
+- Restart handoff is documented in [External Supervisor](Supervisor.md).
+
 ## Normal Flow
 
 1. Scaffold.
@@ -49,6 +55,14 @@ python3 Tools/unreal_mcp_supervisor.py pipeline --auto-restart --args-json '{"to
 ```
 
 The supervisor can restart the editor and resume tests through project memory.
+
+Generate local launchers with:
+
+```bash
+python3 Tools/unreal_mcp_supervisor.py install --platform all --output-dir Tools/UnrealMcpSupervisor --overwrite
+```
+
+The generated launchers are local and ignored; versioned templates are stored under `Tools/UnrealMcpSupervisorTemplates`.
 
 ## Failure Flow
 

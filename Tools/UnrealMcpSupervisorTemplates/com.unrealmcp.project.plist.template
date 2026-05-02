@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>{{LABEL}}</string>
+  <key>WorkingDirectory</key>
+  <string>{{PROJECT_ROOT}}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>python3</string>
+    <string>{{SUPERVISOR}}</string>
+    <string>--url</string>
+    <string>{{MCP_URL}}</string>
+    <string>--uproject</string>
+    <string>{{UPROJECT}}</string>
+    <string>--log-dir</string>
+    <string>{{LOG_DIR}}</string>
+    <string>pipeline</string>
+    <string>--auto-restart</string>
+    <string>--args-json</string>
+    <string>{{ARGS_JSON}}</string>
+  </array>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>KeepAlive</key>
+  <false/>
+  <key>StandardOutPath</key>
+  <string>{{LOG_DIR}}/{{LABEL}}.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>{{LOG_DIR}}/{{LABEL}}.err.log</string>
+</dict>
+</plist>

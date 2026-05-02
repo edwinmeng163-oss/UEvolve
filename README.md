@@ -36,6 +36,9 @@ The project currently contains:
 - [Contributing](Docs/Contributing.md)
 - [Security Model](Docs/SecurityModel.md)
 - [Self-Extension Pipeline](Docs/SelfExtensionPipeline.md)
+- [Tool Naming](Docs/ToolNaming.md)
+- [Manifest Schema](Docs/ManifestSchema.md)
+- [External Supervisor](Docs/Supervisor.md)
 
 ## Unreal MCP Plugin
 
@@ -237,12 +240,12 @@ Build/test handoff note:
 - `unreal.mcp_inspect_scaffold` inspects one scaffold by `toolName` or `scaffoldDir`, including required file status, snippet previews, requested schema compatibility, and the generated `TestRequest.json`.
 - `unreal.mcp_validate_cpp_snippet` statically checks generated C++ snippets for risky operations before source integration, including process execution, destructive file operations, recursive pipeline calls, obvious infinite loops, missing handler returns, and flexible schema warnings.
 - `unreal.mcp_patch_scaffold_snippet` edits `ToolDefinition.cpp.snippet`, `ExecuteToolHandler.cpp.snippet`, or `ChatCommand.cpp.snippet` with dry-run diff preview, idempotence checks, backup creation, and the same static validation gate.
-- `unreal.mcp_apply_scaffold` validates snippets before integration by default and returns both snippet validation results and a target source diff preview so Chat can review the change before writing plugin source.
-- `unreal.mcp_lock_extension_session` creates a short-lived lock under `Saved/UnrealMcp/ExtensionSession.lock` so two Chat/supervisor sessions do not apply, build, test, or roll back source at the same time.
+- `unreal.mcp_apply_scaffold` validates snippets before integration by default and returns both snippet validation results and a target source diff preview so Chat can review the change before writing plugin source. Real applies write a schema-versioned manifest with the active extension session id, conflict policy, conflict count, and source hashes.
+- `unreal.mcp_lock_extension_session` creates a short-lived lock under `Saved/UnrealMcp/ExtensionSession.lock` so two Chat/supervisor sessions do not apply, build, test, or roll back source at the same time. Extension apply manifests record the lock `sessionId` for audit and rollback traceability.
 - `unreal.mcp_backup_project_state` snapshots MCP source/header files, root/plugin README files, project memory, extension manifests, and optional build logs under `Saved/UnrealMcp/ProjectStateBackups`.
 - `unreal.mcp_rollback_to_manifest` can restore a selected historical `ExtensionBackups/*/Manifest.json`, not only `LastExtensionApply.json`, and can create a pre-rollback project-state backup first.
 - `unreal.mcp_compile_error_fix_plan` reads the newest build log or a passed `buildLogPath`, extracts compiler errors with file/line/source context, guesses likely causes, and returns suggested fixes before another build.
-- `unreal.mcp_supervisor_install` generates local macOS LaunchAgent/shortcut and Windows PowerShell launcher files for the external supervisor. Generated launchers live under `Tools/UnrealMcpSupervisor/` by default and are intentionally ignored because they contain machine-specific paths.
+- `unreal.mcp_supervisor_install` generates local macOS LaunchAgent/shortcut and Windows PowerShell launcher files for the external supervisor. Generated launchers live under `Tools/UnrealMcpSupervisor/` by default and are intentionally ignored because they contain machine-specific paths; versioned path-neutral templates live under `Tools/UnrealMcpSupervisorTemplates/`.
 - `unreal.mcp_generate_tests` creates `Tests/valid_basic.json`, `Tests/missing_required.json`, `Tests/boundary_values.json`, and `Tests/wrong_type.json` from a loaded tool schema, scaffold README schema, or `TestRequest.json`.
 - `unreal.mcp_build_editor` runs Unreal Build Tool for `MyProjectEditor`, captures a build log under `Saved/UnrealMcp/BuildLogs`, parses key error lines, and writes restart handoff state into project memory.
 - Because the tool is invoked from a running editor, newly compiled plugin code is not loaded until Unreal Editor is restarted.
@@ -268,6 +271,12 @@ python3 Tools/unreal_mcp_supervisor.py --log-dir Saved/UnrealMcp/SupervisorLogs 
 ```
 
 The supervisor runs outside Unreal Editor, so it can close/reopen the editor and resume MCP tests after plugin code reloads.
+
+Full supervisor documentation:
+
+```text
+Docs/Supervisor.md
+```
 
 Install local supervisor launchers from Editor Chat:
 

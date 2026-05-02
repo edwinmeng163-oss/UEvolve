@@ -441,7 +441,7 @@ Generate local supervisor launchers:
 /tool unreal.mcp_supervisor_install {"platform":"all","outputDir":"Tools/UnrealMcpSupervisor","memoryKey":"mcp.extension.pipeline"}
 ```
 
-The installer generates a macOS `.command` shortcut, a macOS LaunchAgent plist, a Windows PowerShell launcher, and a small local README. The default output directory is ignored by Git because generated files contain machine-specific absolute paths.
+The installer generates a macOS `.command` shortcut, a macOS LaunchAgent plist, a Windows PowerShell launcher, and a small local README. The default output directory is ignored by Git because generated files contain machine-specific absolute paths. Shared templates and the full operating guide live in `Tools/UnrealMcpSupervisorTemplates/` and `Docs/Supervisor.md`.
 
 ```text
 /tool unreal.mcp_rollback_last_extension {"dryRun":true}

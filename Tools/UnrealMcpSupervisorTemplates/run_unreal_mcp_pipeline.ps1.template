@@ -1,0 +1,13 @@
+# Unreal MCP supervisor launcher for Windows PowerShell.
+$ErrorActionPreference = "Stop"
+
+$ProjectRoot = '{{PROJECT_ROOT}}'
+Set-Location $ProjectRoot
+
+$ArgsJson = '{{ARGS_JSON}}'
+
+py -3 '{{SUPERVISOR}}' `
+  --url '{{MCP_URL}}' `
+  --uproject '{{UPROJECT}}' `
+  --log-dir '{{LOG_DIR}}' `
+  pipeline --auto-restart --args-json $ArgsJson

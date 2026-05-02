@@ -10,6 +10,8 @@ Core layers:
 - Tool helpers in `UnrealMcpModule.cpp`: editor, actor, Blueprint, widget, scaffold, self-extension, memory, skill, build, and test logic.
 - `UnrealMcpToolRegistry`: lightweight metadata for visibility, handler aliases, and migration status.
 - `Tools/unreal_mcp_supervisor.py`: external process for restart-aware pipeline automation.
+- `Tools/UnrealMcpSupervisorTemplates`: versioned macOS/Windows supervisor launcher templates with placeholders instead of machine-specific paths.
+- `Schemas/UnrealMcpExtensionManifest.schema.json`: versioned contract for source apply manifests.
 - `Saved/UnrealMcp`: local runtime state, memory, manifests, backups, generated tests, and logs.
 - `Tools/UnrealMcpSkills`: project-local skill instructions.
 

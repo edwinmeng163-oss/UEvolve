@@ -1,0 +1,19 @@
+# Unreal MCP ownership map.
+# Keep this conservative until more maintainers/teams are added.
+
+# Core MCP plugin code and self-extension safety rails.
+/Plugins/UnrealMcp/Source/UnrealMcp/ @edwinmeng163-oss
+
+# External restart/build/test handoff.
+/Tools/unreal_mcp_supervisor.py @edwinmeng163-oss
+/Tools/UnrealMcpSupervisorTemplates/ @edwinmeng163-oss
+
+# Stable MCP test fixtures and schemas.
+/Tools/UnrealMcpTests/ @edwinmeng163-oss
+/Schemas/ @edwinmeng163-oss
+
+# Project-local skills and public documentation.
+/Tools/UnrealMcpSkills/ @edwinmeng163-oss
+/Docs/ @edwinmeng163-oss
+/README.md @edwinmeng163-oss
+/Plugins/UnrealMcp/README.md @edwinmeng163-oss

@@ -7,10 +7,11 @@ Prefer small, reviewable tool changes over broad source edits. The self-extensio
 ## Before Adding a Tool
 
 1. Define the tool purpose and owner category.
-2. Prefer fixed schemas with `additionalProperties=false`.
+2. Pick a name that follows [Tool Naming](ToolNaming.md).
 3. Use existing fixed-schema wrappers before adding flexible inputs.
-4. Add docs and at least one test request.
-5. Run schema validation and tool audit.
+4. Prefer fixed schemas with `additionalProperties=false`.
+5. Add docs and at least one test request.
+6. Run schema validation and tool audit.
 
 ## Recommended Extension Flow
 
@@ -40,12 +41,24 @@ Suggested ownership domains:
 
 Avoid having multiple people edit `UnrealMcpModule.cpp` in unrelated regions at the same time until the module is split.
 
+The repository also includes `.github/CODEOWNERS` so pull requests touching MCP source, supervisor launch, docs, tests, schemas, or project-local skills request review from the current project owner by default.
+
+## Collaboration Guards
+
+- Check `unreal.mcp_workbench_status` before a risky edit.
+- Use `unreal.mcp_lock_extension_session {"mode":"status"}` before applying scaffolds, builds, tests, or rollbacks from multiple Chat windows.
+- Do not force-release a lock unless it is stale and you know which session created it.
+- Real scaffold applies write manifests matching `Schemas/UnrealMcpExtensionManifest.schema.json`.
+- Treat `conflictCount > 0`, `missingAnchorCount > 0`, or a changed `sourceHashAfter` as a stop-and-review signal.
+- Generated local supervisor launchers stay ignored; edit `Tools/UnrealMcpSupervisorTemplates` and `Docs/Supervisor.md` for shared changes.
+
 ## Git Hygiene
 
 - Do not commit `Saved/`, `Intermediate/`, `Binaries/`, or generated local supervisor files.
 - Commit source, docs, stable test fixtures, and project-local skills.
 - Use Git LFS for Unreal binary assets.
 - Keep generated runtime manifests local unless they are intentionally promoted to documentation or tests.
+- Keep schema files under `Schemas/` versioned and backward-compatible where practical.
 
 ## Review Checklist
 
@@ -56,3 +69,4 @@ Avoid having multiple people edit `UnrealMcpModule.cpp` in unrelated regions at 
 - Audit output includes appropriate ToolRegistry policy metadata.
 - Write-capable tools use dry run or clear safety controls where practical.
 - Self-extension source changes have a backup/rollback path.
+- Manifest, session id, and conflict-policy behavior are documented when source mutation behavior changes.
