@@ -6,15 +6,19 @@ It includes an in-project editor plugin, **Unreal MCP**, which exposes Unreal Ed
 
 ## 中文概览
 
-本项目当前定位为 **Unreal MCP 编辑器自动化与 AI 协作开发实验项目**。
+本项目当前定位为 **面向 Unreal Editor 的 MCP 自扩展工作台**。
+
+它不只是让 AI 调用 Unreal Editor 工具，而是尝试把“新增 MCP 能力”本身产品化：AI 可以在安全审计、dry run、备份、编译、测试、回滚、长期记忆和外部 supervisor 的保护下，为当前项目持续扩展新的编辑器自动化工具。
 
 当前重点：
 
-- 在 Unreal Editor 内运行本地 MCP server。
-- 通过 Chat 面板执行项目检查、地图/资产查询、PIE 控制、日志读取、Map Check 等操作。
-- 通过 MCP 工具辅助创建 Blueprint、编辑 Blueprint 图、搭建 UMG Widget、生成玩法系统脚手架。
-- 保留 UE 模板内容作为测试与原型资源。
-- 使用 Git LFS 管理 Unreal 二进制资产，方便上传和协作。
+- 在 Unreal Editor 内运行本地 MCP server，并提供 `Window > Unreal MCP Chat` 对话入口。
+- 通过 `Window > Unreal MCP Workbench` 提供轻量自扩展控制台，聚合状态、审计、核心测试、pipeline、lock 等能力。
+- 支持项目检查、地图/资产查询、PIE 控制、日志读取、Map Check、Python/Console 执行等基础编辑器自动化。
+- 支持 Blueprint 图编辑、UMG Widget 编辑、玩法系统脚手架、MCP 工具脚手架和项目本地 `.skill` 工作流。
+- 自扩展链路包含 schema 校验、snippet 校验、dry-run diff、备份 manifest、UBT 编译、测试套件、rollback、project memory 和 supervisor 重启恢复。
+- 引入多人协作保护：CODEOWNERS、工具命名规范、Manifest schema、extension session lock、ToolRegistry 风险元数据和冲突检测规则。
+- 保留 UE 模板内容作为本地测试与原型资源，并使用 Git LFS 管理 Unreal 二进制资产，方便上传和协作。
 
 ## Current Status
 
