@@ -1,4 +1,6 @@
-# Unreal MCP Project
+# UEvolve
+
+**Unreal Editor MCP Self-Extension Workbench**
 
 This repository is an Unreal Engine 5.7 project focused on editor automation, AI-assisted project inspection, Blueprint scaffolding, UMG setup, and local Model Context Protocol workflows.
 
@@ -342,8 +344,8 @@ Requirements:
 Clone and pull LFS assets:
 
 ```bash
-git clone https://github.com/edwinmeng163-oss/UEMCP.git
-cd UEMCP
+git clone https://github.com/edwinmeng163-oss/UEvolve.git
+cd UEvolve
 git lfs install
 git lfs pull
 ```
@@ -378,8 +380,8 @@ git lfs version
 ### 2. Clone And Pull Assets
 
 ```bash
-git clone https://github.com/edwinmeng163-oss/UEMCP.git
-cd UEMCP
+git clone https://github.com/edwinmeng163-oss/UEvolve.git
+cd UEvolve
 git lfs install
 git lfs pull
 ```
@@ -420,7 +422,7 @@ Recommended Windows environment:
 Recommended clone location:
 
 ```text
-C:\UnrealProjects\UEMCP
+C:\UnrealProjects\UEvolve
 ```
 
 Avoid these locations when possible:
@@ -433,8 +435,8 @@ Avoid these locations when possible:
 Clone on Windows:
 
 ```powershell
-git clone https://github.com/edwinmeng163-oss/UEMCP.git C:\UnrealProjects\UEMCP
-cd C:\UnrealProjects\UEMCP
+git clone https://github.com/edwinmeng163-oss/UEvolve.git C:\UnrealProjects\UEvolve
+cd C:\UnrealProjects\UEvolve
 git lfs install
 git lfs pull
 ```
@@ -647,5 +649,5 @@ Important:
 GitHub:
 
 ```text
-https://github.com/edwinmeng163-oss/UEMCP
+https://github.com/edwinmeng163-oss/UEvolve
 ```
