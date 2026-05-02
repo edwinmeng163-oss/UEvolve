@@ -160,6 +160,17 @@ Open the chat panel from:
 Window > Unreal MCP Chat
 ```
 
+The chat panel includes a small `AI Settings / Project Skills` bar:
+
+- `AI Settings` opens `Project Settings > Plugins > Unreal MCP`, where the OpenAI API key, model, endpoint, and timeout options are configured locally.
+- `Test AI` sends a minimal Responses API request using the configured endpoint, model, and API key, then displays the HTTP status and response preview as a tool card.
+- `Refresh Skills` loads project skills from `Tools/UnrealMcpSkills`.
+- The skill selector shows each skill name plus its title/description when available.
+- `Read Skill` calls `unreal.skill_read` for the selected skill and shows the returned instructions as a tool card.
+- `Apply Skill` supports four modes: `Read Only`, `Apply to Memory`, `Insert Prompt`, and `Ask Now`.
+- `Read Memory` calls `unreal.project_memory_view` for recent project memory entries.
+- `Write Task Memory` saves the current task text, selected skill, and apply mode to `chat.current_task`.
+
 Examples:
 
 ```text

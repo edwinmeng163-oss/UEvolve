@@ -134,6 +134,12 @@ Configure these fields in:
 
 Behavior notes:
 
+- The chat toolbar has an `AI Settings` button that opens the Unreal MCP project settings page for local API key/model configuration.
+- `Test AI` sends a minimal non-streaming Responses API request with the configured endpoint, model, and API key, then renders the HTTP status and response preview as a tool card.
+- The chat toolbar has `Refresh Skills`, `Read Skill`, and `Apply Skill` buttons backed by `unreal.skill_list`, `unreal.skill_read`, and `unreal.skill_apply`, so users can select project-local skills without typing raw `/tool` JSON.
+- The skill picker shows project skill names with title/description metadata from `SKILL.md` or `*.skill` files.
+- `Apply Skill` supports `Read Only`, `Apply to Memory`, `Insert Prompt`, and `Ask Now` modes.
+- `Read Memory` and `Write Task Memory` provide quick access to `unreal.project_memory_view` and `unreal.project_memory_write` for Chat handoff state.
 - Plain text in the chat panel is treated as an AI request.
 - `/ask <prompt>` explicitly starts an AI turn.
 - `/reset_ai` clears the assistant's response chain so the next ask starts a fresh conversation.

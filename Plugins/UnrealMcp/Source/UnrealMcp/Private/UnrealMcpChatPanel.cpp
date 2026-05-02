@@ -1,15 +1,26 @@
 #include "UnrealMcpChatPanel.h"
 
 #include "Algo/Reverse.h"
+#include "Dom/JsonObject.h"
+#include "Dom/JsonValue.h"
 #include "HAL/FileManager.h"
 #include "HAL/PlatformApplicationMisc.h"
+#include "HttpModule.h"
+#include "ISettingsModule.h"
+#include "Interfaces/IHttpRequest.h"
+#include "Interfaces/IHttpResponse.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "Modules/ModuleManager.h"
+#include "Policies/PrettyJsonPrintPolicy.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonWriter.h"
 #include "Styling/AppStyle.h"
 #include "UnrealMcpModule.h"
+#include "UnrealMcpSettings.h"
 #include "Widgets/Input/SButton.h"
+#include "Widgets/Input/SComboBox.h"
 #include "Widgets/Input/SEditableTextBox.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SBox.h"
@@ -27,6 +38,31 @@ namespace UnrealMcpChat
 	static constexpr int32 AssistantHistoryMaxEntries = 12;
 	static constexpr int32 AssistantHistoryMaxChars = 4000;
 	static constexpr int32 AssistantHistoryMaxCharsPerEntry = 500;
+	static constexpr int32 AiTestResponsePreviewMaxChars = 3000;
+
+	const FString& SkillApplyModeReadOnly()
+	{
+		static const FString Value = TEXT("Read Only");
+		return Value;
+	}
+
+	const FString& SkillApplyModeApplyToMemory()
+	{
+		static const FString Value = TEXT("Apply to Memory");
+		return Value;
+	}
+
+	const FString& SkillApplyModeInsertPrompt()
+	{
+		static const FString Value = TEXT("Insert Prompt");
+		return Value;
+	}
+
+	const FString& SkillApplyModeAskNow()
+	{
+		static const FString Value = TEXT("Ask Now");
+		return Value;
+	}
 
 	FString GetHistoryFilePath()
 	{
@@ -125,11 +161,25 @@ namespace UnrealMcpChat
 
 		if (!Entry.Details.IsEmpty())
 		{
-			Lines.Add(TEXT("Arguments:"));
+			Lines.Add(TEXT("Details:"));
 			Lines.Add(Entry.Details);
 		}
 
 		return FString::Join(Lines, TEXT("\n"));
+	}
+
+	FString JsonObjectToPrettyString(const TSharedPtr<FJsonObject>& JsonObject)
+	{
+		if (!JsonObject.IsValid())
+		{
+			return TEXT("{}");
+		}
+
+		FString Output;
+		const TSharedRef<TJsonWriter<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>> Writer =
+			TJsonWriterFactory<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>::Create(&Output);
+		FJsonSerializer::Serialize(JsonObject.ToSharedRef(), Writer);
+		return Output;
 	}
 
 	FString ClampForAssistantContext(const FString& Text, int32 MaxChars)
@@ -210,6 +260,14 @@ namespace UnrealMcpChat
 void SUnrealMcpChatPanel::Construct(const FArguments& InArgs, FUnrealMcpModule* InOwnerModule)
 {
 	OwnerModule = InOwnerModule;
+	SkillApplyModes =
+	{
+		MakeShared<FString>(UnrealMcpChat::SkillApplyModeReadOnly()),
+		MakeShared<FString>(UnrealMcpChat::SkillApplyModeApplyToMemory()),
+		MakeShared<FString>(UnrealMcpChat::SkillApplyModeInsertPrompt()),
+		MakeShared<FString>(UnrealMcpChat::SkillApplyModeAskNow())
+	};
+	SelectedSkillApplyMode = SkillApplyModes.IsValidIndex(1) ? SkillApplyModes[1] : nullptr;
 
 	ChildSlot
 	[
@@ -235,7 +293,7 @@ void SUnrealMcpChatPanel::Construct(const FArguments& InArgs, FUnrealMcpModule* 
 			]
 			+ SVerticalBox::Slot()
 			.AutoHeight()
-			.Padding(0.0f, 10.0f, 0.0f, 10.0f)
+			.Padding(0.0f, 10.0f, 0.0f, 6.0f)
 			[
 				SNew(SWrapBox)
 				.UseAllottedSize(true)
@@ -342,6 +400,139 @@ void SUnrealMcpChatPanel::Construct(const FArguments& InArgs, FUnrealMcpModule* 
 				]
 			]
 			+ SVerticalBox::Slot()
+			.AutoHeight()
+			.Padding(0.0f, 0.0f, 0.0f, 10.0f)
+			[
+				SNew(SBorder)
+				.BorderImage(FAppStyle::GetBrush("ToolPanel.GroupBorder"))
+				.Padding(8.0f)
+				[
+					SNew(SVerticalBox)
+					+ SVerticalBox::Slot()
+					.AutoHeight()
+					.Padding(0.0f, 0.0f, 0.0f, 6.0f)
+					[
+						SNew(STextBlock)
+						.Text(LOCTEXT("AiSkillBarTitle", "AI Settings / Project Skills"))
+						.Font(FAppStyle::GetFontStyle("NormalFontBold"))
+					]
+					+ SVerticalBox::Slot()
+					.AutoHeight()
+					[
+						SNew(SHorizontalBox)
+						+ SHorizontalBox::Slot()
+						.AutoWidth()
+						.Padding(0.0f, 0.0f, 6.0f, 0.0f)
+						[
+							SNew(SButton)
+							.Text(LOCTEXT("AiSettingsButton", "AI Settings"))
+							.ToolTipText(LOCTEXT("AiSettingsTooltip", "Open Project Settings > Plugins > Unreal MCP, where the OpenAI API key and model are configured."))
+							.OnClicked(this, &SUnrealMcpChatPanel::HandleOpenAiSettingsClicked)
+						]
+						+ SHorizontalBox::Slot()
+						.AutoWidth()
+						.Padding(0.0f, 0.0f, 6.0f, 0.0f)
+						[
+							SNew(SButton)
+							.Text(LOCTEXT("TestAiConnectionButton", "Test AI"))
+							.ToolTipText(LOCTEXT("TestAiConnectionTooltip", "Send a minimal Responses API request using the configured endpoint, model, and API key."))
+							.OnClicked(this, &SUnrealMcpChatPanel::HandleTestAiConnectionClicked)
+						]
+						+ SHorizontalBox::Slot()
+						.AutoWidth()
+						.Padding(0.0f, 0.0f, 6.0f, 0.0f)
+						[
+							SNew(SButton)
+							.Text(LOCTEXT("RefreshSkillsButton", "Refresh Skills"))
+							.ToolTipText(LOCTEXT("RefreshSkillsTooltip", "Call unreal.skill_list and refresh the skill selector."))
+							.OnClicked(this, &SUnrealMcpChatPanel::HandleRefreshSkillsClicked)
+						]
+						+ SHorizontalBox::Slot()
+						.FillWidth(0.30f)
+						.Padding(0.0f, 0.0f, 6.0f, 0.0f)
+						[
+							SAssignNew(SkillComboBox, SComboBox<TSharedPtr<FUnrealMcpSkillOption>>)
+							.OptionsSource(&SkillOptions)
+							.OnGenerateWidget(this, &SUnrealMcpChatPanel::MakeSkillComboOption)
+							.OnSelectionChanged(this, &SUnrealMcpChatPanel::HandleSkillSelectionChanged)
+							[
+								SNew(STextBlock)
+								.Text(this, &SUnrealMcpChatPanel::GetSelectedSkillText)
+							]
+						]
+						+ SHorizontalBox::Slot()
+						.FillWidth(0.34f)
+						.Padding(0.0f, 0.0f, 6.0f, 0.0f)
+						[
+							SAssignNew(SkillTaskTextBox, SEditableTextBox)
+							.HintText(LOCTEXT("SkillTaskHint", "Task for Apply Skill, e.g. extend MCP safely"))
+						]
+					]
+					+ SVerticalBox::Slot()
+					.AutoHeight()
+					.Padding(0.0f, 6.0f, 0.0f, 0.0f)
+					[
+						SNew(SHorizontalBox)
+						+ SHorizontalBox::Slot()
+						.FillWidth(0.24f)
+						.Padding(0.0f, 0.0f, 6.0f, 0.0f)
+						[
+							SAssignNew(SkillApplyModeComboBox, SComboBox<TSharedPtr<FString>>)
+							.OptionsSource(&SkillApplyModes)
+							.OnGenerateWidget(this, &SUnrealMcpChatPanel::MakeSkillApplyModeComboOption)
+							.OnSelectionChanged(this, &SUnrealMcpChatPanel::HandleSkillApplyModeChanged)
+							[
+								SNew(STextBlock)
+								.Text(this, &SUnrealMcpChatPanel::GetSelectedSkillApplyModeText)
+							]
+						]
+						+ SHorizontalBox::Slot()
+						.AutoWidth()
+						.Padding(0.0f, 0.0f, 6.0f, 0.0f)
+						[
+							SNew(SButton)
+							.Text(LOCTEXT("ReadSkillButton", "Read Skill"))
+							.ToolTipText(LOCTEXT("ReadSkillTooltip", "Call unreal.skill_read for the selected skill."))
+							.OnClicked(this, &SUnrealMcpChatPanel::HandleReadSelectedSkillClicked)
+						]
+						+ SHorizontalBox::Slot()
+						.AutoWidth()
+						[
+							SNew(SButton)
+							.Text(LOCTEXT("ApplySkillButton", "Apply Skill"))
+							.ToolTipText(LOCTEXT("ApplySkillTooltip", "Apply the selected skill using the chosen mode: read only, memory write, insert prompt, or ask now."))
+							.OnClicked(this, &SUnrealMcpChatPanel::HandleApplySelectedSkillClicked)
+						]
+						+ SHorizontalBox::Slot()
+						.AutoWidth()
+						.Padding(6.0f, 0.0f, 6.0f, 0.0f)
+						[
+							SNew(SButton)
+							.Text(LOCTEXT("ReadMemoryButton", "Read Memory"))
+							.ToolTipText(LOCTEXT("ReadMemoryTooltip", "Call unreal.project_memory_view for recent project memory entries."))
+							.OnClicked(this, &SUnrealMcpChatPanel::HandleReadMemoryClicked)
+						]
+						+ SHorizontalBox::Slot()
+						.AutoWidth()
+						[
+							SNew(SButton)
+							.Text(LOCTEXT("WriteTaskMemoryButton", "Write Task Memory"))
+							.ToolTipText(LOCTEXT("WriteTaskMemoryTooltip", "Save the current task text and selected skill as a project memory entry."))
+							.OnClicked(this, &SUnrealMcpChatPanel::HandleWriteCurrentTaskMemoryClicked)
+						]
+					]
+					+ SVerticalBox::Slot()
+					.AutoHeight()
+					.Padding(0.0f, 6.0f, 0.0f, 0.0f)
+					[
+						SAssignNew(SkillDescriptionText, STextBlock)
+						.AutoWrapText(true)
+						.ColorAndOpacity(FLinearColor(0.72f, 0.75f, 0.80f, 1.0f))
+						.Text(this, &SUnrealMcpChatPanel::GetSelectedSkillDescriptionText)
+					]
+				]
+			]
+			+ SVerticalBox::Slot()
 			.FillHeight(1.0f)
 			[
 				SAssignNew(TranscriptScrollBox, SScrollBox)
@@ -383,35 +574,35 @@ void SUnrealMcpChatPanel::Construct(const FArguments& InArgs, FUnrealMcpModule* 
 					})
 					.OnClicked(this, &SUnrealMcpChatPanel::HandleStopClicked)
 				]
-					+ SHorizontalBox::Slot()
-					.AutoWidth()
-					.Padding(0.0f, 0.0f, 6.0f, 0.0f)
-					[
-						SNew(SButton)
-						.Text(LOCTEXT("CopyChat", "Copy Chat"))
-						.IsEnabled_Lambda([this]()
-						{
-							return Entries.Num() > 0;
-						})
-						.OnClicked(this, &SUnrealMcpChatPanel::HandleCopyChatClicked)
-					]
-					+ SHorizontalBox::Slot()
-					.AutoWidth()
-					.Padding(0.0f, 0.0f, 6.0f, 0.0f)
-					[
-						SNew(SButton)
-						.Text(LOCTEXT("CopyLog", "Copy Log"))
-						.IsEnabled_Lambda([this]()
-						{
-							return !LastLogText.IsEmpty();
-						})
-						.OnClicked(this, &SUnrealMcpChatPanel::HandleCopyLastLogClicked)
-					]
-					+ SHorizontalBox::Slot()
-					.AutoWidth()
-					[
-						SNew(SButton)
-						.Text(LOCTEXT("Clear", "Clear"))
+				+ SHorizontalBox::Slot()
+				.AutoWidth()
+				.Padding(0.0f, 0.0f, 6.0f, 0.0f)
+				[
+					SNew(SButton)
+					.Text(LOCTEXT("CopyChat", "Copy Chat"))
+					.IsEnabled_Lambda([this]()
+					{
+						return Entries.Num() > 0;
+					})
+					.OnClicked(this, &SUnrealMcpChatPanel::HandleCopyChatClicked)
+				]
+				+ SHorizontalBox::Slot()
+				.AutoWidth()
+				.Padding(0.0f, 0.0f, 6.0f, 0.0f)
+				[
+					SNew(SButton)
+					.Text(LOCTEXT("CopyLog", "Copy Log"))
+					.IsEnabled_Lambda([this]()
+					{
+						return !LastLogText.IsEmpty();
+					})
+					.OnClicked(this, &SUnrealMcpChatPanel::HandleCopyLastLogClicked)
+				]
+				+ SHorizontalBox::Slot()
+				.AutoWidth()
+				[
+					SNew(SButton)
+					.Text(LOCTEXT("Clear", "Clear"))
 					.OnClicked(this, &SUnrealMcpChatPanel::HandleClearClicked)
 				]
 			]
@@ -423,6 +614,7 @@ void SUnrealMcpChatPanel::Construct(const FArguments& InArgs, FUnrealMcpModule* 
 	{
 		ResetHistory(true);
 	}
+	RefreshSkillOptions(false);
 }
 
 FReply SUnrealMcpChatPanel::HandleSendClicked()
@@ -463,6 +655,179 @@ FReply SUnrealMcpChatPanel::HandleCopyLastLogClicked()
 	return FReply::Handled();
 }
 
+FReply SUnrealMcpChatPanel::HandleOpenAiSettingsClicked()
+{
+	ISettingsModule* SettingsModule = FModuleManager::LoadModulePtr<ISettingsModule>(TEXT("Settings"));
+	if (!SettingsModule)
+	{
+		AppendMessage(EUnrealMcpChatEntryType::System, TEXT("Unreal MCP Error"), TEXT("Unable to load the Settings module."), true);
+		return FReply::Handled();
+	}
+
+	SettingsModule->ShowViewer(TEXT("Project"), TEXT("Plugins"), TEXT("UnrealMcp"));
+	AppendMessage(EUnrealMcpChatEntryType::System, TEXT("Unreal MCP"), TEXT("Opened Project Settings > Plugins > Unreal MCP. Configure the OpenAI API key, model, and endpoint there."));
+	return FReply::Handled();
+}
+
+FReply SUnrealMcpChatPanel::HandleTestAiConnectionClicked()
+{
+	StartAiConnectionTest();
+	return FReply::Handled();
+}
+
+FReply SUnrealMcpChatPanel::HandleRefreshSkillsClicked()
+{
+	RefreshSkillOptions(true);
+	return FReply::Handled();
+}
+
+FReply SUnrealMcpChatPanel::HandleReadSelectedSkillClicked()
+{
+	const FString SkillName = GetSelectedSkillName();
+	if (SkillName.IsEmpty())
+	{
+		AppendMessage(EUnrealMcpChatEntryType::System, TEXT("Unreal MCP Error"), TEXT("Select a project skill before reading it."), true);
+		return FReply::Handled();
+	}
+
+	if (!OwnerModule)
+	{
+		AppendMessage(EUnrealMcpChatEntryType::System, TEXT("Unreal MCP Error"), TEXT("The chat panel is not connected to the module."), true);
+		return FReply::Handled();
+	}
+
+	TSharedPtr<FJsonObject> Arguments = MakeShared<FJsonObject>();
+	Arguments->SetStringField(TEXT("skillName"), SkillName);
+	Arguments->SetBoolField(TEXT("includeText"), true);
+	Arguments->SetNumberField(TEXT("maxPreviewChars"), 8000.0);
+	const FUnrealMcpExecutionResult Result = OwnerModule->ExecuteToolFromEditorUI(TEXT("unreal.skill_read"), *Arguments);
+	AppendToolExecutionResult(TEXT("unreal.skill_read"), *Arguments, Result);
+	return FReply::Handled();
+}
+
+FReply SUnrealMcpChatPanel::HandleApplySelectedSkillClicked()
+{
+	const FString SkillName = GetSelectedSkillName();
+	if (SkillName.IsEmpty())
+	{
+		AppendMessage(EUnrealMcpChatEntryType::System, TEXT("Unreal MCP Error"), TEXT("Select a project skill before applying it."), true);
+		return FReply::Handled();
+	}
+
+	if (!OwnerModule)
+	{
+		AppendMessage(EUnrealMcpChatEntryType::System, TEXT("Unreal MCP Error"), TEXT("The chat panel is not connected to the module."), true);
+		return FReply::Handled();
+	}
+
+	const FString Task = GetSkillTaskOrFallback();
+	const FString ApplyMode = GetSelectedSkillApplyMode();
+
+	TSharedPtr<FJsonObject> Arguments = MakeShared<FJsonObject>();
+	Arguments->SetStringField(TEXT("skillName"), SkillName);
+	Arguments->SetStringField(TEXT("task"), Task);
+
+	if (ApplyMode.Equals(UnrealMcpChat::SkillApplyModeReadOnly(), ESearchCase::CaseSensitive))
+	{
+		Arguments->SetBoolField(TEXT("includeText"), true);
+		Arguments->SetNumberField(TEXT("maxPreviewChars"), 12000.0);
+		const FUnrealMcpExecutionResult Result = OwnerModule->ExecuteToolFromEditorUI(TEXT("unreal.skill_read"), *Arguments);
+		AppendToolExecutionResult(TEXT("unreal.skill_read"), *Arguments, Result);
+		return FReply::Handled();
+	}
+
+	const bool bWriteMemory = ApplyMode.Equals(UnrealMcpChat::SkillApplyModeApplyToMemory(), ESearchCase::CaseSensitive)
+		|| ApplyMode.Equals(UnrealMcpChat::SkillApplyModeAskNow(), ESearchCase::CaseSensitive);
+	const bool bNeedsPrompt = ApplyMode.Equals(UnrealMcpChat::SkillApplyModeInsertPrompt(), ESearchCase::CaseSensitive)
+		|| ApplyMode.Equals(UnrealMcpChat::SkillApplyModeAskNow(), ESearchCase::CaseSensitive);
+
+	Arguments->SetBoolField(TEXT("writeMemory"), bWriteMemory);
+	Arguments->SetBoolField(TEXT("includeFullText"), bNeedsPrompt);
+	Arguments->SetStringField(TEXT("chatApplyMode"), ApplyMode);
+	const FUnrealMcpExecutionResult Result = OwnerModule->ExecuteToolFromEditorUI(TEXT("unreal.skill_apply"), *Arguments);
+	AppendToolExecutionResult(TEXT("unreal.skill_apply"), *Arguments, Result);
+
+	if (Result.bIsError || !bNeedsPrompt)
+	{
+		return FReply::Handled();
+	}
+
+	const FString AskPrompt = BuildSkillAskPrompt(SkillName, Task);
+	if (ApplyMode.Equals(UnrealMcpChat::SkillApplyModeAskNow(), ESearchCase::CaseSensitive))
+	{
+		SendCommand(AskPrompt);
+		return FReply::Handled();
+	}
+
+	if (InputTextBox.IsValid())
+	{
+		InputTextBox->SetText(FText::FromString(AskPrompt));
+	}
+	return FReply::Handled();
+}
+
+FReply SUnrealMcpChatPanel::HandleReadMemoryClicked()
+{
+	if (!OwnerModule)
+	{
+		AppendMessage(EUnrealMcpChatEntryType::System, TEXT("Unreal MCP Error"), TEXT("The chat panel is not connected to the module."), true);
+		return FReply::Handled();
+	}
+
+	TSharedPtr<FJsonObject> Arguments = MakeShared<FJsonObject>();
+	Arguments->SetBoolField(TEXT("includeContent"), false);
+	Arguments->SetNumberField(TEXT("maxEntries"), 10.0);
+	Arguments->SetBoolField(TEXT("sortDescending"), true);
+	const FUnrealMcpExecutionResult Result = OwnerModule->ExecuteToolFromEditorUI(TEXT("unreal.project_memory_view"), *Arguments);
+	AppendToolExecutionResult(TEXT("unreal.project_memory_view"), *Arguments, Result);
+	return FReply::Handled();
+}
+
+FReply SUnrealMcpChatPanel::HandleWriteCurrentTaskMemoryClicked()
+{
+	if (!OwnerModule)
+	{
+		AppendMessage(EUnrealMcpChatEntryType::System, TEXT("Unreal MCP Error"), TEXT("The chat panel is not connected to the module."), true);
+		return FReply::Handled();
+	}
+
+	FString Task = SkillTaskTextBox.IsValid() ? SkillTaskTextBox->GetText().ToString().TrimStartAndEnd() : FString();
+	if (Task.IsEmpty() && InputTextBox.IsValid())
+	{
+		Task = InputTextBox->GetText().ToString().TrimStartAndEnd();
+	}
+	if (Task.IsEmpty())
+	{
+		Task = TEXT("Continue the current Unreal MCP chat task.");
+	}
+
+	TSharedPtr<FJsonObject> ContentObject = MakeShared<FJsonObject>();
+	ContentObject->SetStringField(TEXT("task"), Task);
+	ContentObject->SetStringField(TEXT("selectedSkill"), GetSelectedSkillName());
+	ContentObject->SetStringField(TEXT("skillApplyMode"), GetSelectedSkillApplyMode());
+	ContentObject->SetStringField(TEXT("capturedAtUtc"), FDateTime::UtcNow().ToIso8601());
+
+	TSharedPtr<FJsonObject> Arguments = MakeShared<FJsonObject>();
+	Arguments->SetStringField(TEXT("key"), TEXT("chat.current_task"));
+	Arguments->SetStringField(TEXT("summary"), TEXT("Current Chat toolbar task."));
+	Arguments->SetStringField(TEXT("status"), TEXT("in_progress"));
+	Arguments->SetStringField(TEXT("nextStep"), TEXT("Resume from the saved Chat toolbar task."));
+	Arguments->SetStringField(TEXT("contentJson"), UnrealMcpChat::JsonObjectToPrettyString(ContentObject));
+
+	TArray<TSharedPtr<FJsonValue>> Tags;
+	Tags.Add(MakeShared<FJsonValueString>(TEXT("chat")));
+	Tags.Add(MakeShared<FJsonValueString>(TEXT("toolbar")));
+	if (!GetSelectedSkillName().IsEmpty())
+	{
+		Tags.Add(MakeShared<FJsonValueString>(GetSelectedSkillName()));
+	}
+	Arguments->SetArrayField(TEXT("tags"), Tags);
+
+	const FUnrealMcpExecutionResult Result = OwnerModule->ExecuteToolFromEditorUI(TEXT("unreal.project_memory_write"), *Arguments);
+	AppendToolExecutionResult(TEXT("unreal.project_memory_write"), *Arguments, Result);
+	return FReply::Handled();
+}
+
 void SUnrealMcpChatPanel::HandleInputCommitted(const FText& InText, ETextCommit::Type CommitType)
 {
 	if (CommitType == ETextCommit::OnEnter)
@@ -474,6 +839,323 @@ void SUnrealMcpChatPanel::HandleInputCommitted(const FText& InText, ETextCommit:
 void SUnrealMcpChatPanel::HandlePresetClicked(FString CommandText)
 {
 	SendCommand(CommandText);
+}
+
+void SUnrealMcpChatPanel::HandleSkillSelectionChanged(TSharedPtr<FUnrealMcpSkillOption> NewSelection, ESelectInfo::Type SelectInfo)
+{
+	SelectedSkill = NewSelection;
+}
+
+void SUnrealMcpChatPanel::HandleSkillApplyModeChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo)
+{
+	SelectedSkillApplyMode = NewSelection;
+}
+
+void SUnrealMcpChatPanel::StartAiConnectionTest()
+{
+	const UUnrealMcpSettings* Settings = GetDefault<UUnrealMcpSettings>();
+	if (!Settings)
+	{
+		AppendMessage(EUnrealMcpChatEntryType::System, TEXT("Unreal MCP Error"), TEXT("Unable to load Unreal MCP settings."), true);
+		return;
+	}
+
+	TSharedPtr<FJsonObject> Arguments = MakeShared<FJsonObject>();
+	Arguments->SetStringField(TEXT("url"), Settings->OpenAIResponsesUrl);
+	Arguments->SetStringField(TEXT("model"), Settings->OpenAIModel);
+	Arguments->SetBoolField(TEXT("apiKeyConfigured"), !Settings->OpenAIApiKey.TrimStartAndEnd().IsEmpty());
+	Arguments->SetBoolField(TEXT("aiAssistantEnabled"), Settings->bEnableAiAssistant);
+	Arguments->SetNumberField(TEXT("timeoutSeconds"), Settings->AiRequestTimeoutSeconds);
+	const FString ArgumentsJson = UnrealMcpChat::JsonObjectToPrettyString(Arguments);
+	TSharedPtr<FUnrealMcpChatEntry> Entry = AppendToolCard(TEXT("unreal.ai_test_connection"), FString(), ArgumentsJson);
+
+	auto FinishAiTest = [this, Entry, ArgumentsJson](const FString& Message, const TSharedPtr<FJsonObject>& StructuredContent, bool bIsError)
+	{
+		FUnrealMcpExecutionResult Result;
+		Result.Text = Message;
+		Result.StructuredContent = StructuredContent;
+		Result.bIsError = bIsError;
+		UpdateToolEntryWithResult(Entry, ArgumentsJson, Result);
+	};
+
+	const FString ApiKey = Settings->OpenAIApiKey.TrimStartAndEnd();
+	const FString Model = Settings->OpenAIModel.TrimStartAndEnd();
+	const FString Url = Settings->OpenAIResponsesUrl.TrimStartAndEnd();
+
+	if (ApiKey.IsEmpty() || Model.IsEmpty() || Url.IsEmpty())
+	{
+		TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+		StructuredContent->SetStringField(TEXT("action"), TEXT("ai_test_connection"));
+		StructuredContent->SetStringField(TEXT("url"), Url);
+		StructuredContent->SetStringField(TEXT("model"), Model);
+		StructuredContent->SetBoolField(TEXT("apiKeyConfigured"), !ApiKey.IsEmpty());
+		StructuredContent->SetBoolField(TEXT("requestSent"), false);
+		FinishAiTest(TEXT("AI connection test was not sent. Configure OpenAI API key, model, and Responses URL first."), StructuredContent, true);
+		return;
+	}
+
+	TSharedPtr<FJsonObject> TextObject = MakeShared<FJsonObject>();
+	TextObject->SetStringField(TEXT("type"), TEXT("input_text"));
+	TextObject->SetStringField(TEXT("text"), TEXT("Return exactly: OK"));
+	TArray<TSharedPtr<FJsonValue>> ContentArray;
+	ContentArray.Add(MakeShared<FJsonValueObject>(TextObject));
+
+	TSharedPtr<FJsonObject> MessageObject = MakeShared<FJsonObject>();
+	MessageObject->SetStringField(TEXT("role"), TEXT("user"));
+	MessageObject->SetArrayField(TEXT("content"), ContentArray);
+	TArray<TSharedPtr<FJsonValue>> InputArray;
+	InputArray.Add(MakeShared<FJsonValueObject>(MessageObject));
+
+	TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+	Payload->SetStringField(TEXT("model"), Model);
+	Payload->SetArrayField(TEXT("input"), InputArray);
+	Payload->SetNumberField(TEXT("max_output_tokens"), 16.0);
+	Payload->SetBoolField(TEXT("stream"), false);
+	Payload->SetStringField(TEXT("truncation"), TEXT("auto"));
+
+	FString PayloadString;
+	const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&PayloadString);
+	FJsonSerializer::Serialize(Payload.ToSharedRef(), Writer);
+
+	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+	Request->SetURL(Url);
+	Request->SetVerb(TEXT("POST"));
+	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
+	Request->SetHeader(TEXT("Accept"), TEXT("application/json"));
+	Request->SetHeader(TEXT("Authorization"), FString::Printf(TEXT("Bearer %s"), *ApiKey));
+	Request->SetTimeout(Settings->AiRequestTimeoutSeconds);
+	Request->SetActivityTimeout(Settings->AiRequestActivityTimeoutSeconds);
+	Request->SetContentAsString(PayloadString);
+
+	TWeakPtr<SUnrealMcpChatPanel> WeakThis = SharedThis(this);
+	Request->OnProcessRequestComplete().BindLambda(
+		[WeakThis, Entry, ArgumentsJson, Url, Model](FHttpRequestPtr HttpRequest, FHttpResponsePtr HttpResponse, bool bSucceeded)
+		{
+			if (const TSharedPtr<SUnrealMcpChatPanel> PinnedThis = WeakThis.Pin())
+			{
+				const int32 ResponseCode = HttpResponse.IsValid() ? HttpResponse->GetResponseCode() : 0;
+				const FString ResponseText = HttpResponse.IsValid() ? HttpResponse->GetContentAsString() : FString();
+				const bool bHttpOk = bSucceeded && ResponseCode >= 200 && ResponseCode < 300;
+
+				TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+				StructuredContent->SetStringField(TEXT("action"), TEXT("ai_test_connection"));
+				StructuredContent->SetStringField(TEXT("url"), Url);
+				StructuredContent->SetStringField(TEXT("model"), Model);
+				StructuredContent->SetBoolField(TEXT("requestSucceeded"), bSucceeded);
+				StructuredContent->SetNumberField(TEXT("httpStatus"), ResponseCode);
+				StructuredContent->SetStringField(TEXT("responsePreview"), ResponseText.Left(UnrealMcpChat::AiTestResponsePreviewMaxChars));
+
+				FUnrealMcpExecutionResult Result;
+				Result.StructuredContent = StructuredContent;
+				Result.bIsError = !bHttpOk;
+				Result.Text = bHttpOk
+					? FString::Printf(TEXT("AI connection test succeeded. HTTP %d using model '%s'."), ResponseCode, *Model)
+					: FString::Printf(TEXT("AI connection test failed. HTTP %d. %s"), ResponseCode, *ResponseText.Left(700));
+				PinnedThis->UpdateToolEntryWithResult(Entry, ArgumentsJson, Result);
+				PinnedThis->ActiveAiTestRequest.Reset();
+			}
+		});
+
+	ActiveAiTestRequest = Request;
+	if (!Request->ProcessRequest())
+	{
+		TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+		StructuredContent->SetStringField(TEXT("action"), TEXT("ai_test_connection"));
+		StructuredContent->SetStringField(TEXT("url"), Url);
+		StructuredContent->SetStringField(TEXT("model"), Model);
+		StructuredContent->SetBoolField(TEXT("requestSent"), false);
+		FinishAiTest(TEXT("AI connection test failed before the HTTP request could be started."), StructuredContent, true);
+		ActiveAiTestRequest.Reset();
+	}
+}
+
+void SUnrealMcpChatPanel::RefreshSkillOptions(bool bAppendResult)
+{
+	if (!OwnerModule)
+	{
+		if (bAppendResult)
+		{
+			AppendMessage(EUnrealMcpChatEntryType::System, TEXT("Unreal MCP Error"), TEXT("The chat panel is not connected to the module."), true);
+		}
+		return;
+	}
+
+	const FString PreviousSelection = GetSelectedSkillName();
+	TSharedPtr<FJsonObject> Arguments = MakeShared<FJsonObject>();
+	Arguments->SetBoolField(TEXT("includeText"), false);
+	Arguments->SetNumberField(TEXT("maxPreviewChars"), 1000.0);
+	const FUnrealMcpExecutionResult Result = OwnerModule->ExecuteToolFromEditorUI(TEXT("unreal.skill_list"), *Arguments);
+
+	SkillOptions.Reset();
+	TSharedPtr<FUnrealMcpSkillOption> PreservedSelection;
+	if (!Result.bIsError && Result.StructuredContent.IsValid())
+	{
+		const TArray<TSharedPtr<FJsonValue>>* Skills = nullptr;
+		if (Result.StructuredContent->TryGetArrayField(TEXT("skills"), Skills) && Skills)
+		{
+			for (const TSharedPtr<FJsonValue>& SkillValue : *Skills)
+			{
+				const TSharedPtr<FJsonObject> SkillObject = SkillValue.IsValid() ? SkillValue->AsObject() : nullptr;
+				FString SkillName;
+				if (SkillObject.IsValid() && SkillObject->TryGetStringField(TEXT("name"), SkillName) && !SkillName.IsEmpty())
+				{
+					TSharedPtr<FUnrealMcpSkillOption> Option = MakeShared<FUnrealMcpSkillOption>();
+					Option->Name = SkillName;
+					SkillObject->TryGetStringField(TEXT("title"), Option->Title);
+					SkillObject->TryGetStringField(TEXT("description"), Option->Description);
+					SkillObject->TryGetStringField(TEXT("path"), Option->Path);
+					SkillOptions.Add(Option);
+					if (!PreviousSelection.IsEmpty() && SkillName.Equals(PreviousSelection, ESearchCase::CaseSensitive))
+					{
+						PreservedSelection = Option;
+					}
+				}
+			}
+		}
+	}
+
+	SelectedSkill = PreservedSelection.IsValid() ? PreservedSelection : (SkillOptions.Num() > 0 ? SkillOptions[0] : nullptr);
+	if (SkillComboBox.IsValid())
+	{
+		SkillComboBox->RefreshOptions();
+		SkillComboBox->SetSelectedItem(SelectedSkill);
+	}
+
+	if (bAppendResult)
+	{
+		AppendToolExecutionResult(TEXT("unreal.skill_list"), *Arguments, Result);
+	}
+}
+
+TSharedRef<SWidget> SUnrealMcpChatPanel::MakeSkillComboOption(TSharedPtr<FUnrealMcpSkillOption> SkillOption) const
+{
+	const FString Name = SkillOption.IsValid() ? SkillOption->Name : TEXT("<none>");
+	const FString Title = SkillOption.IsValid() && !SkillOption->Title.IsEmpty() ? SkillOption->Title : Name;
+	const FString Description = SkillOption.IsValid() ? SkillOption->Description : FString();
+	return SNew(SVerticalBox)
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		[
+			SNew(STextBlock)
+			.Font(FAppStyle::GetFontStyle("NormalFontBold"))
+			.Text(FText::FromString(FString::Printf(TEXT("%s - %s"), *Name, *Title)))
+		]
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		[
+			SNew(STextBlock)
+			.AutoWrapText(true)
+			.Font(FAppStyle::GetFontStyle("SmallFont"))
+			.Text(FText::FromString(Description.Left(160)))
+		];
+}
+
+TSharedRef<SWidget> SUnrealMcpChatPanel::MakeSkillApplyModeComboOption(TSharedPtr<FString> ApplyMode) const
+{
+	return SNew(STextBlock)
+		.Text(FText::FromString(ApplyMode.IsValid() ? *ApplyMode : TEXT("<mode>")));
+}
+
+FText SUnrealMcpChatPanel::GetSelectedSkillText() const
+{
+	if (!SelectedSkill.IsValid())
+	{
+		return FText::FromString(TEXT("No skill selected"));
+	}
+	return FText::FromString(SelectedSkill->Title.IsEmpty() || SelectedSkill->Title.Equals(SelectedSkill->Name, ESearchCase::CaseSensitive)
+		? SelectedSkill->Name
+		: FString::Printf(TEXT("%s - %s"), *SelectedSkill->Name, *SelectedSkill->Title));
+}
+
+FText SUnrealMcpChatPanel::GetSelectedSkillDescriptionText() const
+{
+	if (!SelectedSkill.IsValid())
+	{
+		return FText::FromString(TEXT("No project skill loaded. Use Refresh Skills to scan Tools/UnrealMcpSkills."));
+	}
+
+	const FString Description = SelectedSkill->Description.TrimStartAndEnd();
+	const FString PathSuffix = SelectedSkill->Path.IsEmpty() ? FString() : FString::Printf(TEXT("  [%s]"), *SelectedSkill->Path);
+	return FText::FromString(Description.IsEmpty()
+		? FString::Printf(TEXT("%s%s"), *SelectedSkill->Name, *PathSuffix)
+		: FString::Printf(TEXT("%s%s"), *Description, *PathSuffix));
+}
+
+FText SUnrealMcpChatPanel::GetSelectedSkillApplyModeText() const
+{
+	return FText::FromString(SelectedSkillApplyMode.IsValid() ? *SelectedSkillApplyMode : UnrealMcpChat::SkillApplyModeApplyToMemory());
+}
+
+FString SUnrealMcpChatPanel::GetSelectedSkillName() const
+{
+	return SelectedSkill.IsValid() ? SelectedSkill->Name : FString();
+}
+
+FString SUnrealMcpChatPanel::GetSelectedSkillApplyMode() const
+{
+	return SelectedSkillApplyMode.IsValid() ? *SelectedSkillApplyMode : UnrealMcpChat::SkillApplyModeApplyToMemory();
+}
+
+FString SUnrealMcpChatPanel::GetSkillTaskOrFallback() const
+{
+	const FString Task = SkillTaskTextBox.IsValid() ? SkillTaskTextBox->GetText().ToString().TrimStartAndEnd() : FString();
+	return Task.IsEmpty() ? TEXT("Apply this project skill to the next chat task.") : Task;
+}
+
+FString SUnrealMcpChatPanel::BuildSkillAskPrompt(const FString& SkillName, const FString& Task) const
+{
+	return FString::Printf(
+		TEXT("/ask Use project skill '%s' for this task: %s\nIf you need the skill instructions, call unreal.skill_read or unreal.skill_apply first, then continue with the task."),
+		*SkillName,
+		*Task);
+}
+
+void SUnrealMcpChatPanel::AppendToolExecutionResult(const FString& ToolName, const FJsonObject& Arguments, const FUnrealMcpExecutionResult& Result)
+{
+	TSharedPtr<FJsonObject> ArgumentsObject = MakeShared<FJsonObject>();
+	ArgumentsObject->Values = Arguments.Values;
+	const FString ArgumentsJson = UnrealMcpChat::JsonObjectToPrettyString(ArgumentsObject);
+
+	TSharedPtr<FUnrealMcpChatEntry> Entry = AppendToolCard(ToolName, FString(), ArgumentsJson);
+	if (!Entry.IsValid())
+	{
+		return;
+	}
+
+	UpdateToolEntryWithResult(Entry, ArgumentsJson, Result);
+}
+
+void SUnrealMcpChatPanel::UpdateToolEntryWithResult(
+	const TSharedPtr<FUnrealMcpChatEntry>& Entry,
+	const FString& ArgumentsJson,
+	const FUnrealMcpExecutionResult& Result)
+{
+	if (!Entry.IsValid())
+	{
+		return;
+	}
+
+	Entry->bIsPending = false;
+	Entry->bIsError = Result.bIsError;
+	Entry->Body = Result.Text;
+
+	if (Result.StructuredContent.IsValid())
+	{
+		FString ApplicationPrompt;
+		if (Result.StructuredContent->TryGetStringField(TEXT("applicationPrompt"), ApplicationPrompt) && !ApplicationPrompt.IsEmpty())
+		{
+			Entry->Body += TEXT("\n\nApplication prompt is available in structured content.");
+		}
+
+		Entry->Details = FString::Printf(
+			TEXT("Arguments:\n%s\n\nStructured content:\n%s"),
+			*ArgumentsJson,
+			*UnrealMcpChat::JsonObjectToPrettyString(Result.StructuredContent));
+	}
+
+	InvalidateEntryWidgets();
+	ScrollTranscriptToEnd();
+	SaveHistory();
 }
 
 void SUnrealMcpChatPanel::SendCurrentInput()
@@ -817,7 +1499,7 @@ TSharedRef<SWidget> SUnrealMcpChatPanel::BuildEntryWidget(const TSharedPtr<FUnre
 							SNew(STextBlock)
 							.Font(FAppStyle::GetFontStyle("SmallFont"))
 							.ColorAndOpacity(FLinearColor(0.78f, 0.80f, 0.84f, 1.0f))
-							.Text(LOCTEXT("DetailsLabel", "Arguments"))
+							.Text(LOCTEXT("DetailsLabel", "Details"))
 						]
 						+ SVerticalBox::Slot()
 						.AutoHeight()

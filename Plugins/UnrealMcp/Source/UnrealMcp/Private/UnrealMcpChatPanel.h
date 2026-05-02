@@ -1,13 +1,18 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Widgets/Input/SComboBox.h"
 #include "Widgets/SCompoundWidget.h"
 
 class FUnrealMcpModule;
+class FJsonObject;
+class IHttpRequest;
 class IUnrealMcpAssistantHandle;
 class SEditableTextBox;
 class SScrollBox;
+class STextBlock;
 class SVerticalBox;
+struct FUnrealMcpExecutionResult;
 
 enum class EUnrealMcpChatEntryType : uint8
 {
@@ -29,6 +34,14 @@ struct FUnrealMcpChatEntry
 	bool bIsPending = false;
 };
 
+struct FUnrealMcpSkillOption
+{
+	FString Name;
+	FString Title;
+	FString Description;
+	FString Path;
+};
+
 class SUnrealMcpChatPanel final : public SCompoundWidget
 {
 public:
@@ -43,12 +56,37 @@ private:
 	FReply HandleClearClicked();
 	FReply HandleCopyChatClicked();
 	FReply HandleCopyLastLogClicked();
+	FReply HandleOpenAiSettingsClicked();
+	FReply HandleTestAiConnectionClicked();
+	FReply HandleRefreshSkillsClicked();
+	FReply HandleReadSelectedSkillClicked();
+	FReply HandleApplySelectedSkillClicked();
+	FReply HandleReadMemoryClicked();
+	FReply HandleWriteCurrentTaskMemoryClicked();
 	void HandleInputCommitted(const FText& InText, ETextCommit::Type CommitType);
 	void HandlePresetClicked(FString CommandText);
+	void HandleSkillSelectionChanged(TSharedPtr<FUnrealMcpSkillOption> NewSelection, ESelectInfo::Type SelectInfo);
+	void HandleSkillApplyModeChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo);
 	void SendCurrentInput();
 	void SendCommand(const FString& CommandText);
 	void StopAssistantRequest();
 	void StartAssistantRequest(const FString& UserPrompt);
+	void StartAiConnectionTest();
+	void RefreshSkillOptions(bool bAppendResult);
+	TSharedRef<SWidget> MakeSkillComboOption(TSharedPtr<FUnrealMcpSkillOption> SkillOption) const;
+	TSharedRef<SWidget> MakeSkillApplyModeComboOption(TSharedPtr<FString> ApplyMode) const;
+	FText GetSelectedSkillText() const;
+	FText GetSelectedSkillDescriptionText() const;
+	FText GetSelectedSkillApplyModeText() const;
+	FString GetSelectedSkillName() const;
+	FString GetSelectedSkillApplyMode() const;
+	FString GetSkillTaskOrFallback() const;
+	FString BuildSkillAskPrompt(const FString& SkillName, const FString& Task) const;
+	void AppendToolExecutionResult(const FString& ToolName, const FJsonObject& Arguments, const FUnrealMcpExecutionResult& Result);
+	void UpdateToolEntryWithResult(
+		const TSharedPtr<FUnrealMcpChatEntry>& Entry,
+		const FString& ArgumentsJson,
+		const FUnrealMcpExecutionResult& Result);
 	TSharedPtr<FUnrealMcpChatEntry> AppendMessage(EUnrealMcpChatEntryType Type, const FString& Speaker, const FString& Message, bool bIsError = false);
 	TSharedPtr<FUnrealMcpChatEntry> AppendToolCard(const FString& ToolName, const FString& ToolCallId, const FString& ArgumentsJson);
 	void AddEntryWidget(const TSharedPtr<FUnrealMcpChatEntry>& Entry);
@@ -68,9 +106,18 @@ private:
 	bool bHasInjectedPersistedContextThisSession = false;
 	TArray<TSharedPtr<FUnrealMcpChatEntry>> Entries;
 	TMap<FString, TSharedPtr<FUnrealMcpChatEntry>> ToolEntriesByCallId;
+	TArray<TSharedPtr<FUnrealMcpSkillOption>> SkillOptions;
+	TSharedPtr<FUnrealMcpSkillOption> SelectedSkill;
+	TArray<TSharedPtr<FString>> SkillApplyModes;
+	TSharedPtr<FString> SelectedSkillApplyMode;
 	TSharedPtr<FUnrealMcpChatEntry> ActiveAssistantEntry;
 	TSharedPtr<IUnrealMcpAssistantHandle, ESPMode::ThreadSafe> ActiveAssistantHandle;
+	TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> ActiveAiTestRequest;
 	TSharedPtr<SEditableTextBox> InputTextBox;
+	TSharedPtr<SEditableTextBox> SkillTaskTextBox;
+	TSharedPtr<SComboBox<TSharedPtr<FUnrealMcpSkillOption>>> SkillComboBox;
+	TSharedPtr<SComboBox<TSharedPtr<FString>>> SkillApplyModeComboBox;
+	TSharedPtr<STextBlock> SkillDescriptionText;
 	TSharedPtr<SScrollBox> TranscriptScrollBox;
 	TSharedPtr<SVerticalBox> TranscriptEntriesBox;
 };
