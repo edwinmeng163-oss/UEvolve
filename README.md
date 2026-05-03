@@ -659,13 +659,13 @@ Do not commit API keys to Git. User-specific editor settings are ignored by `.gi
 
 ## License Notice
 
-No standalone open-source license file has been added yet.
+Original UEvolve source code, scripts, and documentation are licensed under the [MIT License](LICENSE).
 
 Important:
 
-- Unreal Engine, Epic template assets, Starter Content, Mannequin assets, and other Epic-provided content remain governed by the Epic Unreal Engine EULA.
-- Project-specific source code and original plugin code should receive a clear license before others rely on this repository for reuse.
-- If this repository is intended to stay public, a common next step is to add an MIT license for original project/plugin code plus a notice excluding Epic/third-party content from that license.
+- Unreal Engine, Epic template assets, Starter Content, Mannequin assets, and other Epic-provided content are not covered by this MIT License.
+- Epic/Unreal content remains governed by Epic's applicable agreements, including the Unreal Engine EULA and Epic Content License Agreement.
+- See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for scope notes, exclusions, and attribution guidance.
 
 ## Repository
 
