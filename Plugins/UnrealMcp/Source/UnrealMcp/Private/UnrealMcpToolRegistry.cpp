@@ -145,6 +145,14 @@ namespace UnrealMcp
 			return Policy;
 		}
 
+		if (ToolName == TEXT("unreal.clear_level_environment"))
+		{
+			Policy.RiskLevel = EToolRiskLevel::High;
+			Policy.bRequiresWrite = true;
+			Policy.Reason = TEXT("Destructively clears level actors from the current editor world.");
+			return Policy;
+		}
+
 		if (ToolName == TEXT("unreal.mcp_build_editor"))
 		{
 			Policy.RiskLevel = EToolRiskLevel::High;
@@ -186,6 +194,15 @@ namespace UnrealMcp
 			return Policy;
 		}
 
+		if (ToolName == TEXT("unreal.skill_promote_draft"))
+		{
+			Policy.RiskLevel = EToolRiskLevel::High;
+			Policy.bRequiresWrite = true;
+			Policy.bRequiresLock = true;
+			Policy.Reason = TEXT("Promotes reviewed skill drafts into versioned Tools/UnrealMcpSkills and may overwrite team-shared skill files.");
+			return Policy;
+		}
+
 		if (ToolName == TEXT("unreal.mcp_generate_tests")
 			|| ToolName == TEXT("unreal.mcp_run_tool_test")
 			|| ToolName == TEXT("unreal.mcp_run_test_suite")
@@ -197,7 +214,6 @@ namespace UnrealMcp
 			|| ToolName == TEXT("unreal.skill_recording_stop")
 			|| ToolName == TEXT("unreal.skill_distill_from_activity")
 			|| ToolName == TEXT("unreal.skill_save_draft")
-			|| ToolName == TEXT("unreal.skill_promote_draft")
 			|| ToolName == TEXT("unreal.scaffold_mcp_tool"))
 		{
 			Policy.RiskLevel = EToolRiskLevel::Medium;

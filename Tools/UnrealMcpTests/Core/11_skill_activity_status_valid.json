@@ -1,0 +1,20 @@
+{
+  "name": "skill_activity_status_valid",
+  "description": "Reads skill activity state without recording a read-only tool activity event.",
+  "category": "happy_path",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": false,
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 11,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.skill_activity_status",
+      "arguments": {
+        "includeRecentEvents": true,
+        "maxEvents": 10
+      }
+    }
+  }
+}

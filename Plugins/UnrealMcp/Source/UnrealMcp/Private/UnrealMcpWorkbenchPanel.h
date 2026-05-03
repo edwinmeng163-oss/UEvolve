@@ -21,6 +21,9 @@ private:
 	FReply HandleCoreTestsClicked();
 	FReply HandlePipelineStatusClicked();
 	FReply HandleLockStatusClicked();
+	FReply HandleSkillActivityStatusClicked();
+	FReply HandleSkillDistillDraftClicked();
+	FReply HandleSkillPromoteDryRunClicked();
 	FReply HandleCopyResultClicked();
 
 	void RunToolAndDisplay(const FString& ToolName, const TSharedPtr<FJsonObject>& Arguments);
@@ -31,6 +34,7 @@ private:
 
 	FUnrealMcpModule* OwnerModule = nullptr;
 	FString LastResultText;
+	FString LastSkillName;
 
 	TSharedPtr<STextBlock> HealthValueText;
 	TSharedPtr<STextBlock> ToolCountValueText;

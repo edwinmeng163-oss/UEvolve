@@ -172,11 +172,40 @@ void SUnrealMcpWorkbenchPanel::Construct(const FArguments& InArgs, FUnrealMcpMod
 					.Text(LOCTEXT("CopyResult", "Copy Result"))
 					.OnClicked(this, &SUnrealMcpWorkbenchPanel::HandleCopyResultClicked)
 				]
-			]
-			+ SVerticalBox::Slot()
-			.AutoHeight()
-			.Padding(0.0f, 10.0f)
-			[
+				]
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				.Padding(0.0f, 6.0f, 0.0f, 0.0f)
+				[
+					SNew(SHorizontalBox)
+					+ SHorizontalBox::Slot()
+					.AutoWidth()
+					.Padding(0.0f, 0.0f, 6.0f, 0.0f)
+					[
+						SNew(SButton)
+						.Text(LOCTEXT("SkillActivityStatus", "Skill Activity"))
+						.OnClicked(this, &SUnrealMcpWorkbenchPanel::HandleSkillActivityStatusClicked)
+					]
+					+ SHorizontalBox::Slot()
+					.AutoWidth()
+					.Padding(0.0f, 0.0f, 6.0f, 0.0f)
+					[
+						SNew(SButton)
+						.Text(LOCTEXT("DistillSkillDraft", "Distill Draft"))
+						.OnClicked(this, &SUnrealMcpWorkbenchPanel::HandleSkillDistillDraftClicked)
+					]
+					+ SHorizontalBox::Slot()
+					.AutoWidth()
+					[
+						SNew(SButton)
+						.Text(LOCTEXT("PromoteSkillDryRun", "Promote Dry Run"))
+						.OnClicked(this, &SUnrealMcpWorkbenchPanel::HandleSkillPromoteDryRunClicked)
+					]
+				]
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				.Padding(0.0f, 10.0f)
+				[
 				SNew(SSeparator)
 			]
 			+ SVerticalBox::Slot()
@@ -274,6 +303,45 @@ FReply SUnrealMcpWorkbenchPanel::HandleLockStatusClicked()
 	return FReply::Handled();
 }
 
+FReply SUnrealMcpWorkbenchPanel::HandleSkillActivityStatusClicked()
+{
+	TSharedPtr<FJsonObject> Arguments = UnrealMcpWorkbench::MakeEmptyObject();
+	Arguments->SetBoolField(TEXT("includeRecentEvents"), true);
+	Arguments->SetNumberField(TEXT("maxEvents"), 10.0);
+	RunToolAndDisplay(TEXT("unreal.skill_activity_status"), Arguments);
+	return FReply::Handled();
+}
+
+FReply SUnrealMcpWorkbenchPanel::HandleSkillDistillDraftClicked()
+{
+	TSharedPtr<FJsonObject> Arguments = UnrealMcpWorkbench::MakeEmptyObject();
+	Arguments->SetBoolField(TEXT("writeDraft"), true);
+	Arguments->SetBoolField(TEXT("includeEvents"), false);
+	Arguments->SetBoolField(TEXT("overwrite"), true);
+	Arguments->SetNumberField(TEXT("maxEvents"), 200.0);
+	RunToolAndDisplay(TEXT("unreal.skill_distill_from_activity"), Arguments);
+	return FReply::Handled();
+}
+
+FReply SUnrealMcpWorkbenchPanel::HandleSkillPromoteDryRunClicked()
+{
+	if (LastSkillName.TrimStartAndEnd().IsEmpty())
+	{
+		UpdateLastResult(
+			TEXT("unreal.skill_promote_draft"),
+			TEXT("Run Distill Draft first, or call unreal.skill_promote_draft from Chat with an explicit skillName."),
+			nullptr,
+			true);
+		return FReply::Handled();
+	}
+
+	TSharedPtr<FJsonObject> Arguments = UnrealMcpWorkbench::MakeEmptyObject();
+	Arguments->SetStringField(TEXT("skillName"), LastSkillName);
+	Arguments->SetBoolField(TEXT("dryRun"), true);
+	RunToolAndDisplay(TEXT("unreal.skill_promote_draft"), Arguments);
+	return FReply::Handled();
+}
+
 FReply SUnrealMcpWorkbenchPanel::HandleCopyResultClicked()
 {
 	if (!LastResultText.IsEmpty())
@@ -342,6 +410,15 @@ void SUnrealMcpWorkbenchPanel::UpdateWorkbenchSummary(const TSharedPtr<FJsonObje
 
 void SUnrealMcpWorkbenchPanel::UpdateLastResult(const FString& ToolName, const FString& Text, const TSharedPtr<FJsonObject>& StructuredContent, bool bIsError)
 {
+	if (StructuredContent.IsValid())
+	{
+		FString SkillName;
+		if (StructuredContent->TryGetStringField(TEXT("skillName"), SkillName) && !SkillName.TrimStartAndEnd().IsEmpty())
+		{
+			LastSkillName = SkillName.TrimStartAndEnd();
+		}
+	}
+
 	const FString StructuredJson = UnrealMcpWorkbench::JsonObjectToPrettyString(StructuredContent);
 	LastResultText = FString::Printf(
 		TEXT("%s\nStatus: %s\n\n%s\n\nstructuredContent:\n%s"),

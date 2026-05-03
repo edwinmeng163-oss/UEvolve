@@ -82,6 +82,8 @@
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "ScopedTransaction.h"
+#include "SocketSubsystem.h"
+#include "Sockets.h"
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "Subsystems/EditorActorSubsystem.h"
 #include "Subsystems/EditorAssetSubsystem.h"
@@ -132,6 +134,35 @@ namespace UnrealMcp
 		GConfig->SetFloat(TEXT("HTTP"), TEXT("HttpReceiveTimeout"), DesiredConnectionTimeout, GEngineIni);
 		GConfig->SetFloat(TEXT("HTTP"), TEXT("HttpSendTimeout"), DesiredConnectionTimeout, GEngineIni);
 		FHttpModule::Get().UpdateConfigs();
+	}
+
+	bool CanBindLocalTcpPort(int32 Port)
+	{
+		ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
+		if (!SocketSubsystem)
+		{
+			return true;
+		}
+
+		bool bIsValidAddress = false;
+		const TSharedRef<FInternetAddr> LocalhostAddress = SocketSubsystem->CreateInternetAddr();
+		LocalhostAddress->SetIp(TEXT("127.0.0.1"), bIsValidAddress);
+		LocalhostAddress->SetPort(Port);
+		if (!bIsValidAddress)
+		{
+			return true;
+		}
+
+		FSocket* ProbeSocket = SocketSubsystem->CreateSocket(NAME_Stream, TEXT("UnrealMcpPortProbe"), false);
+		if (!ProbeSocket)
+		{
+			return true;
+		}
+
+		ProbeSocket->SetReuseAddr(false);
+		const bool bCanBind = ProbeSocket->Bind(*LocalhostAddress);
+		SocketSubsystem->DestroySocket(ProbeSocket);
+		return bCanBind;
 	}
 
 	FString GetFirstHeaderValue(const FHttpServerRequest& Request, const FString& HeaderName)
@@ -3363,7 +3394,7 @@ namespace UnrealMcp
 			TEXT("Title: `%s`\n\n")
 			TEXT("Description: %s\n\n")
 			TEXT("## Important\n\n")
-			TEXT("This scaffold does not hot-load a C++ MCP tool into the running editor. Review the snippets, integrate them into `Plugins/UnrealMcp/Source/UnrealMcp/Private/UnrealMcpModule.cpp`, rebuild `MyProjectEditor`, and restart Unreal Editor if needed.\n\n")
+			TEXT("This scaffold does not hot-load a C++ MCP tool into the running editor. Review the snippets, integrate them into `Plugins/UnrealMcp/Source/UnrealMcp/Private/UnrealMcpModule.cpp`, rebuild the current `<ProjectName>Editor` target, and restart Unreal Editor if needed.\n\n")
 			TEXT("## Requested Argument Schema\n\n")
 			TEXT("```json\n%s\n```\n\n")
 			TEXT("## Example Arguments\n\n")
@@ -3384,7 +3415,7 @@ namespace UnrealMcp
 			TEXT("- Add `ExecuteToolHandler.cpp.snippet` to `FUnrealMcpModule::ExecuteTool`.\n")
 			TEXT("- Optionally add `ChatCommand.cpp.snippet` to `FUnrealMcpModule::ExecuteChatCommand`.\n")
 			TEXT("- Add a short example to `Plugins/UnrealMcp/README.md`.\n")
-			TEXT("- Rebuild `MyProjectEditor`.\n")
+			TEXT("- Rebuild the current `<ProjectName>Editor` target.\n")
 			TEXT("- Start Unreal Editor and call `/tool %s %s` from Unreal MCP Chat.\n")
 			TEXT("- Verify `tools/list` includes `%s`.\n"),
 			*ToolName,
@@ -3410,7 +3441,7 @@ namespace UnrealMcp
 		TArray<TSharedPtr<FJsonValue>> NextSteps;
 		AddNextStep(NextSteps, TEXT("Review generated snippets before integrating them into the plugin source."));
 		AddNextStep(NextSteps, TEXT("Prefer fixed JSON schemas; avoid additionalProperties=true when the tool should be visible to OpenAI function calling."));
-		AddNextStep(NextSteps, TEXT("Rebuild MyProjectEditor after integrating the C++ snippets."));
+		AddNextStep(NextSteps, TEXT("Rebuild the current <ProjectName>Editor target after integrating the C++ snippets."));
 
 		TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
 		StructuredContent->SetStringField(TEXT("action"), TEXT("scaffold_mcp_tool"));
@@ -9829,11 +9860,11 @@ private:
 		Request->SetContentAsString(PayloadString);
 
 		FHttpRequestStreamDelegateV2 StreamDelegate;
-		TWeakPtr<FUnrealMcpAssistantRun, ESPMode::ThreadSafe> WeakThis = AsShared();
+		TWeakPtr<FUnrealMcpAssistantRun, ESPMode::ThreadSafe> WeakRun = AsShared();
 		StreamDelegate.BindLambda(
-			[WeakThis](void* Ptr, int64& InOutLength)
+			[WeakRun](void* Ptr, int64& InOutLength)
 			{
-				if (const TSharedPtr<FUnrealMcpAssistantRun, ESPMode::ThreadSafe> PinnedThis = WeakThis.Pin())
+				if (const TSharedPtr<FUnrealMcpAssistantRun, ESPMode::ThreadSafe> PinnedThis = WeakRun.Pin())
 				{
 					PinnedThis->ConsumeResponseBytes(Ptr, InOutLength);
 				}
@@ -9841,9 +9872,9 @@ private:
 		Request->SetResponseBodyReceiveStreamDelegateV2(StreamDelegate);
 
 		Request->OnProcessRequestComplete().BindLambda(
-			[WeakThis](FHttpRequestPtr HttpRequest, FHttpResponsePtr HttpResponse, bool bSucceeded)
+			[WeakRun](FHttpRequestPtr HttpRequest, FHttpResponsePtr HttpResponse, bool bSucceeded)
 			{
-				if (const TSharedPtr<FUnrealMcpAssistantRun, ESPMode::ThreadSafe> PinnedThis = WeakThis.Pin())
+				if (const TSharedPtr<FUnrealMcpAssistantRun, ESPMode::ThreadSafe> PinnedThis = WeakRun.Pin())
 				{
 					PinnedThis->HandleModelRequestFinished(HttpRequest, HttpResponse, bSucceeded);
 				}
@@ -10546,6 +10577,16 @@ bool FUnrealMcpModule::StartServer()
 		return false;
 	}
 
+	if (!UnrealMcp::CanBindLocalTcpPort(Settings->Port))
+	{
+		UE_LOG(
+			LogUnrealMcp,
+			Error,
+			TEXT("Unable to start Unreal MCP server because 127.0.0.1:%d is already in use. Close the other Unreal Editor instance or change the MCP port in Project Settings."),
+			Settings->Port);
+		return false;
+	}
+
 	HttpRouter = FHttpServerModule::Get().GetHttpRouter(Settings->Port, true);
 	if (!HttpRouter.IsValid())
 	{
@@ -10937,9 +10978,10 @@ void FUnrealMcpModule::AppendToolDefinitions(TArray<TSharedPtr<FJsonValue>>& Too
 
 		{
 			TSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
-			PropertiesObject->SetObjectField(TEXT("command"), UnrealMcp::MakeStringProperty(TEXT("Literal Python code, an expression, or a .py file path with optional arguments.")));
-			PropertiesObject->SetObjectField(TEXT("mode"), UnrealMcp::MakeStringProperty(TEXT("Python execution mode: ExecuteFile, ExecuteStatement, or EvaluateStatement."), TEXT("ExecuteFile")));
+			PropertiesObject->SetObjectField(TEXT("command"), UnrealMcp::MakeStringProperty(TEXT("Literal Python code, an expression, or a .py file path with optional arguments. Multiline code is automatically run as ExecuteFile unless autoMode=false.")));
+			PropertiesObject->SetObjectField(TEXT("mode"), UnrealMcp::MakeStringProperty(TEXT("Python execution mode: Auto, ExecuteFile, ExecuteStatement, or EvaluateStatement."), TEXT("Auto")));
 			PropertiesObject->SetObjectField(TEXT("scope"), UnrealMcp::MakeStringProperty(TEXT("Python file execution scope: Private or Public."), TEXT("Private")));
+			PropertiesObject->SetObjectField(TEXT("autoMode"), UnrealMcp::MakeBoolProperty(TEXT("Whether to protect explicit ExecuteStatement/EvaluateStatement requests by switching multiline code to ExecuteFile."), true));
 			PropertiesObject->SetObjectField(TEXT("forceEnable"), UnrealMcp::MakeBoolProperty(TEXT("Whether to force Python initialization if the plugin is loaded but not initialized."), true));
 			PropertiesObject->SetObjectField(TEXT("unattended"), UnrealMcp::MakeBoolProperty(TEXT("Whether to run the Python command in unattended mode."), true));
 
@@ -11402,13 +11444,35 @@ void FUnrealMcpModule::AppendToolDefinitions(TArray<TSharedPtr<FJsonValue>>& Too
 
 		{
 			TSharedPtr<FJsonObject> InputSchema = UnrealMcp::MakeObjectSchema();
-		UnrealMcp::AddToolDefinition(
-			ToolsArray,
-			TEXT("unreal.destroy_selected_actors"),
-			TEXT("Destroy Selected Actors"),
-			TEXT("Destroys the currently selected actors."),
-			InputSchema);
-	}
+			UnrealMcp::AddToolDefinition(
+				ToolsArray,
+				TEXT("unreal.destroy_selected_actors"),
+				TEXT("Destroy Selected Actors"),
+				TEXT("Destroys the currently selected actors."),
+				InputSchema);
+		}
+
+		{
+			TSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
+			PropertiesObject->SetObjectField(TEXT("filter"), UnrealMcp::MakeStringProperty(TEXT("Optional substring filter applied to actor labels, names, classes, and paths. If omitted with no classPath or paths, all level actors are targeted.")));
+			PropertiesObject->SetObjectField(TEXT("classPath"), UnrealMcp::MakeStringProperty(TEXT("Optional class path filter, for example RecastNavMesh or /Script/Engine.PlayerStart.")));
+			PropertiesObject->SetObjectField(TEXT("paths"), UnrealMcp::MakeStringArrayProperty(TEXT("Optional exact actor paths to clear.")));
+			PropertiesObject->SetObjectField(TEXT("dryRun"), UnrealMcp::MakeBoolProperty(TEXT("Preview actors that would be destroyed without deleting them."), true));
+			PropertiesObject->SetObjectField(TEXT("confirmClearAll"), UnrealMcp::MakeBoolProperty(TEXT("Required with dryRun=false when no filter, classPath, or paths are provided."), false));
+			PropertiesObject->SetObjectField(TEXT("clearSelection"), UnrealMcp::MakeBoolProperty(TEXT("Whether to clear actor selection before and after the operation."), true));
+			PropertiesObject->SetObjectField(TEXT("maxPasses"), UnrealMcp::MakeNumberProperty(TEXT("Maximum destroy passes. Extra passes catch actors such as navigation data that can be recreated after the first pass."), 3.0));
+			PropertiesObject->SetObjectField(TEXT("limit"), UnrealMcp::MakeNumberProperty(TEXT("Maximum actors to destroy per pass."), 10000.0));
+
+			TSharedPtr<FJsonObject> InputSchema = UnrealMcp::MakeObjectSchema();
+			InputSchema->SetObjectField(TEXT("properties"), PropertiesObject);
+
+			UnrealMcp::AddToolDefinition(
+				ToolsArray,
+				TEXT("unreal.clear_level_environment"),
+				TEXT("Clear Level Environment"),
+				TEXT("Destructively clears actors from the current editor level. With no filters it targets all level actors and repeats a few passes to catch regenerated actors."),
+				InputSchema);
+		}
 
 		{
 			TSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
@@ -12238,9 +12302,11 @@ void FUnrealMcpModule::AppendToolDefinitions(TArray<TSharedPtr<FJsonValue>>& Too
 
 			{
 				TSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
-				PropertiesObject->SetObjectField(TEXT("skillName"), UnrealMcp::MakeStringProperty(TEXT("Skill name to promote under Tools/UnrealMcpSkills.")));
-				PropertiesObject->SetObjectField(TEXT("draftPath"), UnrealMcp::MakeStringProperty(TEXT("Optional project-local draft path. Defaults to Saved/UnrealMcp/SkillDrafts/<skillName>/SKILL.md.")));
-				PropertiesObject->SetObjectField(TEXT("overwrite"), UnrealMcp::MakeBoolProperty(TEXT("Overwrite existing promoted skill."), false));
+					PropertiesObject->SetObjectField(TEXT("skillName"), UnrealMcp::MakeStringProperty(TEXT("Skill name to promote under Tools/UnrealMcpSkills.")));
+					PropertiesObject->SetObjectField(TEXT("draftPath"), UnrealMcp::MakeStringProperty(TEXT("Optional project-local draft path. Defaults to Saved/UnrealMcp/SkillDrafts/<skillName>/SKILL.md.")));
+					PropertiesObject->SetObjectField(TEXT("overwrite"), UnrealMcp::MakeBoolProperty(TEXT("Overwrite existing promoted skill."), false));
+					PropertiesObject->SetObjectField(TEXT("dryRun"), UnrealMcp::MakeBoolProperty(TEXT("Preview promotion without writing Tools/UnrealMcpSkills."), true));
+					PropertiesObject->SetObjectField(TEXT("createBackup"), UnrealMcp::MakeBoolProperty(TEXT("Back up existing promoted SKILL.md and write a manifest before overwriting."), true));
 
 				TSharedPtr<FJsonObject> InputSchema = UnrealMcp::MakeObjectSchema();
 				InputSchema->SetObjectField(TEXT("properties"), PropertiesObject);
@@ -12683,16 +12749,21 @@ FUnrealMcpExecutionResult FUnrealMcpModule::ExecuteTool(const FString& ToolName,
 	}
 
 	{
-		TArray<FString> ArgumentKeys;
-		for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Arguments.Values)
+		const UnrealMcp::FToolPolicy ActivityPolicy = UnrealMcp::GetToolPolicy(ToolName);
+		if (ActivityPolicy.RiskLevel != UnrealMcp::EToolRiskLevel::ReadOnly)
 		{
-			ArgumentKeys.Add(Pair.Key);
+			TArray<FString> ArgumentKeys;
+			for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Arguments.Values)
+			{
+				ArgumentKeys.Add(Pair.Key);
+			}
+			ArgumentKeys.Sort();
+			TSharedPtr<FJsonObject> ActivityDetails = MakeShared<FJsonObject>();
+			ActivityDetails->SetStringField(TEXT("toolName"), ToolName);
+			ActivityDetails->SetStringField(TEXT("riskLevel"), UnrealMcp::LexToString(ActivityPolicy.RiskLevel));
+			ActivityDetails->SetArrayField(TEXT("argumentKeys"), UnrealMcp::MakeJsonStringArray(ArgumentKeys));
+			UnrealMcp::RecordSkillActivityEvent(TEXT("mcp_tool_call"), FString::Printf(TEXT("Called MCP tool %s."), *ToolName), ActivityDetails);
 		}
-		ArgumentKeys.Sort();
-		TSharedPtr<FJsonObject> ActivityDetails = MakeShared<FJsonObject>();
-		ActivityDetails->SetStringField(TEXT("toolName"), ToolName);
-		ActivityDetails->SetArrayField(TEXT("argumentKeys"), UnrealMcp::MakeJsonStringArray(ArgumentKeys));
-		UnrealMcp::RecordSkillActivityEvent(TEXT("mcp_tool_call"), FString::Printf(TEXT("Called MCP tool %s."), *ToolName), ActivityDetails);
 	}
 
 	UEditorAssetSubsystem* EditorAssetSubsystem = GEditor ? GEditor->GetEditorSubsystem<UEditorAssetSubsystem>() : nullptr;
@@ -12916,20 +12987,62 @@ FUnrealMcpExecutionResult FUnrealMcpModule::ExecuteTool(const FString& ToolName,
 				return UnrealMcp::MakeExecutionResult(TEXT("Missing required field 'command'."), nullptr, true);
 			}
 
-			FString ModeString = TEXT("ExecuteFile");
+			FString ModeString = TEXT("Auto");
 			FString ScopeString = TEXT("Private");
+			bool bAutoMode = true;
 			bool bForceEnable = true;
 			bool bUnattended = true;
 			Arguments.TryGetStringField(TEXT("mode"), ModeString);
 			Arguments.TryGetStringField(TEXT("scope"), ScopeString);
+			Arguments.TryGetBoolField(TEXT("autoMode"), bAutoMode);
 			Arguments.TryGetBoolField(TEXT("forceEnable"), bForceEnable);
 			Arguments.TryGetBoolField(TEXT("unattended"), bUnattended);
+
+			const FString RequestedModeString = ModeString.TrimStartAndEnd().IsEmpty() ? TEXT("Auto") : ModeString.TrimStartAndEnd();
+			const FString TrimmedCommand = Command.TrimStartAndEnd();
+			const bool bLooksLikeMultiStatementPython = Command.Contains(TEXT("\n"))
+				|| Command.Contains(TEXT("\r"))
+				|| Command.Contains(TEXT(";"));
+			const bool bContainsAssignmentLike = TrimmedCommand.Contains(TEXT("="))
+				&& !TrimmedCommand.Contains(TEXT("=="))
+				&& !TrimmedCommand.Contains(TEXT("!="))
+				&& !TrimmedCommand.Contains(TEXT("<="))
+				&& !TrimmedCommand.Contains(TEXT(">="));
+			const bool bLooksLikePythonStatement = TrimmedCommand.StartsWith(TEXT("import "), ESearchCase::IgnoreCase)
+				|| TrimmedCommand.StartsWith(TEXT("from "), ESearchCase::IgnoreCase)
+				|| TrimmedCommand.StartsWith(TEXT("for "), ESearchCase::IgnoreCase)
+				|| TrimmedCommand.StartsWith(TEXT("while "), ESearchCase::IgnoreCase)
+				|| TrimmedCommand.StartsWith(TEXT("if "), ESearchCase::IgnoreCase)
+				|| TrimmedCommand.StartsWith(TEXT("with "), ESearchCase::IgnoreCase)
+				|| TrimmedCommand.StartsWith(TEXT("def "), ESearchCase::IgnoreCase)
+				|| TrimmedCommand.StartsWith(TEXT("class "), ESearchCase::IgnoreCase)
+				|| TrimmedCommand.StartsWith(TEXT("try:"), ESearchCase::IgnoreCase)
+				|| TrimmedCommand.StartsWith(TEXT("pass"), ESearchCase::IgnoreCase)
+				|| TrimmedCommand.StartsWith(TEXT("return "), ESearchCase::IgnoreCase)
+				|| bContainsAssignmentLike;
+			bool bAutoModeChanged = false;
+			if (RequestedModeString.Equals(TEXT("Auto"), ESearchCase::IgnoreCase))
+			{
+				ModeString = (bLooksLikeMultiStatementPython || bLooksLikePythonStatement) ? TEXT("ExecuteFile") : TEXT("EvaluateStatement");
+				bAutoModeChanged = true;
+			}
+			else if (bAutoMode
+				&& !RequestedModeString.Equals(TEXT("ExecuteFile"), ESearchCase::IgnoreCase)
+				&& bLooksLikeMultiStatementPython)
+			{
+				ModeString = TEXT("ExecuteFile");
+				bAutoModeChanged = true;
+			}
+			else
+			{
+				ModeString = RequestedModeString;
+			}
 
 			EPythonCommandExecutionMode ExecutionMode = EPythonCommandExecutionMode::ExecuteFile;
 			if (!LexTryParseString(ExecutionMode, *ModeString))
 			{
 				return UnrealMcp::MakeExecutionResult(
-					FString::Printf(TEXT("Unknown Python execution mode '%s'. Use ExecuteFile, ExecuteStatement, or EvaluateStatement."), *ModeString),
+					FString::Printf(TEXT("Unknown Python execution mode '%s'. Use Auto, ExecuteFile, ExecuteStatement, or EvaluateStatement."), *ModeString),
 					nullptr,
 					true);
 			}
@@ -12993,8 +13106,11 @@ FUnrealMcpExecutionResult FUnrealMcpModule::ExecuteTool(const FString& ToolName,
 
 			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
 			StructuredContent->SetStringField(TEXT("command"), Command);
+			StructuredContent->SetStringField(TEXT("requestedMode"), RequestedModeString);
 			StructuredContent->SetStringField(TEXT("mode"), LexToString(ExecutionMode));
 			StructuredContent->SetStringField(TEXT("scope"), FileExecutionScope == EPythonFileExecutionScope::Public ? TEXT("Public") : TEXT("Private"));
+			StructuredContent->SetBoolField(TEXT("autoMode"), bAutoMode);
+			StructuredContent->SetBoolField(TEXT("autoModeChanged"), bAutoModeChanged);
 			StructuredContent->SetBoolField(TEXT("forceEnable"), bForceEnable);
 			StructuredContent->SetBoolField(TEXT("unattended"), bUnattended);
 			StructuredContent->SetBoolField(TEXT("success"), bSucceeded);
@@ -13007,6 +13123,10 @@ FUnrealMcpExecutionResult FUnrealMcpModule::ExecuteTool(const FString& ToolName,
 				bSucceeded ? TEXT("true") : TEXT("false"),
 				LexToString(ExecutionMode),
 				FileExecutionScope == EPythonFileExecutionScope::Public ? TEXT("Public") : TEXT("Private"));
+			if (bAutoModeChanged)
+			{
+				Text += FString::Printf(TEXT(" (requested %s, auto-adjusted)"), *RequestedModeString);
+			}
 
 			if (!PythonCommand.CommandResult.IsEmpty())
 			{
@@ -13028,11 +13148,13 @@ FUnrealMcpExecutionResult FUnrealMcpModule::ExecuteTool(const FString& ToolName,
 			Arguments.TryGetStringField(TEXT("contains"), ContainsFilter);
 			ContainsFilter = ContainsFilter.TrimStartAndEnd();
 
-			const FString EditorLogPath = FGenericPlatformOutputDevices::GetAbsoluteLogFilename();
+			const FString RawEditorLogPath = FGenericPlatformOutputDevices::GetAbsoluteLogFilename();
+			FString EditorLogPath = FPaths::ConvertRelativePathToFull(RawEditorLogPath);
+			FPaths::NormalizeFilename(EditorLogPath);
 			FString FullLogText;
 			if (!FFileHelper::LoadFileToString(FullLogText, *EditorLogPath))
 			{
-				return UnrealMcp::MakeExecutionResult(FString::Printf(TEXT("Failed to read editor log '%s'."), *EditorLogPath), nullptr, true);
+				return UnrealMcp::MakeExecutionResult(FString::Printf(TEXT("Failed to read editor log '%s' (raw path: '%s')."), *EditorLogPath, *RawEditorLogPath), nullptr, true);
 			}
 
 			TArray<FString> AllLines;
@@ -13070,6 +13192,7 @@ FUnrealMcpExecutionResult FUnrealMcpModule::ExecuteTool(const FString& ToolName,
 
 			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
 			StructuredContent->SetStringField(TEXT("logPath"), EditorLogPath);
+			StructuredContent->SetStringField(TEXT("rawLogPath"), RawEditorLogPath);
 			StructuredContent->SetNumberField(TEXT("requestedLines"), RequestedLines);
 			StructuredContent->SetNumberField(TEXT("matchedLineCount"), MatchingLines.Num());
 			StructuredContent->SetNumberField(TEXT("returnedLineCount"), ReturnedLines.Num());
@@ -14949,9 +15072,9 @@ FUnrealMcpExecutionResult FUnrealMcpModule::ExecuteTool(const FString& ToolName,
 		}
 
 		if (ToolName == TEXT("unreal.destroy_selected_actors"))
-	{
-		if (UnrealMcp::IsEditorPlaying())
 		{
+			if (UnrealMcp::IsEditorPlaying())
+			{
 			return UnrealMcp::MakePieBlockedResult(ToolName);
 		}
 
@@ -14975,12 +15098,235 @@ FUnrealMcpExecutionResult FUnrealMcpModule::ExecuteTool(const FString& ToolName,
 
 		return UnrealMcp::MakeExecutionResult(
 			FString::Printf(TEXT("Destroy selected actors result: destroyed=%s count=%d"), bDestroyed ? TEXT("true") : TEXT("false"), ActorCount),
-			StructuredContent,
-			!bDestroyed);
-	}
+				StructuredContent,
+				!bDestroyed);
+		}
 
-	if (ToolName == TEXT("unreal.bp_add_variable"))
-	{
+		if (ToolName == TEXT("unreal.clear_level_environment"))
+		{
+			if (UnrealMcp::IsEditorPlaying())
+			{
+				return UnrealMcp::MakePieBlockedResult(ToolName);
+			}
+
+			if (!EditorActorSubsystem)
+			{
+				return UnrealMcp::MakeExecutionResult(TEXT("EditorActorSubsystem is unavailable."), nullptr, true);
+			}
+
+			FString FilterText;
+			FString ClassPathFilter;
+			TArray<FString> RequestedPaths;
+			bool bDryRun = true;
+			bool bConfirmClearAll = false;
+			bool bClearSelection = true;
+			Arguments.TryGetStringField(TEXT("filter"), FilterText);
+			Arguments.TryGetStringField(TEXT("classPath"), ClassPathFilter);
+			UnrealMcp::TryGetStringArrayField(Arguments, TEXT("paths"), RequestedPaths);
+			Arguments.TryGetBoolField(TEXT("dryRun"), bDryRun);
+			Arguments.TryGetBoolField(TEXT("confirmClearAll"), bConfirmClearAll);
+			Arguments.TryGetBoolField(TEXT("clearSelection"), bClearSelection);
+			const int32 MaxPasses = FMath::Clamp(UnrealMcp::GetPositiveIntArgument(Arguments, TEXT("maxPasses"), 3), 1, 10);
+			const int32 Limit = FMath::Clamp(UnrealMcp::GetPositiveIntArgument(Arguments, TEXT("limit"), 10000), 1, 10000);
+
+			TSet<FString> ExplicitPaths;
+			for (const FString& RequestedPath : RequestedPaths)
+			{
+				const FString TrimmedPath = RequestedPath.TrimStartAndEnd();
+				if (!TrimmedPath.IsEmpty())
+				{
+					ExplicitPaths.Add(TrimmedPath);
+				}
+			}
+
+			const bool bHasSelectors = !FilterText.TrimStartAndEnd().IsEmpty()
+				|| !ClassPathFilter.TrimStartAndEnd().IsEmpty()
+				|| ExplicitPaths.Num() > 0;
+
+			struct FCollectedTargets
+			{
+				TArray<AActor*> Actors;
+				int32 MatchCount = 0;
+				bool bTruncated = false;
+			};
+
+			auto CollectTargetActors = [&]()
+			{
+				TArray<AActor*> Targets;
+				TArray<AActor*> AllActors = EditorActorSubsystem->GetAllLevelActors();
+				AllActors.Sort([](const AActor& A, const AActor& B)
+				{
+					return A.GetActorLabel() < B.GetActorLabel();
+				});
+
+				int32 MatchCount = 0;
+				for (AActor* Actor : AllActors)
+				{
+					if (!Actor)
+					{
+						continue;
+					}
+
+					if (bHasSelectors && !UnrealMcp::MatchesActorFilters(Actor, FilterText, ClassPathFilter, ExplicitPaths))
+					{
+						continue;
+					}
+
+					++MatchCount;
+					if (Targets.Num() < Limit)
+					{
+						Targets.Add(Actor);
+					}
+				}
+
+				FCollectedTargets Result;
+				Result.Actors = MoveTemp(Targets);
+				Result.MatchCount = MatchCount;
+				Result.bTruncated = MatchCount > Result.Actors.Num();
+				return Result;
+			};
+
+			TArray<TSharedPtr<FJsonValue>> CandidateActors;
+			TArray<TSharedPtr<FJsonValue>> Passes;
+			int32 PassCount = 0;
+			int32 RequestedDestroyCount = 0;
+			bool bAnyPassFailed = false;
+			bool bAnyPassTruncated = false;
+
+			auto FirstTargets = CollectTargetActors();
+			for (AActor* Actor : FirstTargets.Actors)
+			{
+				CandidateActors.Add(MakeShared<FJsonValueObject>(UnrealMcp::MakeActorObject(Actor)));
+			}
+
+			if (bDryRun)
+			{
+				TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+				StructuredContent->SetStringField(TEXT("action"), TEXT("clear_level_environment"));
+				StructuredContent->SetBoolField(TEXT("dryRun"), true);
+				StructuredContent->SetBoolField(TEXT("confirmClearAll"), bConfirmClearAll);
+				StructuredContent->SetStringField(TEXT("filter"), FilterText);
+				StructuredContent->SetStringField(TEXT("classPath"), ClassPathFilter);
+				StructuredContent->SetArrayField(TEXT("paths"), UnrealMcp::MakeJsonStringArray(RequestedPaths));
+				StructuredContent->SetBoolField(TEXT("hasSelectors"), bHasSelectors);
+				StructuredContent->SetNumberField(TEXT("candidateCount"), FirstTargets.MatchCount);
+				StructuredContent->SetNumberField(TEXT("returnedCandidateCount"), FirstTargets.Actors.Num());
+				StructuredContent->SetBoolField(TEXT("truncated"), FirstTargets.bTruncated);
+				StructuredContent->SetArrayField(TEXT("candidates"), CandidateActors);
+
+				return UnrealMcp::MakeExecutionResult(
+					FString::Printf(TEXT("Dry run: would clear %d level actors%s."), FirstTargets.MatchCount, FirstTargets.bTruncated ? TEXT(" (candidate list truncated)") : TEXT("")),
+					StructuredContent,
+					false);
+			}
+
+			if (!bHasSelectors && !bConfirmClearAll)
+			{
+				TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+				StructuredContent->SetStringField(TEXT("action"), TEXT("clear_level_environment"));
+				StructuredContent->SetBoolField(TEXT("dryRun"), false);
+				StructuredContent->SetBoolField(TEXT("confirmClearAll"), false);
+				StructuredContent->SetBoolField(TEXT("hasSelectors"), false);
+				StructuredContent->SetNumberField(TEXT("candidateCount"), FirstTargets.MatchCount);
+				StructuredContent->SetArrayField(TEXT("candidates"), CandidateActors);
+				return UnrealMcp::MakeExecutionResult(
+					TEXT("Refusing to clear every level actor without confirmClearAll=true. Run with dryRun=true first, or provide filter/classPath/paths."),
+					StructuredContent,
+					true);
+			}
+
+			if (bClearSelection)
+			{
+				EditorActorSubsystem->SelectNothing();
+			}
+
+			FScopedTransaction Transaction(LOCTEXT("UnrealMcpClearLevelEnvironment", "Unreal MCP Clear Level Environment"));
+			for (int32 PassIndex = 0; PassIndex < MaxPasses; ++PassIndex)
+			{
+				FCollectedTargets Targets = PassIndex == 0 ? FirstTargets : CollectTargetActors();
+				if (Targets.Actors.Num() == 0)
+				{
+					break;
+				}
+
+				++PassCount;
+				RequestedDestroyCount += Targets.Actors.Num();
+				bAnyPassTruncated = bAnyPassTruncated || Targets.bTruncated;
+
+				for (AActor* Actor : Targets.Actors)
+				{
+					if (Actor)
+					{
+						Actor->Modify();
+					}
+				}
+
+				const bool bDestroyed = EditorActorSubsystem->DestroyActors(Targets.Actors);
+				bAnyPassFailed = bAnyPassFailed || !bDestroyed;
+
+				TSharedPtr<FJsonObject> PassObject = MakeShared<FJsonObject>();
+				PassObject->SetNumberField(TEXT("pass"), PassIndex + 1);
+				PassObject->SetNumberField(TEXT("matchCount"), Targets.MatchCount);
+				PassObject->SetNumberField(TEXT("requestedDestroyCount"), Targets.Actors.Num());
+				PassObject->SetBoolField(TEXT("truncated"), Targets.bTruncated);
+				PassObject->SetBoolField(TEXT("destroyed"), bDestroyed);
+				Passes.Add(MakeShared<FJsonValueObject>(PassObject));
+
+				if (Targets.bTruncated)
+				{
+					break;
+				}
+			}
+
+			if (bClearSelection)
+			{
+				EditorActorSubsystem->SelectNothing();
+			}
+
+			auto RemainingTargets = CollectTargetActors();
+			const int32 RemainingLevelActorCount = EditorActorSubsystem->GetAllLevelActors().Num();
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("action"), TEXT("clear_level_environment"));
+			StructuredContent->SetBoolField(TEXT("dryRun"), false);
+			StructuredContent->SetBoolField(TEXT("confirmClearAll"), bConfirmClearAll);
+			StructuredContent->SetStringField(TEXT("filter"), FilterText);
+			StructuredContent->SetStringField(TEXT("classPath"), ClassPathFilter);
+			StructuredContent->SetArrayField(TEXT("paths"), UnrealMcp::MakeJsonStringArray(RequestedPaths));
+			StructuredContent->SetBoolField(TEXT("hasSelectors"), bHasSelectors);
+			StructuredContent->SetNumberField(TEXT("maxPasses"), MaxPasses);
+			StructuredContent->SetNumberField(TEXT("passCount"), PassCount);
+			StructuredContent->SetNumberField(TEXT("requestedDestroyCount"), RequestedDestroyCount);
+			StructuredContent->SetNumberField(TEXT("initialCandidateCount"), FirstTargets.MatchCount);
+			StructuredContent->SetNumberField(TEXT("remainingTargetCount"), RemainingTargets.MatchCount);
+			StructuredContent->SetNumberField(TEXT("remainingLevelActorCount"), RemainingLevelActorCount);
+			StructuredContent->SetBoolField(TEXT("truncated"), bAnyPassTruncated || RemainingTargets.bTruncated);
+			StructuredContent->SetBoolField(TEXT("allPassesDestroyed"), !bAnyPassFailed);
+			StructuredContent->SetArrayField(TEXT("initialCandidates"), CandidateActors);
+			StructuredContent->SetArrayField(TEXT("passes"), Passes);
+
+			const bool bHasRemainingTargets = RemainingTargets.MatchCount > 0;
+			const bool bIsError = bAnyPassFailed || bHasRemainingTargets || bAnyPassTruncated;
+			FString Text = FString::Printf(
+				TEXT("Clear level environment: passes=%d requestedDestroy=%d remainingTargets=%d remainingLevelActors=%d."),
+				PassCount,
+				RequestedDestroyCount,
+				RemainingTargets.MatchCount,
+				RemainingLevelActorCount);
+			if (bAnyPassTruncated)
+			{
+				Text += TEXT(" Operation was truncated by limit; rerun with a higher limit if needed.");
+			}
+			if (bHasRemainingTargets)
+			{
+				Text += TEXT(" Some target actors remain.");
+			}
+
+			return UnrealMcp::MakeExecutionResult(Text, StructuredContent, bIsError);
+		}
+
+		if (ToolName == TEXT("unreal.bp_add_variable"))
+		{
 		if (UnrealMcp::IsEditorPlaying())
 		{
 			return UnrealMcp::MakePieBlockedResult(ToolName);
@@ -16589,6 +16935,11 @@ FUnrealMcpExecutionResult FUnrealMcpModule::ExecuteTool(const FString& ToolName,
 
 			if (ToolName == TEXT("unreal.skill_promote_draft"))
 			{
+				UnrealMcp::FScopedMcpExtensionSessionLock ScopedLock(ToolName, Arguments);
+				if (!ScopedLock.IsAcquired())
+				{
+					return UnrealMcp::MakeExecutionResult(ScopedLock.GetFailureReason(), ScopedLock.MakeStructuredContent(TEXT("mcp_extension_lock_failed")), true);
+				}
 				return UnrealMcp::SkillPromoteDraft(Arguments);
 			}
 
@@ -17703,12 +18054,17 @@ TUniquePtr<FHttpServerResponse> FUnrealMcpModule::HandleToolsCall(const TSharedP
 	const FJsonObject& Arguments = ArgumentsObject ? **ArgumentsObject : *EmptyArguments;
 	const FUnrealMcpExecutionResult Result = ExecuteTool(ToolName, Arguments);
 	{
-		TSharedPtr<FJsonObject> ActivityDetails = MakeShared<FJsonObject>();
-		ActivityDetails->SetStringField(TEXT("toolName"), ToolName);
-		ActivityDetails->SetBoolField(TEXT("isError"), Result.bIsError);
-		ActivityDetails->SetNumberField(TEXT("textLength"), Result.Text.Len());
-		ActivityDetails->SetBoolField(TEXT("hasStructuredContent"), Result.StructuredContent.IsValid());
-		UnrealMcp::RecordSkillActivityEvent(TEXT("mcp_tool_result"), FString::Printf(TEXT("MCP tool %s %s."), *ToolName, Result.bIsError ? TEXT("failed") : TEXT("completed")), ActivityDetails);
+		const UnrealMcp::FToolPolicy ActivityPolicy = UnrealMcp::GetToolPolicy(ToolName);
+		if (ActivityPolicy.RiskLevel != UnrealMcp::EToolRiskLevel::ReadOnly)
+		{
+			TSharedPtr<FJsonObject> ActivityDetails = MakeShared<FJsonObject>();
+			ActivityDetails->SetStringField(TEXT("toolName"), ToolName);
+			ActivityDetails->SetStringField(TEXT("riskLevel"), UnrealMcp::LexToString(ActivityPolicy.RiskLevel));
+			ActivityDetails->SetBoolField(TEXT("isError"), Result.bIsError);
+			ActivityDetails->SetNumberField(TEXT("textLength"), Result.Text.Len());
+			ActivityDetails->SetBoolField(TEXT("hasStructuredContent"), Result.StructuredContent.IsValid());
+			UnrealMcp::RecordSkillActivityEvent(TEXT("mcp_tool_result"), FString::Printf(TEXT("MCP tool %s %s."), *ToolName, Result.bIsError ? TEXT("failed") : TEXT("completed")), ActivityDetails);
+		}
 	}
 
 	return MakeToolResult(Id, Result.Text, Result.StructuredContent, Result.bIsError);

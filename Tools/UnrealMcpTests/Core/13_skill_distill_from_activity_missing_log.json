@@ -1,0 +1,21 @@
+{
+  "name": "skill_distill_from_activity_missing_log",
+  "description": "Distilling a nonexistent activity session should return a controlled error.",
+  "category": "error_path",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": true,
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 13,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.skill_distill_from_activity",
+      "arguments": {
+        "sessionId": "core-skill-test-session-does-not-exist",
+        "skillName": "missing-session-skill",
+        "writeDraft": false
+      }
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "skill_recording_start_valid",
+  "description": "Starts an explicit skill activity recording session for core skill tests.",
+  "category": "happy_path",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": false,
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 10,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.skill_recording_start",
+      "arguments": {
+        "sessionId": "core-skill-test-session",
+        "goal": "Core skill activity test workflow.",
+        "recordIntervalSeconds": 60,
+        "reset": true
+      }
+    }
+  }
+}

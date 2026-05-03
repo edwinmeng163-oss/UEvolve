@@ -11,3 +11,8 @@ Run the core suite from Editor Chat:
 ```
 
 The suite includes happy path, missing required argument, and wrong type validation cases.
+
+Skill Activity fixtures use numeric prefixes because a few cases intentionally build on
+earlier setup steps. Keep lexical ordering when running the suite so recording starts
+before distillation, draft save runs before promote dry-run validation, and the final
+teardown case stops recording again.

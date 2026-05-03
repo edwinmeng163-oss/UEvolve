@@ -25,6 +25,7 @@ namespace UnrealMcp
 	namespace
 	{
 		FCriticalSection GSkillActivityMutex;
+		FCriticalSection GSkillActivityFileMutex;
 		bool GSkillActivityRecording = false;
 		FString GSkillActivitySessionId;
 		FString GSkillActivityGoal = TEXT("Activity recording is off until unreal.skill_recording_start is called.");
@@ -48,6 +49,11 @@ namespace UnrealMcp
 		FString GetProjectSkillRoot()
 		{
 			return FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectDir(), TEXT("Tools/UnrealMcpSkills")));
+		}
+
+		FString GetSkillPromotionBackupRoot()
+		{
+			return FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UnrealMcp/SkillPromotionBackups")));
 		}
 
 		FString MakeSkillActivitySessionId()
@@ -113,9 +119,10 @@ namespace UnrealMcp
 			}
 		}
 
-		bool AppendActivityJsonLine(const FString& LogPath, const TSharedPtr<FJsonObject>& EventObject, FString& OutFailureReason)
+		bool AppendActivityJsonLine(const FString& ActivityLogPath, const TSharedPtr<FJsonObject>& EventObject, FString& OutFailureReason)
 		{
-			IFileManager::Get().MakeDirectory(*FPaths::GetPath(LogPath), true);
+			FScopeLock FileLock(&GSkillActivityFileMutex);
+			IFileManager::Get().MakeDirectory(*FPaths::GetPath(ActivityLogPath), true);
 			FString CompactJson;
 			const TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer = TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&CompactJson);
 			if (!FJsonSerializer::Serialize(EventObject.ToSharedRef(), Writer))
@@ -124,9 +131,31 @@ namespace UnrealMcp
 				return false;
 			}
 			const FString Line = CompactJson + LINE_TERMINATOR;
-			if (!FFileHelper::SaveStringToFile(Line, *LogPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM, &IFileManager::Get(), FILEWRITE_Append))
+			if (!FFileHelper::SaveStringToFile(Line, *ActivityLogPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM, &IFileManager::Get(), FILEWRITE_Append))
 			{
-				OutFailureReason = FString::Printf(TEXT("Failed to append activity event to %s."), *LogPath);
+				OutFailureReason = FString::Printf(TEXT("Failed to append activity event to %s."), *ActivityLogPath);
+				return false;
+			}
+			return true;
+		}
+
+		bool ResetActivityLogFile(const FString& ActivityLogPath, FString& OutFailureReason)
+		{
+			if (ActivityLogPath.TrimStartAndEnd().IsEmpty())
+			{
+				return true;
+			}
+
+			FScopeLock FileLock(&GSkillActivityFileMutex);
+			IFileManager::Get().MakeDirectory(*FPaths::GetPath(ActivityLogPath), true);
+			if (!FPaths::FileExists(ActivityLogPath))
+			{
+				return true;
+			}
+
+			if (!IFileManager::Get().Delete(*ActivityLogPath, false, true, true))
+			{
+				OutFailureReason = FString::Printf(TEXT("Failed to reset activity log %s."), *ActivityLogPath);
 				return false;
 			}
 			return true;
@@ -156,6 +185,7 @@ namespace UnrealMcp
 			StateObject->SetStringField(TEXT("lastHeartbeatAtUtc"), GSkillActivityLastHeartbeatAtUtc.ToIso8601());
 			StateObject->SetNumberField(TEXT("recordIntervalSeconds"), GSkillActivityRecordIntervalSeconds);
 			StateObject->SetNumberField(TEXT("eventCount"), GSkillActivityEventCount);
+			StateObject->SetBoolField(TEXT("readOnlyToolCallsRecorded"), false);
 			StateObject->SetStringField(TEXT("activityLogPath"), GSkillActivityLastLogPath);
 			StateObject->SetStringField(TEXT("activityLogRoot"), GetActivityLogRoot());
 			StateObject->SetStringField(TEXT("skillDraftRoot"), GetSkillDraftRoot());
@@ -178,10 +208,13 @@ namespace UnrealMcp
 
 			OutLogPath = GetActivityLogPathForSession(EffectiveSessionId);
 			TArray<FString> Lines;
-			if (!FFileHelper::LoadFileToStringArray(Lines, *OutLogPath))
 			{
-				OutFailureReason = FString::Printf(TEXT("No activity log found at %s."), *OutLogPath);
-				return false;
+				FScopeLock FileLock(&GSkillActivityFileMutex);
+				if (!FFileHelper::LoadFileToStringArray(Lines, *OutLogPath))
+				{
+					OutFailureReason = FString::Printf(TEXT("No activity log found at %s."), *OutLogPath);
+					return false;
+				}
 			}
 
 			const int32 SafeMaxEvents = FMath::Clamp(MaxEvents, 1, 5000);
@@ -363,12 +396,57 @@ namespace UnrealMcp
 			}
 			return true;
 		}
+
+		FString MakeSkillPromotionBackupDir(const FString& SkillName)
+		{
+			return FPaths::Combine(
+				GetSkillPromotionBackupRoot(),
+				FString::Printf(
+					TEXT("%s_%s_%s"),
+					*FDateTime::UtcNow().ToString(TEXT("%Y%m%d-%H%M%S")),
+					*FGuid::NewGuid().ToString(EGuidFormats::Digits).Left(8),
+					*SanitizeSkillSlug(SkillName)));
+		}
+
+		bool WriteSkillPromotionManifest(
+			const FString& ManifestPath,
+			const FString& SkillName,
+			const FString& DraftPath,
+			const FString& PromotedPath,
+			const FString& BackupPath,
+			bool bDryRun,
+			bool bExistedBefore,
+			bool bChanged,
+			bool bOverwrite,
+			FString& OutFailureReason)
+		{
+			TSharedPtr<FJsonObject> ManifestObject = MakeShared<FJsonObject>();
+			ManifestObject->SetStringField(TEXT("action"), TEXT("skill_promote_draft"));
+			ManifestObject->SetStringField(TEXT("timestampUtc"), FDateTime::UtcNow().ToIso8601());
+			ManifestObject->SetStringField(TEXT("skillName"), SkillName);
+			ManifestObject->SetStringField(TEXT("draftPath"), DraftPath);
+			ManifestObject->SetStringField(TEXT("promotedPath"), PromotedPath);
+			ManifestObject->SetStringField(TEXT("backupPath"), BackupPath);
+			ManifestObject->SetBoolField(TEXT("dryRun"), bDryRun);
+			ManifestObject->SetBoolField(TEXT("existedBefore"), bExistedBefore);
+			ManifestObject->SetBoolField(TEXT("changed"), bChanged);
+			ManifestObject->SetBoolField(TEXT("overwrite"), bOverwrite);
+
+			const FString ManifestJson = JsonObjectToString(ManifestObject);
+			IFileManager::Get().MakeDirectory(*FPaths::GetPath(ManifestPath), true);
+			if (!FFileHelper::SaveStringToFile(ManifestJson, *ManifestPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+			{
+				OutFailureReason = FString::Printf(TEXT("Failed to write skill promotion manifest %s."), *ManifestPath);
+				return false;
+			}
+			return true;
+		}
 	}
 
 	void RecordSkillActivityEvent(const FString& EventType, const FString& Summary, const TSharedPtr<FJsonObject>& Details)
 	{
 		TSharedPtr<FJsonObject> EventObject = MakeShared<FJsonObject>();
-		FString LogPath;
+		FString ActivityLogPath;
 		{
 			FScopeLock Lock(&GSkillActivityMutex);
 			if (!GSkillActivityRecording)
@@ -376,7 +454,7 @@ namespace UnrealMcp
 				return;
 			}
 			EnsureActivitySessionLocked();
-			LogPath = GSkillActivityLastLogPath;
+			ActivityLogPath = GSkillActivityLastLogPath;
 			EventObject->SetStringField(TEXT("sessionId"), GSkillActivitySessionId);
 			EventObject->SetStringField(TEXT("goal"), GSkillActivityGoal);
 		}
@@ -390,7 +468,7 @@ namespace UnrealMcp
 		}
 
 		FString FailureReason;
-		const bool bWrote = AppendActivityJsonLine(LogPath, EventObject, FailureReason);
+		const bool bWrote = AppendActivityJsonLine(ActivityLogPath, EventObject, FailureReason);
 		FScopeLock Lock(&GSkillActivityMutex);
 		if (bWrote)
 		{
@@ -736,6 +814,7 @@ namespace UnrealMcp
 			{
 				FString Goal;
 				FString SessionId;
+				FString ActivityLogPathToReset;
 				bool bReset = true;
 				double IntervalSeconds = 60.0;
 				Arguments.TryGetStringField(TEXT("goal"), Goal);
@@ -762,10 +841,23 @@ namespace UnrealMcp
 					{
 						GSkillActivityGoal = Goal.TrimStartAndEnd();
 					}
-					GSkillActivityRecordIntervalSeconds = FMath::Clamp(IntervalSeconds, 10.0, 3600.0);
-					GSkillActivityRecording = true;
-					GSkillActivityLastError.Empty();
-				}
+						GSkillActivityRecordIntervalSeconds = FMath::Clamp(IntervalSeconds, 10.0, 3600.0);
+						GSkillActivityRecording = true;
+						GSkillActivityLastError.Empty();
+						if (bReset)
+						{
+							ActivityLogPathToReset = GSkillActivityLastLogPath;
+						}
+					}
+
+					if (!ActivityLogPathToReset.IsEmpty())
+					{
+						FString FailureReason;
+						if (!ResetActivityLogFile(ActivityLogPathToReset, FailureReason))
+						{
+							return MakeExecutionResult(FailureReason, nullptr, true);
+						}
+					}
 
 				TSharedPtr<FJsonObject> Details = MakeShared<FJsonObject>();
 				Details->SetBoolField(TEXT("reset"), bReset);
@@ -809,10 +901,10 @@ namespace UnrealMcp
 				if (bIncludeRecentEvents)
 				{
 					TArray<TSharedPtr<FJsonObject>> Events;
-					FString LogPath;
+					FString ActivityLogPath;
 					FString FailureReason;
 					const FString SessionId = StructuredContent->GetStringField(TEXT("sessionId"));
-					if (LoadActivityEvents(SessionId, static_cast<int32>(MaxEventsDouble), Events, LogPath, FailureReason))
+					if (LoadActivityEvents(SessionId, static_cast<int32>(MaxEventsDouble), Events, ActivityLogPath, FailureReason))
 					{
 						StructuredContent->SetArrayField(TEXT("recentEvents"), MakeActivityEventJsonArray(Events));
 						StructuredContent->SetNumberField(TEXT("recentEventCount"), Events.Num());
@@ -849,7 +941,7 @@ namespace UnrealMcp
 				Arguments.TryGetNumberField(TEXT("maxEvents"), MaxEventsDouble);
 
 				TArray<TSharedPtr<FJsonObject>> Events;
-				FString LogPath;
+				FString ActivityLogPath;
 				FString FailureReason;
 				{
 					FScopeLock Lock(&GSkillActivityMutex);
@@ -863,7 +955,7 @@ namespace UnrealMcp
 					}
 				}
 
-				if (!LoadActivityEvents(SessionId, static_cast<int32>(MaxEventsDouble), Events, LogPath, FailureReason))
+				if (!LoadActivityEvents(SessionId, static_cast<int32>(MaxEventsDouble), Events, ActivityLogPath, FailureReason))
 				{
 					return MakeExecutionResult(FailureReason, nullptr, true);
 				}
@@ -906,7 +998,7 @@ namespace UnrealMcp
 				TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
 				StructuredContent->SetStringField(TEXT("action"), TEXT("skill_distill_from_activity"));
 				StructuredContent->SetStringField(TEXT("sessionId"), SessionId);
-				StructuredContent->SetStringField(TEXT("activityLogPath"), LogPath);
+				StructuredContent->SetStringField(TEXT("activityLogPath"), ActivityLogPath);
 				StructuredContent->SetNumberField(TEXT("eventCount"), Events.Num());
 				StructuredContent->SetStringField(TEXT("skillName"), SkillName);
 				StructuredContent->SetStringField(TEXT("title"), Title);
@@ -979,9 +1071,13 @@ namespace UnrealMcp
 				FString SkillName;
 				FString DraftPath;
 				bool bOverwrite = false;
+				bool bDryRun = true;
+				bool bCreateBackup = true;
 				Arguments.TryGetStringField(TEXT("skillName"), SkillName);
 				Arguments.TryGetStringField(TEXT("draftPath"), DraftPath);
 				Arguments.TryGetBoolField(TEXT("overwrite"), bOverwrite);
+				Arguments.TryGetBoolField(TEXT("dryRun"), bDryRun);
+				Arguments.TryGetBoolField(TEXT("createBackup"), bCreateBackup);
 
 				if (SkillName.TrimStartAndEnd().IsEmpty())
 				{
@@ -1007,7 +1103,76 @@ namespace UnrealMcp
 				}
 
 				const FString PromotedPath = GetPromotedSkillPath(SkillName);
-				if (!WriteSkillFile(PromotedPath, DraftText, bOverwrite, FailureReason))
+				const bool bPromotedExists = FPaths::FileExists(PromotedPath);
+				FString ExistingPromotedText;
+				const bool bReadExisting = bPromotedExists && FFileHelper::LoadFileToString(ExistingPromotedText, *PromotedPath);
+				const bool bSameContent = bReadExisting && ExistingPromotedText.Equals(DraftText, ESearchCase::CaseSensitive);
+				const bool bWouldOverwrite = bPromotedExists && !bSameContent;
+				const bool bChanged = !bSameContent;
+				FString BackupPath;
+				FString ManifestPath;
+
+				TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+				StructuredContent->SetStringField(TEXT("action"), TEXT("skill_promote_draft"));
+				StructuredContent->SetStringField(TEXT("skillName"), SkillName);
+				StructuredContent->SetStringField(TEXT("draftPath"), ResolvedDraftPath);
+				StructuredContent->SetStringField(TEXT("promotedPath"), PromotedPath);
+				StructuredContent->SetBoolField(TEXT("dryRun"), bDryRun);
+				StructuredContent->SetBoolField(TEXT("createBackup"), bCreateBackup);
+				StructuredContent->SetBoolField(TEXT("overwrite"), bOverwrite);
+				StructuredContent->SetBoolField(TEXT("promotedExists"), bPromotedExists);
+				StructuredContent->SetBoolField(TEXT("sameContent"), bSameContent);
+				StructuredContent->SetBoolField(TEXT("wouldOverwrite"), bWouldOverwrite);
+				StructuredContent->SetBoolField(TEXT("changed"), bChanged);
+				StructuredContent->SetObjectField(TEXT("draftFile"), MakeFileInfoObject(ResolvedDraftPath));
+
+				if (bPromotedExists && !bSameContent && !bOverwrite)
+				{
+					StructuredContent->SetObjectField(TEXT("existingFile"), MakeFileInfoObject(PromotedPath));
+					return MakeExecutionResult(
+						FString::Printf(TEXT("Refusing to overwrite existing promoted skill %s. Re-run with overwrite=true after review."), *PromotedPath),
+						StructuredContent,
+						true);
+				}
+
+				if (bDryRun)
+				{
+					return MakeExecutionResult(
+						FString::Printf(TEXT("Dry run: would promote skill draft '%s'%s."), *SkillName, bWouldOverwrite ? TEXT(" and overwrite existing promoted skill") : TEXT("")),
+						StructuredContent,
+						false);
+				}
+
+				if (bPromotedExists && bChanged && bCreateBackup)
+				{
+					const FString BackupDir = MakeSkillPromotionBackupDir(SkillName);
+					BackupPath = FPaths::Combine(BackupDir, TEXT("SKILL.md"));
+					ManifestPath = FPaths::Combine(BackupDir, TEXT("Manifest.json"));
+					IFileManager::Get().MakeDirectory(*BackupDir, true);
+					if (IFileManager::Get().Copy(*BackupPath, *PromotedPath, true, true) != COPY_OK)
+					{
+						return MakeExecutionResult(FString::Printf(TEXT("Failed to back up existing promoted skill to %s."), *BackupPath), StructuredContent, true);
+					}
+					if (!WriteSkillPromotionManifest(ManifestPath, SkillName, ResolvedDraftPath, PromotedPath, BackupPath, false, bPromotedExists, bChanged, bOverwrite, FailureReason))
+					{
+						return MakeExecutionResult(FailureReason, StructuredContent, true);
+					}
+					StructuredContent->SetStringField(TEXT("backupPath"), BackupPath);
+					StructuredContent->SetStringField(TEXT("manifestPath"), ManifestPath);
+					StructuredContent->SetObjectField(TEXT("backupFile"), MakeFileInfoObject(BackupPath));
+				}
+				else if (bChanged)
+				{
+					const FString BackupDir = MakeSkillPromotionBackupDir(SkillName);
+					ManifestPath = FPaths::Combine(BackupDir, TEXT("Manifest.json"));
+					if (!WriteSkillPromotionManifest(ManifestPath, SkillName, ResolvedDraftPath, PromotedPath, BackupPath, false, bPromotedExists, bChanged, bOverwrite, FailureReason))
+					{
+						return MakeExecutionResult(FailureReason, StructuredContent, true);
+					}
+					StructuredContent->SetStringField(TEXT("manifestPath"), ManifestPath);
+				}
+
+				if (bChanged && !WriteSkillFile(PromotedPath, DraftText, true, FailureReason))
 				{
 					return MakeExecutionResult(FailureReason, nullptr, true);
 				}
@@ -1016,14 +1181,16 @@ namespace UnrealMcp
 				Details->SetStringField(TEXT("skillName"), SkillName);
 				Details->SetStringField(TEXT("draftPath"), ResolvedDraftPath);
 				Details->SetStringField(TEXT("promotedPath"), PromotedPath);
+				Details->SetBoolField(TEXT("changed"), bChanged);
+				Details->SetStringField(TEXT("manifestPath"), ManifestPath);
 				RecordSkillActivityEvent(TEXT("skill_draft_promoted"), FString::Printf(TEXT("Promoted skill draft '%s' into Tools/UnrealMcpSkills."), *SkillName), Details);
 
-				TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
-				StructuredContent->SetStringField(TEXT("action"), TEXT("skill_promote_draft"));
-				StructuredContent->SetStringField(TEXT("skillName"), SkillName);
-				StructuredContent->SetStringField(TEXT("draftPath"), ResolvedDraftPath);
-				StructuredContent->SetStringField(TEXT("promotedPath"), PromotedPath);
 				StructuredContent->SetObjectField(TEXT("file"), MakeFileInfoObject(PromotedPath));
-				return MakeExecutionResult(FString::Printf(TEXT("Promoted skill draft '%s'."), *SkillName), StructuredContent, false);
+				return MakeExecutionResult(
+					bChanged
+						? FString::Printf(TEXT("Promoted skill draft '%s'."), *SkillName)
+						: FString::Printf(TEXT("Promoted skill draft '%s' is already up to date."), *SkillName),
+					StructuredContent,
+					false);
 			}
 	}

@@ -1,0 +1,22 @@
+{
+  "name": "skill_promote_draft_dry_run_valid",
+  "description": "Promote a saved draft in dry-run mode so the versioned skills directory is not modified.",
+  "category": "happy_path",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": false,
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 22,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.skill_promote_draft",
+      "arguments": {
+        "skillName": "core-skill-test-workflow",
+        "dryRun": true,
+        "overwrite": false,
+        "skipLock": true
+      }
+    }
+  }
+}

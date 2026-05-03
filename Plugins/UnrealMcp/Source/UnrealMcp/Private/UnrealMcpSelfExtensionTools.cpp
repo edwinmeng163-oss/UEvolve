@@ -477,9 +477,23 @@ FUnrealMcpExecutionResult FUnrealMcpModule::RunMcpToolTest(const FJsonObject& Ar
 
 	bool bToolExecuted = false;
 	FUnrealMcpExecutionResult ToolResult;
+	bool bInjectedSkipLock = false;
 	if (bExecuteTool && bToolListed)
 	{
-		ToolResult = ExecuteTool(RequestToolName, RequestArguments);
+		TSharedPtr<FJsonObject> EffectiveRequestArguments = MakeShared<FJsonObject>();
+		for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : RequestArguments.Values)
+		{
+			EffectiveRequestArguments->SetField(Pair.Key, Pair.Value);
+		}
+
+		const UnrealMcp::FToolPolicy RequestToolPolicy = UnrealMcp::GetToolPolicy(RequestToolName);
+		if (RequestToolPolicy.bRequiresLock && !EffectiveRequestArguments->HasField(TEXT("skipLock")))
+		{
+			EffectiveRequestArguments->SetBoolField(TEXT("skipLock"), true);
+			bInjectedSkipLock = true;
+		}
+
+		ToolResult = ExecuteTool(RequestToolName, *EffectiveRequestArguments);
 		bToolExecuted = true;
 	}
 
@@ -493,6 +507,7 @@ FUnrealMcpExecutionResult FUnrealMcpModule::RunMcpToolTest(const FJsonObject& Ar
 	StructuredContent->SetNumberField(TEXT("toolCount"), ToolsArray.Num());
 	StructuredContent->SetBoolField(TEXT("toolListed"), bToolListed);
 	StructuredContent->SetBoolField(TEXT("toolExecuted"), bToolExecuted);
+	StructuredContent->SetBoolField(TEXT("injectedSkipLockForInProcessTest"), bInjectedSkipLock);
 	StructuredContent->SetBoolField(TEXT("expectToolListed"), bExpectToolListed);
 	if (ListedToolObject.IsValid())
 	{

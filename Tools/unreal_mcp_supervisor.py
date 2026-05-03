@@ -17,11 +17,13 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_UPROJECT = PROJECT_ROOT / "MyProject.uproject"
+DEFAULT_UPROJECT = PROJECT_ROOT / "Examples" / "UEvolveExample" / "UEvolveExample.uproject"
+DEFAULT_LAUNCH_AGENT_LABEL = "com.uevolve.supervisor"
 DEFAULT_URL = os.environ.get("UNREAL_MCP_URL", "http://127.0.0.1:8765/mcp")
 DEFAULT_PROTOCOL = os.environ.get("UNREAL_MCP_PROTOCOL_VERSION", "2025-06-18")
 AUTH_TOKEN = os.environ.get("UNREAL_MCP_AUTH_TOKEN", "")
@@ -101,19 +103,128 @@ def call_tool(url: str, name: str, arguments: dict, timeout: float = 120.0) -> d
 
 def wait_endpoint(url: str, timeout: float) -> bool:
     deadline = time.time() + timeout
+    last_error = ""
     while time.time() < deadline:
         try:
             response = rpc(url, "tools/list", {}, timeout=2.0)
             if "result" in response:
                 return True
-        except Exception:
+        except Exception as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
             time.sleep(1.0)
+    if last_error:
+        log(f"Last endpoint probe error: {last_error}")
     return False
+
+
+def endpoint_probe(url: str, timeout: float = 2.0) -> dict:
+    try:
+        response = rpc(url, "tools/list", {}, timeout=timeout)
+        tools = response.get("result", {}).get("tools", [])
+        return {
+            "ready": "result" in response,
+            "toolCount": len(tools) if isinstance(tools, list) else 0,
+            "error": "",
+        }
+    except Exception as exc:
+        return {
+            "ready": False,
+            "toolCount": 0,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+
+def endpoint_port(url: str) -> int | None:
+    parsed = urllib.parse.urlparse(url)
+    try:
+        return parsed.port
+    except ValueError:
+        return None
+
+
+def find_port_listeners(port: int | None) -> list[dict]:
+    if port is None:
+        return []
+
+    listeners: list[dict] = []
+    if sys.platform == "win32":
+        try:
+            completed = subprocess.run(
+                ["netstat", "-ano"],
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            )
+        except FileNotFoundError:
+            return listeners
+
+        marker = f":{port}"
+        for line in completed.stdout.splitlines():
+            if marker not in line or "LISTENING" not in line.upper():
+                continue
+            parts = line.split()
+            listeners.append(
+                {
+                    "line": line.strip(),
+                    "pid": parts[-1] if parts else "",
+                    "command": "",
+                }
+            )
+        return listeners
+
+    try:
+        completed = subprocess.run(
+            ["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN"],
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+    except FileNotFoundError:
+        return listeners
+
+    for line in completed.stdout.splitlines()[1:]:
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        listeners.append(
+            {
+                "line": line.strip(),
+                "pid": parts[1],
+                "command": parts[0],
+            }
+        )
+    return listeners
 
 
 def find_editor_pids(uproject: Path) -> list[int]:
     if sys.platform == "win32":
-        return []
+        script = (
+            "$Target = "
+            + powershell_single_quote(str(uproject))
+            + "; Get-CimInstance Win32_Process | "
+            + "Where-Object { $_.Name -like 'UnrealEditor*' -and $_.CommandLine -like ('*' + $Target + '*') } | "
+            + "ForEach-Object { $_.ProcessId }"
+        )
+        try:
+            completed = subprocess.run(
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            )
+        except FileNotFoundError:
+            return []
+
+        pids: list[int] = []
+        for line in completed.stdout.splitlines():
+            try:
+                pids.append(int(line.strip()))
+            except ValueError:
+                pass
+        return pids
 
     pattern = f"UnrealEditor.*{uproject}"
     try:
@@ -136,6 +247,31 @@ def find_editor_pids(uproject: Path) -> list[int]:
     return pids
 
 
+def collect_status(url: str, uproject: Path) -> dict:
+    port = endpoint_port(url)
+    return {
+        "url": url,
+        "uproject": str(uproject),
+        "endpoint": endpoint_probe(url),
+        "port": port,
+        "portListeners": find_port_listeners(port),
+        "editorPids": find_editor_pids(uproject),
+    }
+
+
+def log_status_diagnostics(url: str, uproject: Path) -> None:
+    status = collect_status(url, uproject)
+    log_json("status_diagnostics", status)
+    endpoint = status.get("endpoint", {})
+    log(f"Endpoint ready={endpoint.get('ready')} toolCount={endpoint.get('toolCount')} error={endpoint.get('error')}")
+    listeners = status.get("portListeners", [])
+    if listeners:
+        log(f"Port listeners for {status.get('port')}: {listeners}")
+    editor_pids = status.get("editorPids", [])
+    if editor_pids:
+        log(f"UnrealEditor PIDs for project: {editor_pids}")
+
+
 def start_editor(uproject: Path, editor_cmd: str | None) -> None:
     if editor_cmd:
         subprocess.Popen([editor_cmd, str(uproject)])
@@ -149,7 +285,30 @@ def start_editor(uproject: Path, editor_cmd: str | None) -> None:
         subprocess.Popen(["UnrealEditor", str(uproject)])
 
 
-def stop_editor(uproject: Path, timeout: float) -> None:
+def terminate_pid(pid: int, *, force: bool = False) -> None:
+    if sys.platform == "win32":
+        command = ["taskkill", "/PID", str(pid)]
+        if force:
+            command.append("/F")
+        subprocess.run(command, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return
+
+    try:
+        os.kill(pid, signal.SIGKILL if force else signal.SIGTERM)
+    except OSError:
+        pass
+
+
+def wait_until_editor_stopped(uproject: Path, timeout: float) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not find_editor_pids(uproject):
+            return True
+        time.sleep(1.0)
+    return not find_editor_pids(uproject)
+
+
+def stop_editor(uproject: Path, timeout: float, *, force_kill: bool = False) -> bool:
     if sys.platform == "darwin":
         subprocess.run(
             ["osascript", "-e", 'tell application "UnrealEditor" to quit'],
@@ -158,18 +317,25 @@ def stop_editor(uproject: Path, timeout: float) -> None:
             stderr=subprocess.DEVNULL,
         )
 
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        pids = find_editor_pids(uproject)
-        if not pids:
-            return
-        time.sleep(1.0)
+    if wait_until_editor_stopped(uproject, timeout):
+        return True
 
     for pid in find_editor_pids(uproject):
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except OSError:
-            pass
+        terminate_pid(pid)
+
+    if wait_until_editor_stopped(uproject, min(timeout, 10.0)):
+        return True
+
+    remaining = find_editor_pids(uproject)
+    if remaining and force_kill:
+        log(f"Force killing stubborn UnrealEditor PIDs: {remaining}")
+        for pid in remaining:
+            terminate_pid(pid, force=True)
+        return wait_until_editor_stopped(uproject, min(timeout, 10.0))
+
+    if remaining:
+        log(f"Unreal Editor did not stop cleanly; remaining PIDs: {remaining}")
+    return not remaining
 
 
 def print_json(data: dict) -> None:
@@ -356,6 +522,16 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 - `argsJson`: `{args_json}`
 
 The supervisor can close/reopen Unreal Editor and resume tests after compiled MCP tools are loaded.
+
+If the endpoint times out, run:
+
+```bash
+python3 Tools/unreal_mcp_supervisor.py status
+```
+
+This reports MCP readiness, port listeners, and matching UnrealEditor PIDs.
+
+`restart` aborts if the previous editor process remains alive. Add `--force-kill` only after saving or intentionally discarding editor state.
 """
 
 
@@ -364,13 +540,22 @@ def command_wait(args: argparse.Namespace) -> int:
         log("Unreal MCP endpoint is ready.")
         return 0
     log("Timed out waiting for Unreal MCP endpoint.")
+    log_status_diagnostics(args.url, Path(args.uproject).expanduser().resolve())
     return 1
+
+
+def command_status(args: argparse.Namespace) -> int:
+    print_json(collect_status(args.url, Path(args.uproject).expanduser().resolve()))
+    return 0
 
 
 def command_restart(args: argparse.Namespace) -> int:
     uproject = Path(args.uproject).expanduser().resolve()
     log(f"Stopping Unreal Editor for {uproject}")
-    stop_editor(uproject, args.stop_timeout)
+    if not stop_editor(uproject, args.stop_timeout, force_kill=args.force_kill):
+        log_status_diagnostics(args.url, uproject)
+        log("Restart aborted because the previous Unreal Editor instance is still running. Re-run with --force-kill only if unsaved editor state can be discarded.")
+        return 1
     log(f"Starting Unreal Editor for {uproject}")
     start_editor(uproject, args.editor_cmd)
     return command_wait(args)
@@ -439,7 +624,7 @@ def command_install(args: argparse.Namespace) -> int:
         log_dir = (PROJECT_ROOT / log_dir).resolve()
 
     args_json = args.args_json or make_default_args_json(args.memory_key)
-    label = args.label or f"com.unrealmcp.{PROJECT_ROOT.name.lower().replace(' ', '-')}"
+    label = args.label or DEFAULT_LAUNCH_AGENT_LABEL
     platform = args.platform.lower()
     generate_macos = platform in {"all", "macos", "darwin"}
     generate_windows = platform in {"all", "windows", "win32"}
@@ -528,6 +713,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--timeout", type=float, default=120.0, help="Endpoint wait timeout in seconds.")
     parser.add_argument("--call-timeout", type=float, default=180.0, help="MCP tool call timeout in seconds.")
     parser.add_argument("--stop-timeout", type=float, default=30.0, help="Graceful editor stop timeout in seconds.")
+    parser.add_argument("--force-kill", action="store_true", help="Force-kill stubborn UnrealEditor processes during restart. Use only when unsaved editor state can be discarded.")
     parser.add_argument("--log-file", default="", help="Optional supervisor log file.")
     parser.add_argument("--log-dir", default="", help="Optional directory for timestamped supervisor logs.")
 
@@ -535,6 +721,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     wait_parser = subparsers.add_parser("wait", help="Wait until the MCP endpoint is ready.")
     wait_parser.set_defaults(func=command_wait)
+
+    status_parser = subparsers.add_parser("status", help="Diagnose MCP endpoint readiness, port listeners, and matching UnrealEditor processes.")
+    status_parser.set_defaults(func=command_status)
 
     restart_parser = subparsers.add_parser("restart", help="Restart Unreal Editor and wait for MCP.")
     restart_parser.set_defaults(func=command_restart)

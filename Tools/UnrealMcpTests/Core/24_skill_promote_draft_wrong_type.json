@@ -1,0 +1,21 @@
+{
+  "name": "skill_promote_draft_wrong_type",
+  "description": "Wrong skillName type should be handled as a controlled error.",
+  "category": "wrong_type",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": true,
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 24,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.skill_promote_draft",
+      "arguments": {
+        "skillName": 123,
+        "dryRun": true,
+        "skipLock": true
+      }
+    }
+  }
+}

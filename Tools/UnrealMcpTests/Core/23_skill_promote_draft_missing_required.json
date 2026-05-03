@@ -1,0 +1,20 @@
+{
+  "name": "skill_promote_draft_missing_required",
+  "description": "Missing skillName should return a controlled promote error.",
+  "category": "missing_required",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": true,
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 23,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.skill_promote_draft",
+      "arguments": {
+        "dryRun": true,
+        "skipLock": true
+      }
+    }
+  }
+}

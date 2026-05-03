@@ -32,6 +32,7 @@ public class UnrealMcp : ModuleRules
 			"Settings",
 			"Slate",
 			"SlateCore",
+			"Sockets",
 			"ToolMenus",
 			"UMG",
 			"UMGEditor",

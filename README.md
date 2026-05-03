@@ -2,9 +2,9 @@
 
 **Unreal Editor MCP Self-Extension Workbench**
 
-This repository is an Unreal Engine 5.7 project focused on editor automation, AI-assisted project inspection, Blueprint scaffolding, UMG setup, and local Model Context Protocol workflows.
+This repository is an Unreal Engine 5.7 editor-tooling workbench focused on editor automation, AI-assisted project inspection, Blueprint scaffolding, UMG setup, and local Model Context Protocol workflows.
 
-It includes an in-project editor plugin, **Unreal MCP**, which exposes Unreal Editor operations through a localhost MCP endpoint and an in-editor chat panel. The current product direction is an **Unreal Editor MCP self-extension workbench**: AI can call tools, then safely scaffold, validate, dry-run, apply, build, test, roll back, and remember MCP tool extensions.
+Its main deliverable is the **Unreal MCP** editor plugin under `Plugins/UnrealMcp`. The plugin exposes Unreal Editor operations through a localhost MCP endpoint and an in-editor chat panel. The bundled `Examples/UEvolveExample` project is only a local validation/demo host; the plugin can be copied or linked into other Unreal projects.
 
 ## 中文概览
 
@@ -21,15 +21,14 @@ It includes an in-project editor plugin, **Unreal MCP**, which exposes Unreal Ed
 - 自扩展链路包含 schema 校验、snippet 校验、dry-run diff、备份 manifest、UBT 编译、测试套件、rollback、project memory 和 supervisor 重启恢复。
 - Skill 蒸馏链路会记录高层 Editor/Chat/MCP 活动到本地 JSONL，并把一次任务/session 总结成可审查的 `SKILL.md` 草稿，确认后再 promote 到项目技能库。
 - 引入多人协作保护：CODEOWNERS、工具命名规范、Manifest schema、extension session lock、ToolRegistry 风险元数据和冲突检测规则。
-- 保留 UE 模板内容作为本地测试与原型资源，并使用 Git LFS 管理 Unreal 二进制资产，方便上传和协作。
+- UE 模板内容已移动到 `Examples/UEvolveExample`，只作为可选示例工程和本地测试资源；仓库根目录保持为工具、插件、文档和测试夹具。
 
 ## Current Status
 
-The project currently contains:
+The repository currently contains:
 
-- Unreal Engine 5.7 C++ project foundation.
-- TopDown, Strategy, and TwinStick template content for local testing.
 - `Plugins/UnrealMcp`, an editor plugin for local MCP and in-editor AI/chat workflows.
+- `Examples/UEvolveExample`, an optional Unreal Engine 5.7 C++ example project used to validate the plugin.
 - Git LFS setup for Unreal binary assets.
 - Project-level README and ignore rules suitable for public GitHub hosting.
 - Self-extension safety rails: schema validation, snippet validation, dry-run diffs, backups, build/test handoff, rollback manifests, project memory, and project-local skills.
@@ -279,34 +278,35 @@ Build/test handoff note:
 - `unreal.mcp_compile_error_fix_plan` reads the newest build log or a passed `buildLogPath`, extracts compiler errors with file/line/source context, guesses likely causes, and returns suggested fixes before another build.
 - `unreal.mcp_supervisor_install` generates local macOS LaunchAgent/shortcut and Windows PowerShell launcher files for the external supervisor. Generated launchers live under `Tools/UnrealMcpSupervisor/` by default and are intentionally ignored because they contain machine-specific paths; versioned path-neutral templates live under `Tools/UnrealMcpSupervisorTemplates/`.
 - `unreal.mcp_generate_tests` creates `Tests/valid_basic.json`, `Tests/missing_required.json`, `Tests/boundary_values.json`, and `Tests/wrong_type.json` from a loaded tool schema, scaffold README schema, or `TestRequest.json`.
-- `unreal.mcp_build_editor` runs Unreal Build Tool for `MyProjectEditor`, captures a build log under `Saved/UnrealMcp/BuildLogs`, parses key error lines, and writes restart handoff state into project memory.
+- `unreal.mcp_build_editor` runs Unreal Build Tool for the current `<ProjectName>Editor` target, captures a build log under `Saved/UnrealMcp/BuildLogs`, parses key error lines, and writes restart handoff state into project memory.
 - Because the tool is invoked from a running editor, newly compiled plugin code is not loaded until Unreal Editor is restarted.
 - After restart, `unreal.mcp_run_tool_test` can read the memory entry, locate the generated `TestRequest.json`, confirm the tool appears in `tools/list`, and execute the recorded `tools/call` request through the in-editor MCP handlers.
 - `unreal.mcp_run_test_suite` runs all `Tests/*.json` cases and reports pass rate, failed cases, failure text, and failed structured content.
 - `unreal.mcp_extension_pipeline` orchestrates validate, test generation, apply dry run, apply, memory write, build, restart handoff, and post-restart test suite resume.
 - `unreal.mcp_pipeline_status` summarizes the current extension memory entry, last apply manifest, latest build log, saved test scaffolds, extension backups, and recommended next step.
 - `unreal.mcp_workbench_status` aggregates tool audit health, ToolRegistry legacy-hidden tools, pipeline state, latest build/supervisor artifacts, test scaffold counts, and project memory into one self-extension dashboard response.
-- `Window > Unreal MCP Workbench` provides a thin Slate control panel over existing MCP tools. It can refresh workbench status, run audit, run the versioned core tests, inspect pipeline status, inspect the extension lock, and copy the last structured result without duplicating backend logic.
+- `Window > Unreal MCP Workbench` provides a thin Slate control panel over existing MCP tools. It can refresh workbench status, run audit, run the versioned core tests, inspect pipeline/lock state, inspect Skill Activity, distill a draft, run promote dry-runs, and copy the last structured result without duplicating backend logic.
 - `tools/list`, `unreal.mcp_tool_audit`, and `unreal.mcp_workbench_status` include per-tool policy metadata such as `riskLevel`, `requiresWrite`, `requiresBuild`, `requiresExternalProcess`, `requiresRestart`, `requiresProjectMemory`, and `requiresLock`.
 - Stable core MCP test fixtures live in `Tools/UnrealMcpTests/Core`; runtime-generated test scaffolds stay under ignored `Saved/UnrealMcp`.
 - `unreal.mcp_diff_last_apply` reads `Saved/UnrealMcp/LastExtensionApply.json` and returns a before/after source diff preview from the backup snapshots created by `mcp_apply_scaffold`.
 - `unreal.mcp_clean_test_artifacts` defaults to `dryRun:true` and only previews generated `Saved/UnrealMcp/TestScaffolds`; destructive cleanup must explicitly set `dryRun:false`, and optional filters such as `nameContains` should be used for targeted cleanup.
 - `unreal.project_memory_view`, `unreal.project_memory_edit`, and `unreal.project_memory_delete` turn `Saved/UnrealMcp/ProjectMemory.json` into a manageable long-term project memory store with filters, field-level edits, content merge/replace, tag modes, dry-run edits, and safe dry-run deletion.
 - `unreal.skill_list`, `unreal.skill_read`, and `unreal.skill_apply` scan project-local `SKILL.md` or `*.skill` files under `Tools/UnrealMcpSkills` by default. Applying a skill returns its instructions to Chat and can write a memory record of the applied skill/task.
-- `unreal.skill_recording_start`, `unreal.skill_recording_stop`, and `unreal.skill_activity_status` manage opt-in local activity recording. Recording is off by default; after explicit start, MCP tool calls/results are logged as high-level metadata, and the editor writes a heartbeat roughly once per minute while recording is active.
+- `unreal.skill_recording_start`, `unreal.skill_recording_stop`, and `unreal.skill_activity_status` manage opt-in local activity recording. Recording is off by default; after explicit start, mutating MCP tool calls/results are logged as high-level metadata, read-only/status tools are skipped, and the editor writes a heartbeat roughly once per minute while recording is active.
 - Activity logs are local-only JSONL files under `Saved/UnrealMcp/ActivityLog/*.jsonl`; generated drafts go to `Saved/UnrealMcp/SkillDrafts/<skill-name>/SKILL.md`.
-- `unreal.skill_distill_from_activity` summarizes a session into a reusable skill draft; `unreal.skill_save_draft` can write a manual draft; `unreal.skill_promote_draft` copies a reviewed draft into `Tools/UnrealMcpSkills/<skill-name>/SKILL.md`.
+- `unreal.skill_distill_from_activity` summarizes a session into a reusable skill draft; `unreal.skill_save_draft` can write a manual draft; `unreal.skill_promote_draft` defaults to dry-run, uses the extension lock, detects conflicts, and can back up/manifest existing promoted skills before writing `Tools/UnrealMcpSkills/<skill-name>/SKILL.md`.
 
 External supervisor:
 
 ```bash
 python3 Tools/unreal_mcp_supervisor.py --log-dir Saved/UnrealMcp/SupervisorLogs wait
+python3 Tools/unreal_mcp_supervisor.py --log-dir Saved/UnrealMcp/SupervisorLogs status
 python3 Tools/unreal_mcp_supervisor.py --log-dir Saved/UnrealMcp/SupervisorLogs restart
 python3 Tools/unreal_mcp_supervisor.py --log-dir Saved/UnrealMcp/SupervisorLogs resume-test --memory-key mcp.extension.pipeline --pipeline
 python3 Tools/unreal_mcp_supervisor.py --log-dir Saved/UnrealMcp/SupervisorLogs pipeline --auto-restart --args-json '{"toolName":"unreal.my_custom_tool","memoryKey":"mcp.extension.pipeline"}'
 ```
 
-The supervisor runs outside Unreal Editor, so it can close/reopen the editor and resume MCP tests after plugin code reloads.
+The supervisor runs outside Unreal Editor, so it can close/reopen the editor and resume MCP tests after plugin code reloads. Use `status` when the endpoint times out; it reports whether `tools/list` responds, which process owns the MCP port, and which UnrealEditor PIDs match the project. `restart` now aborts if the old editor does not stop cleanly; pass `--force-kill` only after saving or intentionally discarding editor state.
 
 Full supervisor documentation:
 
@@ -333,16 +333,16 @@ python3 Tools/unreal_mcp_supervisor.py install \
 macOS generates:
 
 - `Tools/UnrealMcpSupervisor/run_unreal_mcp_pipeline.command`
-- `Tools/UnrealMcpSupervisor/com.unrealmcp.<project>.plist`
+- `Tools/UnrealMcpSupervisor/com.uevolve.supervisor.plist`
 
 To install the LaunchAgent manually:
 
 ```bash
 mkdir -p "$HOME/Library/LaunchAgents"
-cp Tools/UnrealMcpSupervisor/com.unrealmcp.myproject.plist "$HOME/Library/LaunchAgents/"
-launchctl unload "$HOME/Library/LaunchAgents/com.unrealmcp.myproject.plist" 2>/dev/null || true
-launchctl load "$HOME/Library/LaunchAgents/com.unrealmcp.myproject.plist"
-launchctl start "com.unrealmcp.myproject"
+cp Tools/UnrealMcpSupervisor/com.uevolve.supervisor.plist "$HOME/Library/LaunchAgents/"
+launchctl unload "$HOME/Library/LaunchAgents/com.uevolve.supervisor.plist" 2>/dev/null || true
+launchctl load "$HOME/Library/LaunchAgents/com.uevolve.supervisor.plist"
+launchctl start "com.uevolve.supervisor"
 ```
 
 Windows generates:
@@ -356,7 +356,7 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .\Tools\UnrealMcpSupervisor\run_unreal_mcp_pipeline.ps1
 ```
 
-## Opening The Project
+## Using The Plugin
 
 Requirements:
 
@@ -373,15 +373,31 @@ git lfs install
 git lfs pull
 ```
 
-Open:
+To use UEvolve in an existing Unreal project, copy or link the plugin:
+
+```bash
+mkdir -p "/path/to/YourProject/Plugins"
+cp -R Plugins/UnrealMcp "/path/to/YourProject/Plugins/UnrealMcp"
+```
+
+Then open your own `.uproject`, enable `UnrealMcp` if prompted, and rebuild the editor target for your project.
+
+For the full self-extension workbench experience, also copy the repository `Tools/` and `Schemas/` folders into your project root. The plugin can run without them for basic MCP/chat usage, but versioned tests, skill templates, supervisor launchers, and generated scaffolds use those project-root folders.
+
+The repository also includes an optional example host project:
 
 ```text
-MyProject.uproject
+Examples/UEvolveExample/UEvolveExample.uproject
 ```
 
 ## Deployment Guide / 部署指南
 
-This project is an Unreal Editor plugin workflow rather than a packaged game/server deployment. A normal deployment means cloning the repository, pulling LFS assets, opening the project in Unreal Engine, compiling the editor modules, and verifying that the local MCP endpoint is available.
+UEvolve is an Unreal Editor plugin workflow rather than a packaged game/server deployment. The repository root is intentionally a tool/workbench checkout: `Plugins/UnrealMcp` is the reusable plugin, while `Examples/UEvolveExample` is only a sample project for validation.
+
+There are two supported deployment paths:
+
+- Existing project install: copy or symlink `Plugins/UnrealMcp` into `<YourProject>/Plugins/UnrealMcp`, optionally copy `Tools/` and `Schemas/` for self-extension workflows, then compile that project.
+- Example project install: open `Examples/UEvolveExample/UEvolveExample.uproject` to test the plugin in the bundled UE 5.7 sample host.
 
 ### 1. Prepare The Machine
 
@@ -411,24 +427,57 @@ git lfs pull
 
 If binary assets look very small or fail to load in Unreal, run `git lfs pull` again.
 
-### 3. Open Or Build The Project
+### 3. Install Into An Existing Project
 
-Open `MyProject.uproject` directly in Unreal Engine 5.7.
+Copy the plugin:
+
+```bash
+mkdir -p "/path/to/YourProject/Plugins"
+cp -R Plugins/UnrealMcp "/path/to/YourProject/Plugins/UnrealMcp"
+```
+
+Or create a local symlink during development:
+
+```bash
+mkdir -p "/path/to/YourProject/Plugins"
+ln -s "$(pwd)/Plugins/UnrealMcp" "/path/to/YourProject/Plugins/UnrealMcp"
+```
+
+Open your own `.uproject` in Unreal Engine 5.7, allow the rebuild prompt, and confirm the plugin is enabled under:
+
+```text
+Edit > Plugins > Unreal MCP
+```
+
+For the complete self-extension toolchain, copy these repository folders into the target project root as well:
+
+```bash
+cp -R Tools "/path/to/YourProject/Tools"
+cp -R Schemas "/path/to/YourProject/Schemas"
+```
+
+These folders provide versioned MCP test fixtures, project-local skills, supervisor templates, and manifest schemas. Runtime output still goes under the target project's ignored `Saved/UnrealMcp`.
+
+### 4. Open Or Build The Example Project
+
+Open `Examples/UEvolveExample/UEvolveExample.uproject` directly in Unreal Engine 5.7 if you want the bundled validation project.
+
+Before command-line builds, close all running Unreal Editor instances for this project and disable Live Coding. Unreal Build Tool can fail with `Unable to build while Live Coding is active` if the editor still has Live Coding enabled or loaded.
 
 For a command-line editor build on macOS:
 
 ```bash
 "/Users/Shared/Epic Games/UE_5.7/Engine/Build/BatchFiles/Mac/Build.sh" \
   MyProjectEditor Mac Development \
-  -Project="$(pwd)/MyProject.uproject" \
+  -Project="$(pwd)/Examples/UEvolveExample/UEvolveExample.uproject" \
   -WaitMutex
 ```
 
 If the editor asks to rebuild modules on first open, allow it to rebuild.
 
-### 4. Windows Deployment Notes
+### 5. Windows Deployment Notes
 
-Windows is supported as a source-build target, but it has a few extra setup requirements because Unreal C++ plugins must be compiled locally for Win64.
+Windows is supported as a source-build target, but it has a few extra setup requirements because Unreal C++ plugins must be compiled locally for Win64. The commands below build the bundled example project; for an existing project, change the `-Project=` argument to your own `.uproject`.
 
 Recommended Windows environment:
 
@@ -469,7 +518,7 @@ Build from PowerShell:
 ```powershell
 & "C:\Program Files\Epic Games\UE_5.7\Engine\Build\BatchFiles\Build.bat" `
   MyProjectEditor Win64 Development `
-  "-Project=$((Get-Location).Path)\MyProject.uproject" `
+  "-Project=$((Get-Location).Path)\Examples\UEvolveExample\UEvolveExample.uproject" `
   -WaitMutex
 ```
 
@@ -478,7 +527,7 @@ Build from Command Prompt:
 ```bat
 "C:\Program Files\Epic Games\UE_5.7\Engine\Build\BatchFiles\Build.bat" ^
   MyProjectEditor Win64 Development ^
-  -Project="%CD%\MyProject.uproject" ^
+  -Project="%CD%\Examples\UEvolveExample\UEvolveExample.uproject" ^
   -WaitMutex
 ```
 
@@ -487,9 +536,11 @@ If your engine is installed somewhere else, change the `UE_5.7` path accordingly
 Windows-specific issues to expect:
 
 - Engine version mismatch: install Unreal Engine 5.7 or update `EngineAssociation` intentionally.
+- Live Coding lock: close Unreal Editor and disable Live Coding before command-line builds.
 - Missing C++ compiler: install Visual Studio 2022 and the C++ desktop workload.
 - Missing Windows SDK: add it through Visual Studio Installer.
 - Plugin binary mismatch: macOS binaries do not run on Windows; rebuild to generate `Binaries/Win64`.
+- Source warning treated as error: if you are on an older checkout and see identifier shadowing errors such as `WeakThis` or `LogPath`, pull the latest `main`; these UE 5.7 / VS 2022 compatibility fixes are included after `v0.10.4`.
 - Git LFS pointer files: if assets fail to load or are tiny text files, run `git lfs pull`.
 - Path length errors: move the project closer to a drive root or enable long paths in Windows.
 - OneDrive file locks: move the checkout out of OneDrive/Documents/Desktop if Unreal reports save/load issues.
@@ -497,24 +548,41 @@ Windows-specific issues to expect:
 - Controlled Folder Access: disable it for the project folder or allow Unreal tools.
 - Firewall prompt: allow local/private network access if Windows asks when the MCP server starts.
 - Port conflict: if `8765` is already in use, change the port in Project Settings or stop the other process.
-- PowerShell `curl` behavior: use `curl.exe` explicitly if `curl` behaves like an alias.
-- Generated project files: if Visual Studio cannot find targets, right-click `MyProject.uproject` and choose `Generate Visual Studio project files`.
+- PowerShell JSON quoting: prefer `Invoke-WebRequest` with `ConvertTo-Json` instead of hand-escaped JSON strings.
+- Generated project files: if Visual Studio cannot find targets for the example host, right-click `Examples\UEvolveExample\UEvolveExample.uproject` and choose `Generate Visual Studio project files`.
 - Case sensitivity: avoid manually renaming Unreal assets only by letter case on Windows.
 - Line endings: keep Git-managed text files normalized; avoid mass CRLF rewrites.
-- Editor rebuild prompt loop: close Unreal, delete local `Binaries/` and `Intermediate/`, then rebuild.
+- Editor rebuild prompt loop: close Unreal, delete local `Examples/UEvolveExample/Binaries/` and `Examples/UEvolveExample/Intermediate/`, then rebuild.
 - Plugin not visible: confirm `Plugins/UnrealMcp/UnrealMcp.uplugin` exists and the plugin is enabled in the project.
 - Python tools unavailable: confirm Unreal's Python Script Plugin is enabled.
 - AI requests fail but direct commands work: verify API key, model name, rate limits, and request timeout settings.
+- `unreal.tail_log` fails on older checkouts: pull latest `main`; the tool now normalizes Unreal's returned log path before reading it on Windows.
 
-Verify MCP from Windows PowerShell with `curl.exe`:
+Verify MCP from Windows PowerShell after the target project has compiled successfully and Unreal Editor is open with the `UnrealMcp` plugin loaded:
 
 ```powershell
-curl.exe -s `
-  -H "Content-Type: application/json" `
-  -H "Accept: application/json, text/event-stream" `
-  -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"unreal.editor_status\",\"arguments\":{}}}" `
-  http://127.0.0.1:8765/mcp
+$Body = @{
+  jsonrpc = "2.0"
+  id = 1
+  method = "tools/call"
+  params = @{
+    name = "unreal.editor_status"
+    arguments = @{}
+  }
+} | ConvertTo-Json -Depth 8
+
+Invoke-WebRequest `
+  -Uri "http://127.0.0.1:8765/mcp" `
+  -Method POST `
+  -Headers @{
+    "Content-Type" = "application/json"
+    "Accept" = "application/json, text/event-stream"
+    "MCP-Protocol-Version" = "2025-06-18"
+  } `
+  -Body $Body
 ```
+
+The MCP port is not a standalone background service. `http://127.0.0.1:8765/mcp` only responds after Unreal Editor is running, the target project has loaded, and the `UnrealMcp` editor plugin has started.
 
 Check whether port `8765` is already in use:
 
@@ -528,7 +596,7 @@ If another process owns the port, either stop that process or change the Unreal 
 Edit > Project Settings > Plugins > Unreal MCP
 ```
 
-### 5. Confirm Plugin Settings
+### 6. Confirm Plugin Settings
 
 In Unreal Editor, open:
 
@@ -546,7 +614,7 @@ Recommended defaults:
 
 The plugin is editor-focused. Keep the endpoint bound to localhost unless you intentionally know how you want to secure remote access.
 
-### 6. Verify The MCP Endpoint
+### 7. Verify The MCP Endpoint
 
 With the Unreal Editor running, test from a terminal:
 
@@ -578,7 +646,7 @@ curl -s \
   http://127.0.0.1:8765/mcp
 ```
 
-### 7. Use The In-Editor Chat
+### 8. Use The In-Editor Chat
 
 Open:
 
@@ -601,7 +669,7 @@ Try a direct tool call:
 /tool unreal.editor_status {}
 ```
 
-### 8. Optional AI Assistant Setup
+### 9. Optional AI Assistant Setup
 
 To use natural-language AI requests from the chat panel, configure:
 
@@ -620,13 +688,13 @@ Set:
 
 Keep API keys local. Do not commit editor user settings or key files.
 
-### 9. Troubleshooting
+### 10. Troubleshooting
 
 - If `/status` works but AI requests fail, check the AI settings and API key.
 - If `curl` cannot connect, confirm the Unreal Editor is open and the plugin is enabled.
 - If tools time out during heavy editor work, increase the AI request/activity timeout settings.
 - If assets are missing, run `git lfs pull`.
-- If the plugin does not compile, rebuild `MyProjectEditor` from the command line and inspect the UnrealBuildTool log.
+- If the plugin does not compile in your own project, rebuild that project's `Editor` target from the command line and inspect the UnrealBuildTool log.
 
 ## Git / Repository Notes
 
@@ -643,6 +711,10 @@ Generated Unreal folders are intentionally ignored:
 - `Intermediate/`
 - `Saved/`
 - `DerivedDataCache/`
+- `Examples/*/Binaries/`
+- `Examples/*/Intermediate/`
+- `Examples/*/Saved/`
+- `Examples/*/DerivedDataCache/`
 - plugin build caches
 
 Do not commit local API keys, editor user settings, logs, or generated local test assets.

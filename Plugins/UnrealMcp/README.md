@@ -37,6 +37,7 @@ Editor action tools:
 - `unreal.spawn_actor_batch_basic`
 - `unreal.spawn_static_mesh_actor`
 - `unreal.destroy_selected_actors`
+- `unreal.clear_level_environment`
 - `unreal.compile_blueprint`
 - `unreal.compile_blueprints_in_path`
 - `unreal.create_blueprint_class`
@@ -156,7 +157,7 @@ Behavior notes:
 - Unreal MCP also synchronizes Unreal's global HTTP connection/activity timeouts for AI turns so macOS does not fall back to the engine's default 30-second connection timeout.
 - The default AI tool-round budget is 16 so scaffold-style requests have more room to inspect, create assets, and then summarize.
 - The conversation history is persisted at `Saved/UnrealMcp/ChatHistory.json`.
-- High-level activity recording is opt-in and starts only after `unreal.skill_recording_start`; while active, it writes local JSONL events under `Saved/UnrealMcp/ActivityLog/*.jsonl`. It records MCP tool call/result metadata and a periodic editor heartbeat roughly once per minute, but it does not store tool result text previews.
+- High-level activity recording is opt-in and starts only after `unreal.skill_recording_start`; while active, it writes local JSONL events under `Saved/UnrealMcp/ActivityLog/*.jsonl`. It records mutating MCP tool call/result metadata and a periodic editor heartbeat roughly once per minute, skips read-only/status tools, and does not store tool result text previews.
 - On the first AI turn after the panel reloads, Unreal MCP now also replays a small, compact slice of the persisted local transcript back to the model for continuity, so saved history is not just UI-only.
 - `Copy Chat` copies the full visible transcript, and `Copy Log` copies the most recent `/log` or `unreal.tail_log` output.
 - For AI-driven editing, prefer the fixed-schema wrapper tools such as `unreal.spawn_actor_basic`, `unreal.spawn_static_mesh_actor`, `unreal.batch_set_actor_scale`, `unreal.batch_set_actor_tags`, `unreal.batch_set_point_light_properties`, `unreal.batch_configure_static_mesh_actors`, the `unreal.bp_*` Blueprint graph editing tools, the `unreal.widget_*` UMG editing tools, and the `unreal.scaffold_*` gameplay scaffold tools.
@@ -237,6 +238,8 @@ For direct tool calls from inside the chat window:
 /tool unreal.execute_python {"command":"import unreal\nprint(unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_world().get_name())"}
 ```
 
+`unreal.execute_python` defaults to `mode:"Auto"`: multiline scripts and obvious statements run as `ExecuteFile`, while simple single-line expressions run as `EvaluateStatement`.
+
 ```text
 /tool unreal.execute_python_file {"scriptPath":"Tools/mcp_test_script.py","args":["--mode","quick"]}
 ```
@@ -305,7 +308,7 @@ MCP tool extension scaffold example:
 /tool unreal.scaffold_mcp_tool {"toolName":"unreal.my_custom_tool","title":"My Custom Tool","description":"Creates scaffold files for a custom MCP tool.","argumentSchemaJson":"{\"type\":\"object\",\"properties\":{\"message\":{\"type\":\"string\"}}}","exampleArgumentsJson":"{\"message\":\"hello\"}","overwrite":false}
 ```
 
-This generates reviewable C++ snippets, a test request, and an integration checklist under `Tools/UnrealMcpToolScaffolds`. It does not hot-load C++ into the running editor; integrate the snippets, rebuild `MyProjectEditor`, and reopen the editor if needed.
+This generates reviewable C++ snippets, a test request, and an integration checklist under `Tools/UnrealMcpToolScaffolds`. It does not hot-load C++ into the running editor; integrate the snippets, rebuild the current `<ProjectName>Editor` target, and reopen the editor if needed.
 
 MCP extension safety checks:
 
@@ -429,7 +432,7 @@ Inspect pipeline state and last source apply:
 
 `unreal.mcp_pipeline_status` collects project memory, the latest apply manifest, the newest build log tail, test scaffolds, test requests, and extension backups into one status report. `unreal.mcp_workbench_status` adds tool audit health, ToolRegistry legacy-hidden tools, handler aliases, supervisor logs, and aggregate test counts for a higher-level self-extension dashboard. `unreal.mcp_diff_last_apply` reads the backup snapshots written by `mcp_apply_scaffold`, so it can explain exactly what the last automatic source integration changed.
 
-The Workbench UI is intentionally thin: it calls the same MCP tools used by Chat and displays the latest structured result. It currently exposes safe operational buttons for status refresh, audit, core test suite, pipeline status, lock status, and copying the latest result. High-risk actions such as apply, build, restart, and rollback should stay behind the existing dry-run, lock, supervisor, and manifest workflow until the UI adds explicit confirmation surfaces.
+The Workbench UI is intentionally thin: it calls the same MCP tools used by Chat and displays the latest structured result. It currently exposes safe operational buttons for status refresh, audit, core test suite, pipeline status, lock status, Skill Activity status, draft distillation, promote dry-run, and copying the latest result. High-risk actions such as apply, build, restart, real promote, and rollback should stay behind the existing dry-run, lock, supervisor, and manifest workflow until the UI adds explicit confirmation surfaces.
 
 `tools/list`, audit output, and workbench status include ToolRegistry policy metadata for every visible tool:
 
@@ -447,12 +450,13 @@ External restart supervisor:
 
 ```bash
 python3 Tools/unreal_mcp_supervisor.py --log-dir Saved/UnrealMcp/SupervisorLogs wait
+python3 Tools/unreal_mcp_supervisor.py --log-dir Saved/UnrealMcp/SupervisorLogs status
 python3 Tools/unreal_mcp_supervisor.py --log-dir Saved/UnrealMcp/SupervisorLogs restart
 python3 Tools/unreal_mcp_supervisor.py --log-dir Saved/UnrealMcp/SupervisorLogs resume-test --memory-key mcp.extension.pipeline --pipeline
 python3 Tools/unreal_mcp_supervisor.py --log-dir Saved/UnrealMcp/SupervisorLogs pipeline --auto-restart --args-json '{"toolName":"unreal.my_custom_tool","memoryKey":"mcp.extension.pipeline"}'
 ```
 
-The supervisor script runs outside Unreal Editor, so it can close/reopen the editor and resume MCP tests after plugin code reloads. This is the safe path for strict self-extension; the in-editor Chat can request a restart, but it cannot keep executing while its own host process is closed.
+The supervisor script runs outside Unreal Editor, so it can close/reopen the editor and resume MCP tests after plugin code reloads. This is the safe path for strict self-extension; the in-editor Chat can request a restart, but it cannot keep executing while its own host process is closed. Use `status` when the endpoint times out; it reports `tools/list` readiness, MCP port listeners, and matching UnrealEditor PIDs. `restart` aborts if the old editor does not stop cleanly; pass `--force-kill` only after saving or intentionally discarding editor state.
 
 Generate local supervisor launchers:
 
@@ -541,14 +545,16 @@ Skill distillation tools:
 ```
 
 ```text
-/tool unreal.skill_promote_draft {"skillName":"repeatable-editor-workflow","overwrite":false}
+/tool unreal.skill_promote_draft {"skillName":"repeatable-editor-workflow","dryRun":true,"overwrite":false}
 ```
 
-Activity logs are local-only runtime files under `Saved/UnrealMcp/ActivityLog/*.jsonl`. Distilled drafts are written to `Saved/UnrealMcp/SkillDrafts/<skill-name>/SKILL.md`; only `unreal.skill_promote_draft` writes a reviewed skill into versioned `Tools/UnrealMcpSkills/<skill-name>/SKILL.md`.
+Activity logs are local-only runtime files under `Saved/UnrealMcp/ActivityLog/*.jsonl`. Distilled drafts are written to `Saved/UnrealMcp/SkillDrafts/<skill-name>/SKILL.md`; only `unreal.skill_promote_draft` writes a reviewed skill into versioned `Tools/UnrealMcpSkills/<skill-name>/SKILL.md`. Promotion defaults to `dryRun:true`; real promotion should use `dryRun:false` after review, and overwrites can create backups/manifests under `Saved/UnrealMcp/SkillPromotionBackups`.
 
 ## Quick Test
 
 After the editor is running with the plugin enabled:
+
+The MCP endpoint is hosted by the running Unreal Editor process. It will not respond after only cloning or building the project; open the project in Unreal Editor and wait for the `Unreal MCP listening on http://127.0.0.1:8765/mcp` log line first.
 
 ```bash
 curl -s \
@@ -578,6 +584,30 @@ curl -s \
   -H 'MCP-Protocol-Version: 2025-06-18' \
   -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"unreal.editor_status","arguments":{}}}' \
   http://127.0.0.1:8765/mcp
+```
+
+On Windows PowerShell, avoid hand-escaped JSON when possible. This form is more reliable:
+
+```powershell
+$Body = @{
+  jsonrpc = "2.0"
+  id = 3
+  method = "tools/call"
+  params = @{
+    name = "unreal.editor_status"
+    arguments = @{}
+  }
+} | ConvertTo-Json -Depth 8
+
+Invoke-WebRequest `
+  -Uri "http://127.0.0.1:8765/mcp" `
+  -Method POST `
+  -Headers @{
+    "Content-Type" = "application/json"
+    "Accept" = "application/json, text/event-stream"
+    "MCP-Protocol-Version" = "2025-06-18"
+  } `
+  -Body $Body
 ```
 
 PIE control example:
@@ -612,6 +642,19 @@ curl -s \
   -d '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"unreal.select_actors","arguments":{"filter":"PlayerStart","clearSelection":true}}}' \
   http://127.0.0.1:8765/mcp
 ```
+
+Preview the current level environment clear operation:
+
+```bash
+curl -s \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -H 'MCP-Protocol-Version: 2025-06-18' \
+  -d '{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"unreal.clear_level_environment","arguments":{"dryRun":true,"maxPasses":3}}}' \
+  http://127.0.0.1:8765/mcp
+```
+
+To clear every level actor, call it again with `dryRun:false` and `confirmClearAll:true`. If you provide `filter`, `classPath`, or `paths`, the confirmation flag is not required.
 
 Batch Blueprint compile example:
 
@@ -697,5 +740,5 @@ Example environment variables:
 Example host command:
 
 ```bash
-python3 /absolute/path/to/MyProject/Tools/unreal_mcp_stdio_proxy.py
+python3 /absolute/path/to/UEvolve/Tools/unreal_mcp_stdio_proxy.py
 ```

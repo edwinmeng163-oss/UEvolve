@@ -1,0 +1,19 @@
+{
+  "name": "skill_recording_stop_valid",
+  "description": "Stops the explicit skill activity recording session opened by the core skill tests.",
+  "category": "teardown",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": false,
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 99,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.skill_recording_stop",
+      "arguments": {
+        "reason": "Core skill activity test teardown."
+      }
+    }
+  }
+}

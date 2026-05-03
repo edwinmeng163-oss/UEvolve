@@ -1,0 +1,24 @@
+{
+  "name": "skill_distill_from_activity_valid",
+  "description": "Distills the explicit core test session into a draft preview without writing a draft.",
+  "category": "happy_path",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": false,
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 12,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.skill_distill_from_activity",
+      "arguments": {
+        "sessionId": "core-skill-test-session",
+        "skillName": "core-skill-test-workflow",
+        "title": "Core Skill Test Workflow",
+        "writeDraft": false,
+        "includeEvents": false,
+        "maxEvents": 50
+      }
+    }
+  }
+}

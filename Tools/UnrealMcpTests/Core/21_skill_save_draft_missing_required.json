@@ -1,0 +1,19 @@
+{
+  "name": "skill_save_draft_missing_required",
+  "description": "Missing skillName should return a controlled error.",
+  "category": "missing_required",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": true,
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 21,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.skill_save_draft",
+      "arguments": {
+        "title": "Missing Name"
+      }
+    }
+  }
+}

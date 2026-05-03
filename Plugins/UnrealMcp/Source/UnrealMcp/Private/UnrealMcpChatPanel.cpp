@@ -927,11 +927,11 @@ void SUnrealMcpChatPanel::StartAiConnectionTest()
 	Request->SetActivityTimeout(Settings->AiRequestActivityTimeoutSeconds);
 	Request->SetContentAsString(PayloadString);
 
-	TWeakPtr<SUnrealMcpChatPanel> WeakThis = SharedThis(this);
+	TWeakPtr<SUnrealMcpChatPanel> WeakPanel = SharedThis(this);
 	Request->OnProcessRequestComplete().BindLambda(
-		[WeakThis, Entry, ArgumentsJson, Url, Model](FHttpRequestPtr HttpRequest, FHttpResponsePtr HttpResponse, bool bSucceeded)
+		[WeakPanel, Entry, ArgumentsJson, Url, Model](FHttpRequestPtr HttpRequest, FHttpResponsePtr HttpResponse, bool bSucceeded)
 		{
-			if (const TSharedPtr<SUnrealMcpChatPanel> PinnedThis = WeakThis.Pin())
+			if (const TSharedPtr<SUnrealMcpChatPanel> PinnedThis = WeakPanel.Pin())
 			{
 				const int32 ResponseCode = HttpResponse.IsValid() ? HttpResponse->GetResponseCode() : 0;
 				const FString ResponseText = HttpResponse.IsValid() ? HttpResponse->GetContentAsString() : FString();
@@ -1273,14 +1273,14 @@ void SUnrealMcpChatPanel::StartAssistantRequest(const FString& UserPrompt)
 		ConversationContext = BuildAssistantConversationContext(UserPrompt);
 	}
 
-	TWeakPtr<SUnrealMcpChatPanel> WeakThis = SharedThis(this);
+	TWeakPtr<SUnrealMcpChatPanel> WeakPanel = SharedThis(this);
 	ActiveAssistantHandle = OwnerModule->ExecuteAssistantTurnAsync(
 		UserPrompt,
 		ConversationContext,
 		LastAssistantResponseId,
-		[WeakThis](const FUnrealMcpAssistantEvent& Event)
+		[WeakPanel](const FUnrealMcpAssistantEvent& Event)
 		{
-			if (const TSharedPtr<SUnrealMcpChatPanel> PinnedThis = WeakThis.Pin())
+			if (const TSharedPtr<SUnrealMcpChatPanel> PinnedThis = WeakPanel.Pin())
 			{
 				switch (Event.Type)
 				{
@@ -1334,9 +1334,9 @@ void SUnrealMcpChatPanel::StartAssistantRequest(const FString& UserPrompt)
 				}
 			}
 		},
-		[WeakThis](const FUnrealMcpAssistantTurnResult& Result)
+		[WeakPanel](const FUnrealMcpAssistantTurnResult& Result)
 		{
-			if (const TSharedPtr<SUnrealMcpChatPanel> PinnedThis = WeakThis.Pin())
+			if (const TSharedPtr<SUnrealMcpChatPanel> PinnedThis = WeakPanel.Pin())
 			{
 				PinnedThis->bAssistantRequestInFlight = false;
 				PinnedThis->ActiveAssistantHandle.Reset();
