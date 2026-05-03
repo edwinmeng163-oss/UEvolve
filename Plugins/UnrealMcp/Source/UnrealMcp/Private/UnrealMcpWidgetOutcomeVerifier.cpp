@@ -13,7 +13,7 @@ namespace UnrealMcp
 {
 	namespace
 	{
-		TArray<TSharedPtr<FJsonValue>> MakeStringValues(const TArray<FString>& Values)
+		TArray<TSharedPtr<FJsonValue>> WidgetMakeStringValues(const TArray<FString>& Values)
 		{
 			TArray<TSharedPtr<FJsonValue>> JsonValues;
 			for (const FString& Value : Values)
@@ -23,7 +23,7 @@ namespace UnrealMcp
 			return JsonValues;
 		}
 
-		TSharedPtr<FJsonObject> MakeVerifierResult(const FString& ToolName)
+		TSharedPtr<FJsonObject> WidgetMakeVerifierResult(const FString& ToolName)
 		{
 			TSharedPtr<FJsonObject> Object = MakeShared<FJsonObject>();
 			Object->SetStringField(TEXT("toolName"), ToolName);
@@ -33,20 +33,20 @@ namespace UnrealMcp
 			return Object;
 		}
 
-		void FinishVerifier(
+		void WidgetFinishVerifier(
 			const TSharedPtr<FJsonObject>& Object,
 			const TArray<FString>& Evidence,
 			const TArray<FString>& Failures)
 		{
 			Object->SetBoolField(TEXT("verified"), Failures.Num() == 0);
-			Object->SetArrayField(TEXT("evidence"), MakeStringValues(Evidence));
-			Object->SetArrayField(TEXT("failures"), MakeStringValues(Failures));
+			Object->SetArrayField(TEXT("evidence"), WidgetMakeStringValues(Evidence));
+			Object->SetArrayField(TEXT("failures"), WidgetMakeStringValues(Failures));
 			Object->SetStringField(TEXT("summary"), Failures.Num() == 0
 				? TEXT("Widget Blueprint verifier confirmed the requested widget tree state.")
 				: TEXT("Widget Blueprint verifier found mismatches; inspect failures for details."));
 		}
 
-		FString AddObjectNameCandidate(const FString& Path)
+		FString WidgetAddObjectNameCandidate(const FString& Path)
 		{
 			if (!Path.StartsWith(TEXT("/")) || Path.Contains(TEXT(".")))
 			{
@@ -57,7 +57,7 @@ namespace UnrealMcp
 			return AssetName.IsEmpty() ? Path : FString::Printf(TEXT("%s.%s"), *Path, *AssetName);
 		}
 
-		UObject* LoadObjectFromPathCandidates(const FString& RawPath)
+		UObject* WidgetLoadObjectFromPathCandidates(const FString& RawPath)
 		{
 			const FString TrimmedPath = RawPath.TrimStartAndEnd();
 			if (TrimmedPath.IsEmpty())
@@ -67,7 +67,7 @@ namespace UnrealMcp
 
 			TArray<FString> Candidates;
 			Candidates.Add(TrimmedPath);
-			Candidates.Add(AddObjectNameCandidate(TrimmedPath));
+			Candidates.Add(WidgetAddObjectNameCandidate(TrimmedPath));
 
 			for (const FString& Candidate : Candidates)
 			{
@@ -94,7 +94,7 @@ namespace UnrealMcp
 
 			for (const FString& Candidate : Candidates)
 			{
-				if (UWidgetBlueprint* WidgetBlueprint = Cast<UWidgetBlueprint>(LoadObjectFromPathCandidates(Candidate)))
+				if (UWidgetBlueprint* WidgetBlueprint = Cast<UWidgetBlueprint>(WidgetLoadObjectFromPathCandidates(Candidate)))
 				{
 					OutPath = WidgetBlueprint->GetPathName();
 					return WidgetBlueprint;
@@ -176,8 +176,8 @@ namespace UnrealMcp
 		}
 
 		GenericPreflight->SetBoolField(TEXT("ready"), Failures.Num() == 0);
-		GenericPreflight->SetArrayField(TEXT("evidence"), MakeStringValues(Evidence));
-		GenericPreflight->SetArrayField(TEXT("failures"), MakeStringValues(Failures));
+		GenericPreflight->SetArrayField(TEXT("evidence"), WidgetMakeStringValues(Evidence));
+		GenericPreflight->SetArrayField(TEXT("failures"), WidgetMakeStringValues(Failures));
 		GenericPreflight->SetStringField(TEXT("summary"), Failures.Num() == 0
 			? TEXT("Widget preflight confirmed required Widget Blueprint state or creation context.")
 			: TEXT("Widget preflight found missing target state; inspect failures before applying."));
@@ -194,7 +194,7 @@ namespace UnrealMcp
 			return nullptr;
 		}
 
-		TSharedPtr<FJsonObject> Verifier = MakeVerifierResult(ToolName);
+		TSharedPtr<FJsonObject> Verifier = WidgetMakeVerifierResult(ToolName);
 		Verifier->SetBoolField(TEXT("toolReturnedError"), Result.bIsError);
 		Verifier->SetBoolField(TEXT("genericResultSucceeded"), !Result.bIsError);
 		TArray<FString> Evidence;
@@ -203,7 +203,7 @@ namespace UnrealMcp
 		if (Result.bIsError)
 		{
 			Failures.Add(TEXT("Tool returned an error; Widget Blueprint success state was not verified."));
-			FinishVerifier(Verifier, Evidence, Failures);
+			WidgetFinishVerifier(Verifier, Evidence, Failures);
 			return Verifier;
 		}
 
@@ -212,7 +212,7 @@ namespace UnrealMcp
 		if (!WidgetBlueprint || !WidgetBlueprint->WidgetTree)
 		{
 			Failures.Add(TEXT("Unable to load Widget Blueprint or WidgetTree from result or arguments."));
-			FinishVerifier(Verifier, Evidence, Failures);
+			WidgetFinishVerifier(Verifier, Evidence, Failures);
 			return Verifier;
 		}
 		Evidence.Add(FString::Printf(TEXT("Loaded Widget Blueprint %s."), *WidgetBlueprintPath));
@@ -228,7 +228,7 @@ namespace UnrealMcp
 			{
 				Failures.Add(TEXT("Template build did not leave a root widget."));
 			}
-			FinishVerifier(Verifier, Evidence, Failures);
+			WidgetFinishVerifier(Verifier, Evidence, Failures);
 			return Verifier;
 		}
 
@@ -249,7 +249,7 @@ namespace UnrealMcp
 			{
 				Failures.Add(FString::Printf(TEXT("Removed widget '%s' is still present."), *RemovedWidgetName));
 			}
-			FinishVerifier(Verifier, Evidence, Failures);
+			WidgetFinishVerifier(Verifier, Evidence, Failures);
 			return Verifier;
 		}
 
@@ -263,7 +263,7 @@ namespace UnrealMcp
 		if (!Widget)
 		{
 			Failures.Add(FString::Printf(TEXT("Widget '%s' was not found in the WidgetTree."), *WidgetName));
-			FinishVerifier(Verifier, Evidence, Failures);
+			WidgetFinishVerifier(Verifier, Evidence, Failures);
 			return Verifier;
 		}
 		Evidence.Add(FString::Printf(TEXT("Widget '%s' exists with class %s."), *Widget->GetName(), *Widget->GetClass()->GetPathName()));
@@ -307,7 +307,7 @@ namespace UnrealMcp
 			}
 		}
 
-		FinishVerifier(Verifier, Evidence, Failures);
+		WidgetFinishVerifier(Verifier, Evidence, Failures);
 		return Verifier;
 	}
 }

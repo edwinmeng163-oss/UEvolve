@@ -13,7 +13,7 @@ namespace UnrealMcp
 {
 	namespace
 	{
-		TArray<TSharedPtr<FJsonValue>> MakeStringValues(const TArray<FString>& Values)
+		TArray<TSharedPtr<FJsonValue>> WorkflowMakeStringValues(const TArray<FString>& Values)
 		{
 			TArray<TSharedPtr<FJsonValue>> JsonValues;
 			for (const FString& Value : Values)
@@ -23,7 +23,7 @@ namespace UnrealMcp
 			return JsonValues;
 		}
 
-		TSharedPtr<FJsonObject> MakeVerifierResult(const FString& ToolName, const FString& Category)
+		TSharedPtr<FJsonObject> WorkflowMakeVerifierResult(const FString& ToolName, const FString& Category)
 		{
 			TSharedPtr<FJsonObject> Object = MakeShared<FJsonObject>();
 			Object->SetStringField(TEXT("toolName"), ToolName);
@@ -33,7 +33,7 @@ namespace UnrealMcp
 			return Object;
 		}
 
-		void FinishVerifier(
+		void WorkflowFinishVerifier(
 			const TSharedPtr<FJsonObject>& Object,
 			const TArray<FString>& Evidence,
 			const TArray<FString>& Failures,
@@ -41,8 +41,8 @@ namespace UnrealMcp
 			const FString& FailureSummary)
 		{
 			Object->SetBoolField(TEXT("verified"), Failures.Num() == 0);
-			Object->SetArrayField(TEXT("evidence"), MakeStringValues(Evidence));
-			Object->SetArrayField(TEXT("failures"), MakeStringValues(Failures));
+			Object->SetArrayField(TEXT("evidence"), WorkflowMakeStringValues(Evidence));
+			Object->SetArrayField(TEXT("failures"), WorkflowMakeStringValues(Failures));
 			Object->SetStringField(TEXT("summary"), Failures.Num() == 0 ? SuccessSummary : FailureSummary);
 		}
 
@@ -315,8 +315,8 @@ namespace UnrealMcp
 		}
 
 		GenericPreflight->SetBoolField(TEXT("ready"), Failures.Num() == 0);
-		GenericPreflight->SetArrayField(TEXT("evidence"), MakeStringValues(Evidence));
-		GenericPreflight->SetArrayField(TEXT("failures"), MakeStringValues(Failures));
+		GenericPreflight->SetArrayField(TEXT("evidence"), WorkflowMakeStringValues(Evidence));
+		GenericPreflight->SetArrayField(TEXT("failures"), WorkflowMakeStringValues(Failures));
 		GenericPreflight->SetStringField(TEXT("summary"), Failures.Num() == 0
 			? TEXT("Workflow preflight confirmed required paths, keys, or request shape before execution.")
 			: TEXT("Workflow preflight found missing state; inspect failures before applying."));
@@ -334,7 +334,7 @@ namespace UnrealMcp
 			return nullptr;
 		}
 
-		TSharedPtr<FJsonObject> Verifier = MakeVerifierResult(ToolName, Category);
+		TSharedPtr<FJsonObject> Verifier = WorkflowMakeVerifierResult(ToolName, Category);
 		Verifier->SetBoolField(TEXT("toolReturnedError"), Result.bIsError);
 		Verifier->SetBoolField(TEXT("genericResultSucceeded"), !Result.bIsError);
 		TArray<FString> Evidence;
@@ -343,13 +343,13 @@ namespace UnrealMcp
 		if (Result.bIsError)
 		{
 			Failures.Add(TEXT("Tool returned an error; workflow success state was not verified."));
-			FinishVerifier(Verifier, Evidence, Failures, TEXT("Workflow state verified."), TEXT("Workflow verifier found mismatches; inspect failures for details."));
+			WorkflowFinishVerifier(Verifier, Evidence, Failures, TEXT("Workflow state verified."), TEXT("Workflow verifier found mismatches; inspect failures for details."));
 			return Verifier;
 		}
 		if (!Result.StructuredContent.IsValid())
 		{
 			Failures.Add(TEXT("Workflow tool did not return structured content to verify."));
-			FinishVerifier(Verifier, Evidence, Failures, TEXT("Workflow state verified."), TEXT("Workflow verifier found mismatches; inspect failures for details."));
+			WorkflowFinishVerifier(Verifier, Evidence, Failures, TEXT("Workflow state verified."), TEXT("Workflow verifier found mismatches; inspect failures for details."));
 			return Verifier;
 		}
 
@@ -563,7 +563,7 @@ namespace UnrealMcp
 			Evidence.Add(TEXT("Workflow structured result was present; no deeper verifier was available for this tool."));
 		}
 
-		FinishVerifier(
+		WorkflowFinishVerifier(
 			Verifier,
 			Evidence,
 			Failures,

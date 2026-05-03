@@ -22,7 +22,7 @@ import urllib.request
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_UPROJECT = PROJECT_ROOT / "Examples" / "UEvolveExample" / "UEvolveExample.uproject"
+DEFAULT_UPROJECT = PROJECT_ROOT / "UEvolve.uproject"
 DEFAULT_LAUNCH_AGENT_LABEL = "com.uevolve.supervisor"
 DEFAULT_URL = os.environ.get("UNREAL_MCP_URL", "http://127.0.0.1:8765/mcp")
 DEFAULT_PROTOCOL = os.environ.get("UNREAL_MCP_PROTOCOL_VERSION", "2025-06-18")

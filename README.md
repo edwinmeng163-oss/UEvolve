@@ -4,7 +4,7 @@
 
 This repository is an Unreal Engine 5.7 editor-tooling workbench focused on editor automation, AI-assisted project inspection, Blueprint scaffolding, UMG setup, and local Model Context Protocol workflows.
 
-Its main deliverable is the **Unreal MCP** editor plugin under `Plugins/UnrealMcp`. The plugin exposes Unreal Editor operations through a localhost MCP endpoint and an in-editor chat panel. The bundled `Examples/UEvolveExample` project is only a local validation/demo host; the plugin can be copied or linked into other Unreal projects.
+Its main deliverable is the **Unreal MCP** editor plugin under `Plugins/UnrealMcp`. The plugin exposes Unreal Editor operations through a localhost MCP endpoint and an in-editor chat panel. The repository root includes `UEvolve.uproject` as the default local development host, while `Examples/UEvolveExample` remains an optional validation/demo project.
 
 ## 中文概览
 
@@ -21,14 +21,16 @@ Its main deliverable is the **Unreal MCP** editor plugin under `Plugins/UnrealMc
 - 自扩展链路包含 schema 校验、snippet 校验、dry-run diff、备份 manifest、UBT 编译、测试套件、rollback、project memory 和 supervisor 重启恢复。
 - Skill 蒸馏链路会记录高层 Editor/Chat/MCP 活动到本地 JSONL，并把一次任务/session 总结成可审查的 `SKILL.md` 草稿，确认后再 promote 到项目技能库。
 - 引入多人协作保护：CODEOWNERS、工具命名规范、Manifest schema、extension session lock、ToolRegistry 风险元数据和冲突检测规则。
-- UE 模板内容已移动到 `Examples/UEvolveExample`，只作为可选示例工程和本地测试资源；仓库根目录保持为工具、插件、文档和测试夹具。
+- 仓库根目录提供 `UEvolve.uproject` 作为统一的本地开发入口；`Examples/UEvolveExample` 只作为可选示例工程和本地测试资源。
 
 ## Current Status
 
 The repository currently contains:
 
+- `UEvolve.uproject`, the root Unreal Engine 5.7 local development host for the workbench.
+- `open_uevolve.command`, a macOS convenience launcher that opens the root host project.
 - `Plugins/UnrealMcp`, an editor plugin for local MCP and in-editor AI/chat workflows.
-- `Examples/UEvolveExample`, an optional Unreal Engine 5.7 C++ example project used to validate the plugin.
+- `Examples/UEvolveExample`, an optional Unreal Engine 5.7 C++ example project used to validate the plugin with sample content.
 - Git LFS setup for Unreal binary assets.
 - Project-level README and ignore rules suitable for public GitHub hosting.
 - Self-extension safety rails: schema validation, snippet validation, dry-run diffs, backups, build/test handoff, rollback manifests, project memory, and project-local skills.
@@ -393,14 +395,27 @@ The repository also includes an optional example host project:
 Examples/UEvolveExample/UEvolveExample.uproject
 ```
 
+For local development in this repository, use the root host project instead:
+
+```text
+UEvolve.uproject
+```
+
+On macOS you can also double-click:
+
+```text
+open_uevolve.command
+```
+
 ## Deployment Guide / 部署指南
 
-UEvolve is an Unreal Editor plugin workflow rather than a packaged game/server deployment. The repository root is intentionally a tool/workbench checkout: `Plugins/UnrealMcp` is the reusable plugin, while `Examples/UEvolveExample` is only a sample project for validation.
+UEvolve is an Unreal Editor plugin workflow rather than a packaged game/server deployment. The repository root is the canonical local development checkout: `UEvolve.uproject` loads the workbench plugin, `Plugins/UnrealMcp` is the reusable plugin, and `Examples/UEvolveExample` is only a sample project for validation.
 
-There are two supported deployment paths:
+There are three supported deployment paths:
 
+- Root local development host: open `UEvolve.uproject` from the repository root, or run `./open_uevolve.command` on macOS.
 - Existing project install: copy or symlink `Plugins/UnrealMcp` into `<YourProject>/Plugins/UnrealMcp`, optionally copy `Tools/` and `Schemas/` for self-extension workflows, then compile that project.
-- Example project install: open `Examples/UEvolveExample/UEvolveExample.uproject` to test the plugin in the bundled UE 5.7 sample host.
+- Example project install: open `Examples/UEvolveExample/UEvolveExample.uproject` only when you want to test the plugin with bundled sample content.
 
 ### 1. Prepare The Machine
 
@@ -461,9 +476,9 @@ cp -R Schemas "/path/to/YourProject/Schemas"
 
 These folders provide versioned MCP test fixtures, project-local skills, supervisor templates, and manifest schemas. Runtime output still goes under the target project's ignored `Saved/UnrealMcp`.
 
-### 4. Open Or Build The Example Project
+### 4. Open Or Build The Local Development Host
 
-Open `Examples/UEvolveExample/UEvolveExample.uproject` directly in Unreal Engine 5.7 if you want the bundled validation project.
+Open `UEvolve.uproject` directly in Unreal Engine 5.7 for local workbench development. On macOS, `./open_uevolve.command` opens the same root project.
 
 Before command-line builds, close all running Unreal Editor instances for this project and disable Live Coding. Unreal Build Tool can fail with `Unable to build while Live Coding is active` if the editor still has Live Coding enabled or loaded.
 
@@ -471,16 +486,18 @@ For a command-line editor build on macOS:
 
 ```bash
 "/Users/Shared/Epic Games/UE_5.7/Engine/Build/BatchFiles/Mac/Build.sh" \
-  MyProjectEditor Mac Development \
-  -Project="$(pwd)/Examples/UEvolveExample/UEvolveExample.uproject" \
+  UEvolveEditor Mac Development \
+  -Project="$(pwd)/UEvolve.uproject" \
   -WaitMutex
 ```
 
 If the editor asks to rebuild modules on first open, allow it to rebuild.
 
+The bundled sample project remains available at `Examples/UEvolveExample/UEvolveExample.uproject`, but the root host is the default path used by the README and supervisor.
+
 ### 5. Windows Deployment Notes
 
-Windows is supported as a source-build target, but it has a few extra setup requirements because Unreal C++ plugins must be compiled locally for Win64. The commands below build the bundled example project; for an existing project, change the `-Project=` argument to your own `.uproject`.
+Windows is supported as a source-build target, but it has a few extra setup requirements because Unreal C++ plugins must be compiled locally for Win64. The commands below build the root `UEvolve.uproject` local development host; for an existing project, change the `-Project=` argument to your own `.uproject`.
 
 Recommended Windows environment:
 
@@ -520,8 +537,8 @@ Build from PowerShell:
 
 ```powershell
 & "C:\Program Files\Epic Games\UE_5.7\Engine\Build\BatchFiles\Build.bat" `
-  MyProjectEditor Win64 Development `
-  "-Project=$((Get-Location).Path)\Examples\UEvolveExample\UEvolveExample.uproject" `
+  UEvolveEditor Win64 Development `
+  "-Project=$((Get-Location).Path)\UEvolve.uproject" `
   -WaitMutex
 ```
 
@@ -529,8 +546,8 @@ Build from Command Prompt:
 
 ```bat
 "C:\Program Files\Epic Games\UE_5.7\Engine\Build\BatchFiles\Build.bat" ^
-  MyProjectEditor Win64 Development ^
-  -Project="%CD%\Examples\UEvolveExample\UEvolveExample.uproject" ^
+  UEvolveEditor Win64 Development ^
+  -Project="%CD%\UEvolve.uproject" ^
   -WaitMutex
 ```
 
@@ -552,10 +569,10 @@ Windows-specific issues to expect:
 - Firewall prompt: allow local/private network access if Windows asks when the MCP server starts.
 - Port conflict: if `8765` is already in use, change the port in Project Settings or stop the other process.
 - PowerShell JSON quoting: prefer `Invoke-WebRequest` with `ConvertTo-Json` instead of hand-escaped JSON strings.
-- Generated project files: if Visual Studio cannot find targets for the example host, right-click `Examples\UEvolveExample\UEvolveExample.uproject` and choose `Generate Visual Studio project files`.
+- Generated project files: if Visual Studio cannot find targets for the root host, right-click `UEvolve.uproject` and choose `Generate Visual Studio project files`.
 - Case sensitivity: avoid manually renaming Unreal assets only by letter case on Windows.
 - Line endings: keep Git-managed text files normalized; avoid mass CRLF rewrites.
-- Editor rebuild prompt loop: close Unreal, delete local `Examples/UEvolveExample/Binaries/` and `Examples/UEvolveExample/Intermediate/`, then rebuild.
+- Editor rebuild prompt loop: close Unreal, delete local `Binaries/` and `Intermediate/`, then rebuild.
 - Plugin not visible: confirm `Plugins/UnrealMcp/UnrealMcp.uplugin` exists and the plugin is enabled in the project.
 - Python tools unavailable: confirm Unreal's Python Script Plugin is enabled.
 - AI requests fail but direct commands work: verify API key, model name, rate limits, and request timeout settings.

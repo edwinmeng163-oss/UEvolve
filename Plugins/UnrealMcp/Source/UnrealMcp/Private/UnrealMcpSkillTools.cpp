@@ -161,7 +161,7 @@ namespace UnrealMcp
 			return true;
 		}
 
-		TArray<FString> GetArgumentKeys(const FJsonObject& Arguments)
+		TArray<FString> SkillGetArgumentKeys(const FJsonObject& Arguments)
 		{
 			TArray<FString> Keys;
 			for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Arguments.Values)

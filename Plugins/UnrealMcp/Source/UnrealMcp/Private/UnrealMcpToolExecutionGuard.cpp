@@ -11,7 +11,7 @@ namespace UnrealMcp
 {
 	namespace
 	{
-		TArray<TSharedPtr<FJsonValue>> MakeStringValues(const TArray<FString>& Values)
+		TArray<TSharedPtr<FJsonValue>> ExecutionGuardMakeStringValues(const TArray<FString>& Values)
 		{
 			TArray<TSharedPtr<FJsonValue>> JsonValues;
 			for (const FString& Value : Values)
@@ -21,7 +21,7 @@ namespace UnrealMcp
 			return JsonValues;
 		}
 
-		TArray<FString> GetArgumentKeys(const FJsonObject& Arguments)
+		TArray<FString> ExecutionGuardGetArgumentKeys(const FJsonObject& Arguments)
 		{
 			TArray<FString> Keys;
 			for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Arguments.Values)
@@ -89,8 +89,8 @@ namespace UnrealMcp
 			Preflight->SetStringField(TEXT("toolName"), ToolName);
 			Preflight->SetStringField(TEXT("riskLevel"), LexToString(Policy.RiskLevel));
 			Preflight->SetObjectField(TEXT("policy"), MakeToolPolicyObject(ToolName));
-			Preflight->SetArrayField(TEXT("argumentKeys"), MakeStringValues(GetArgumentKeys(Arguments)));
-			Preflight->SetArrayField(TEXT("expectedMutationAreas"), MakeStringValues(InferMutationAreas(ToolName, Policy)));
+			Preflight->SetArrayField(TEXT("argumentKeys"), ExecutionGuardMakeStringValues(ExecutionGuardGetArgumentKeys(Arguments)));
+			Preflight->SetArrayField(TEXT("expectedMutationAreas"), ExecutionGuardMakeStringValues(InferMutationAreas(ToolName, Policy)));
 			Preflight->SetStringField(TEXT("checkLevel"), TEXT("registry_metadata"));
 			Preflight->SetStringField(TEXT("summary"), Policy.bDryRunSupport
 				? TEXT("Tool supports dryRun; prefer dryRun=true before applying write changes.")

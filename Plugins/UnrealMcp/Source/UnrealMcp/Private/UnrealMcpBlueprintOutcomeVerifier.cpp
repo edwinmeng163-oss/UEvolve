@@ -14,7 +14,7 @@ namespace UnrealMcp
 {
 	namespace
 	{
-		TArray<TSharedPtr<FJsonValue>> MakeStringValues(const TArray<FString>& Values)
+		TArray<TSharedPtr<FJsonValue>> BlueprintMakeStringValues(const TArray<FString>& Values)
 		{
 			TArray<TSharedPtr<FJsonValue>> JsonValues;
 			for (const FString& Value : Values)
@@ -24,7 +24,7 @@ namespace UnrealMcp
 			return JsonValues;
 		}
 
-		TSharedPtr<FJsonObject> MakeVerifierResult(const FString& ToolName)
+		TSharedPtr<FJsonObject> BlueprintMakeVerifierResult(const FString& ToolName)
 		{
 			TSharedPtr<FJsonObject> Object = MakeShared<FJsonObject>();
 			Object->SetStringField(TEXT("toolName"), ToolName);
@@ -34,20 +34,20 @@ namespace UnrealMcp
 			return Object;
 		}
 
-		void FinishVerifier(
+		void BlueprintFinishVerifier(
 			const TSharedPtr<FJsonObject>& Object,
 			const TArray<FString>& Evidence,
 			const TArray<FString>& Failures)
 		{
 			Object->SetBoolField(TEXT("verified"), Failures.Num() == 0);
-			Object->SetArrayField(TEXT("evidence"), MakeStringValues(Evidence));
-			Object->SetArrayField(TEXT("failures"), MakeStringValues(Failures));
+			Object->SetArrayField(TEXT("evidence"), BlueprintMakeStringValues(Evidence));
+			Object->SetArrayField(TEXT("failures"), BlueprintMakeStringValues(Failures));
 			Object->SetStringField(TEXT("summary"), Failures.Num() == 0
 				? TEXT("Blueprint state verifier confirmed the requested asset, graph, node, pin, or variable state.")
 				: TEXT("Blueprint state verifier found mismatches; inspect failures for details."));
 		}
 
-		FString AddObjectNameCandidate(const FString& Path)
+		FString BlueprintAddObjectNameCandidate(const FString& Path)
 		{
 			if (!Path.StartsWith(TEXT("/")) || Path.Contains(TEXT(".")))
 			{
@@ -58,7 +58,7 @@ namespace UnrealMcp
 			return AssetName.IsEmpty() ? Path : FString::Printf(TEXT("%s.%s"), *Path, *AssetName);
 		}
 
-		UObject* LoadObjectFromPathCandidates(const FString& RawPath)
+		UObject* BlueprintLoadObjectFromPathCandidates(const FString& RawPath)
 		{
 			const FString TrimmedPath = RawPath.TrimStartAndEnd();
 			if (TrimmedPath.IsEmpty())
@@ -68,7 +68,7 @@ namespace UnrealMcp
 
 			TArray<FString> Candidates;
 			Candidates.Add(TrimmedPath);
-			Candidates.Add(AddObjectNameCandidate(TrimmedPath));
+			Candidates.Add(BlueprintAddObjectNameCandidate(TrimmedPath));
 
 			for (const FString& Candidate : Candidates)
 			{
@@ -97,7 +97,7 @@ namespace UnrealMcp
 
 			for (const FString& Candidate : Candidates)
 			{
-				if (UObject* Object = LoadObjectFromPathCandidates(Candidate))
+				if (UObject* Object = BlueprintLoadObjectFromPathCandidates(Candidate))
 				{
 					if (UBlueprint* Blueprint = Cast<UBlueprint>(Object))
 					{
@@ -258,7 +258,7 @@ namespace UnrealMcp
 			{
 				Failures.Add(TEXT("assetPath is required to create a Blueprint."));
 			}
-			else if (LoadObjectFromPathCandidates(AssetPath))
+			else if (BlueprintLoadObjectFromPathCandidates(AssetPath))
 			{
 				Evidence.Add(FString::Printf(TEXT("Target Blueprint asset already exists: %s."), *AssetPath));
 			}
@@ -310,8 +310,8 @@ namespace UnrealMcp
 		}
 
 		GenericPreflight->SetBoolField(TEXT("ready"), Failures.Num() == 0);
-		GenericPreflight->SetArrayField(TEXT("evidence"), MakeStringValues(Evidence));
-		GenericPreflight->SetArrayField(TEXT("failures"), MakeStringValues(Failures));
+		GenericPreflight->SetArrayField(TEXT("evidence"), BlueprintMakeStringValues(Evidence));
+		GenericPreflight->SetArrayField(TEXT("failures"), BlueprintMakeStringValues(Failures));
 		GenericPreflight->SetStringField(TEXT("summary"), Failures.Num() == 0
 			? TEXT("Blueprint preflight confirmed required target state or creation arguments.")
 			: TEXT("Blueprint preflight found missing target state; inspect failures before applying."));
@@ -332,7 +332,7 @@ namespace UnrealMcp
 			return nullptr;
 		}
 
-		TSharedPtr<FJsonObject> Verifier = MakeVerifierResult(ToolName);
+		TSharedPtr<FJsonObject> Verifier = BlueprintMakeVerifierResult(ToolName);
 		Verifier->SetBoolField(TEXT("toolReturnedError"), Result.bIsError);
 		Verifier->SetBoolField(TEXT("genericResultSucceeded"), !Result.bIsError);
 		TArray<FString> Evidence;
@@ -341,7 +341,7 @@ namespace UnrealMcp
 		if (Result.bIsError)
 		{
 			Failures.Add(TEXT("Tool returned an error; Blueprint success state was not verified."));
-			FinishVerifier(Verifier, Evidence, Failures);
+			BlueprintFinishVerifier(Verifier, Evidence, Failures);
 			return Verifier;
 		}
 
@@ -350,7 +350,7 @@ namespace UnrealMcp
 		if (!Blueprint)
 		{
 			Failures.Add(TEXT("Unable to load Blueprint from result or arguments."));
-			FinishVerifier(Verifier, Evidence, Failures);
+			BlueprintFinishVerifier(Verifier, Evidence, Failures);
 			return Verifier;
 		}
 		Evidence.Add(FString::Printf(TEXT("Loaded Blueprint %s."), *BlueprintPath));
@@ -360,7 +360,7 @@ namespace UnrealMcp
 			Evidence.Add(Blueprint->GeneratedClass
 				? FString::Printf(TEXT("Generated class exists: %s."), *Blueprint->GeneratedClass->GetPathName())
 				: TEXT("Blueprint asset exists; generated class is not currently available."));
-			FinishVerifier(Verifier, Evidence, Failures);
+			BlueprintFinishVerifier(Verifier, Evidence, Failures);
 			return Verifier;
 		}
 
@@ -379,7 +379,7 @@ namespace UnrealMcp
 			{
 				Failures.Add(FString::Printf(TEXT("Variable '%s' was not found in Blueprint member variables."), *VariableName));
 			}
-			FinishVerifier(Verifier, Evidence, Failures);
+			BlueprintFinishVerifier(Verifier, Evidence, Failures);
 			return Verifier;
 		}
 
@@ -394,7 +394,7 @@ namespace UnrealMcp
 			{
 				Failures.Add(TEXT("Blueprint status is BS_Error after compile."));
 			}
-			FinishVerifier(Verifier, Evidence, Failures);
+			BlueprintFinishVerifier(Verifier, Evidence, Failures);
 			return Verifier;
 		}
 
@@ -403,7 +403,7 @@ namespace UnrealMcp
 		if (!Graph)
 		{
 			Failures.Add(FString::Printf(TEXT("Graph '%s' was not found."), *GraphName));
-			FinishVerifier(Verifier, Evidence, Failures);
+			BlueprintFinishVerifier(Verifier, Evidence, Failures);
 			return Verifier;
 		}
 		Evidence.Add(FString::Printf(TEXT("Graph '%s' exists."), *Graph->GetName()));
@@ -411,7 +411,7 @@ namespace UnrealMcp
 		if (ToolName == TEXT("unreal.bp_add_function"))
 		{
 			Evidence.Add(TEXT("Function graph verification succeeded."));
-			FinishVerifier(Verifier, Evidence, Failures);
+			BlueprintFinishVerifier(Verifier, Evidence, Failures);
 			return Verifier;
 		}
 
@@ -438,7 +438,7 @@ namespace UnrealMcp
 			{
 				Failures.Add(TEXT("Expected pin connection was not found after tool execution."));
 			}
-			FinishVerifier(Verifier, Evidence, Failures);
+			BlueprintFinishVerifier(Verifier, Evidence, Failures);
 			return Verifier;
 		}
 
@@ -459,7 +459,7 @@ namespace UnrealMcp
 			{
 				Failures.Add(TEXT("Expected pin default value was not found after tool execution."));
 			}
-			FinishVerifier(Verifier, Evidence, Failures);
+			BlueprintFinishVerifier(Verifier, Evidence, Failures);
 			return Verifier;
 		}
 
@@ -474,7 +474,7 @@ namespace UnrealMcp
 			{
 				Evidence.Add(FString::Printf(TEXT("Graph exists with %d nodes."), Graph->Nodes.Num()));
 			}
-			FinishVerifier(Verifier, Evidence, Failures);
+			BlueprintFinishVerifier(Verifier, Evidence, Failures);
 			return Verifier;
 		}
 
@@ -495,7 +495,7 @@ namespace UnrealMcp
 			Evidence.Add(TEXT("No node GUID was returned; verified Blueprint and graph existence only."));
 		}
 
-		FinishVerifier(Verifier, Evidence, Failures);
+		BlueprintFinishVerifier(Verifier, Evidence, Failures);
 		return Verifier;
 	}
 }

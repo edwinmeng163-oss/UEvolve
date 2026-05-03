@@ -15,7 +15,7 @@ namespace UnrealMcp
 {
 	namespace
 	{
-		TArray<TSharedPtr<FJsonValue>> MakeStringValues(const TArray<FString>& Values)
+		TArray<TSharedPtr<FJsonValue>> ActorMakeStringValues(const TArray<FString>& Values)
 		{
 			TArray<TSharedPtr<FJsonValue>> JsonValues;
 			for (const FString& Value : Values)
@@ -25,7 +25,7 @@ namespace UnrealMcp
 			return JsonValues;
 		}
 
-		TSharedPtr<FJsonObject> MakeVerifierResult(const FString& ToolName)
+		TSharedPtr<FJsonObject> ActorMakeVerifierResult(const FString& ToolName)
 		{
 			TSharedPtr<FJsonObject> Object = MakeShared<FJsonObject>();
 			Object->SetStringField(TEXT("toolName"), ToolName);
@@ -35,14 +35,14 @@ namespace UnrealMcp
 			return Object;
 		}
 
-		void FinishVerifier(
+		void ActorFinishVerifier(
 			const TSharedPtr<FJsonObject>& Object,
 			const TArray<FString>& Evidence,
 			const TArray<FString>& Failures)
 		{
 			Object->SetBoolField(TEXT("verified"), Failures.Num() == 0);
-			Object->SetArrayField(TEXT("evidence"), MakeStringValues(Evidence));
-			Object->SetArrayField(TEXT("failures"), MakeStringValues(Failures));
+			Object->SetArrayField(TEXT("evidence"), ActorMakeStringValues(Evidence));
+			Object->SetArrayField(TEXT("failures"), ActorMakeStringValues(Failures));
 			Object->SetStringField(TEXT("summary"), Failures.Num() == 0
 				? TEXT("Actor verifier confirmed the current editor world state.")
 				: TEXT("Actor verifier found mismatches; inspect failures for details."));
@@ -287,8 +287,8 @@ namespace UnrealMcp
 		}
 
 		GenericPreflight->SetBoolField(TEXT("ready"), Failures.Num() == 0);
-		GenericPreflight->SetArrayField(TEXT("evidence"), MakeStringValues(Evidence));
-		GenericPreflight->SetArrayField(TEXT("failures"), MakeStringValues(Failures));
+		GenericPreflight->SetArrayField(TEXT("evidence"), ActorMakeStringValues(Evidence));
+		GenericPreflight->SetArrayField(TEXT("failures"), ActorMakeStringValues(Failures));
 		GenericPreflight->SetStringField(TEXT("summary"), Failures.Num() == 0
 			? TEXT("Actor preflight confirmed editor world, selection, asset, or request shape before execution.")
 			: TEXT("Actor preflight found missing state; inspect failures before applying."));
@@ -310,7 +310,7 @@ namespace UnrealMcp
 			return nullptr;
 		}
 
-		TSharedPtr<FJsonObject> Verifier = MakeVerifierResult(ToolName);
+		TSharedPtr<FJsonObject> Verifier = ActorMakeVerifierResult(ToolName);
 		Verifier->SetBoolField(TEXT("toolReturnedError"), Result.bIsError);
 		Verifier->SetBoolField(TEXT("genericResultSucceeded"), !Result.bIsError);
 		TArray<FString> Evidence;
@@ -319,14 +319,14 @@ namespace UnrealMcp
 		if (Result.bIsError)
 		{
 			Failures.Add(TEXT("Tool returned an error; actor success state was not verified."));
-			FinishVerifier(Verifier, Evidence, Failures);
+			ActorFinishVerifier(Verifier, Evidence, Failures);
 			return Verifier;
 		}
 
 		if (!Result.StructuredContent.IsValid())
 		{
 			Failures.Add(TEXT("Actor tool did not return structured content to verify."));
-			FinishVerifier(Verifier, Evidence, Failures);
+			ActorFinishVerifier(Verifier, Evidence, Failures);
 			return Verifier;
 		}
 
@@ -342,7 +342,7 @@ namespace UnrealMcp
 			{
 				Failures.Add(TEXT("Destroy selected actors did not report successful destruction."));
 			}
-			FinishVerifier(Verifier, Evidence, Failures);
+			ActorFinishVerifier(Verifier, Evidence, Failures);
 			return Verifier;
 		}
 
@@ -367,7 +367,7 @@ namespace UnrealMcp
 					Failures.Add(FString::Printf(TEXT("%.0f matching target actors remain after clear."), RemainingTargetCount));
 				}
 			}
-			FinishVerifier(Verifier, Evidence, Failures);
+			ActorFinishVerifier(Verifier, Evidence, Failures);
 			return Verifier;
 		}
 
@@ -384,7 +384,7 @@ namespace UnrealMcp
 					}
 				}
 			}
-			FinishVerifier(Verifier, Evidence, Failures);
+			ActorFinishVerifier(Verifier, Evidence, Failures);
 			return Verifier;
 		}
 
@@ -419,7 +419,7 @@ namespace UnrealMcp
 			Evidence.Add(TEXT("Structured actor result was present; no deeper verifier was available for this actor tool."));
 		}
 
-		FinishVerifier(Verifier, Evidence, Failures);
+		ActorFinishVerifier(Verifier, Evidence, Failures);
 		return Verifier;
 	}
 }

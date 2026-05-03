@@ -2,7 +2,7 @@
 
 The supervisor is the outside-the-editor half of the self-extension loop. Editor Chat can request a build and write project memory, but it cannot close its own host process and continue executing. `Tools/unreal_mcp_supervisor.py` fills that gap.
 
-By default, the repository supervisor targets the bundled example host at `Examples/UEvolveExample/UEvolveExample.uproject`. Pass `--uproject /path/to/YourProject.uproject` when using the plugin inside another Unreal project.
+By default, the repository supervisor targets the root local development host at `UEvolve.uproject`. Pass `--uproject /path/to/YourProject.uproject` when using the plugin inside another Unreal project, or `--uproject Examples/UEvolveExample/UEvolveExample.uproject` when you intentionally want the optional sample-content host.
 
 ## What It Does
 
