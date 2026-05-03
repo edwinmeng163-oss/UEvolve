@@ -94,6 +94,7 @@
 #include "UnrealMcpSettings.h"
 #include "UnrealMcpSkillTools.h"
 #include "UnrealMcpToolExecutionGuard.h"
+#include "UnrealMcpToolHandlerRegistry.h"
 #include "UnrealMcpToolRegistry.h"
 #include "UnrealMcpWorkbenchPanel.h"
 #include "UObject/Package.h"
@@ -3703,17 +3704,8 @@ namespace UnrealMcp
 			return MakeExecutionResult(Text, StructuredContent, !bCompatible);
 		}
 
-		bool LoadProjectTextFile(const FString& ProjectRelativePath, FString& OutText)
-		{
-			const FString FullPath = FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectDir(), ProjectRelativePath));
-			return FFileHelper::LoadFileToString(OutText, *FullPath);
-		}
-
 		FUnrealMcpExecutionResult AuditMcpTools(const TArray<TSharedPtr<FJsonValue>>& ToolsArray)
 		{
-			FString SourceText;
-			LoadProjectTextFile(TEXT("Plugins/UnrealMcp/Source/UnrealMcp/Private/UnrealMcpModule.cpp"), SourceText);
-
 			TArray<TSharedPtr<FJsonValue>> ToolReports;
 			TArray<FString> MissingHandlers;
 			TArray<FString> MissingDocs;
@@ -3749,8 +3741,8 @@ namespace UnrealMcp
 				ToolObject->TryGetStringField(TEXT("description"), Description);
 
 				const FString HandlerName = ResolveToolHandlerName(Name);
-				const FString HandlerNeedle = FString::Printf(TEXT("ToolName == TEXT(\"%s\")"), *HandlerName);
-				const bool bHasHandler = SourceText.Contains(HandlerNeedle, ESearchCase::CaseSensitive);
+				const FToolHandlerRegistryEntry* HandlerEntry = FindToolHandlerRegistryEntry(HandlerName);
+				const bool bHasHandler = HandlerEntry != nullptr;
 				const FToolRegistryEntry* RegistryEntry = FindToolRegistryEntry(Name);
 				const bool bHasExplicitRegistryEntry = RegistryEntry && RegistryEntry->bLoadedFromExplicitRegistry;
 				const FString DocsPath = RegistryEntry ? RegistryEntry->Policy.DocsPath : FString();
@@ -3838,7 +3830,9 @@ namespace UnrealMcp
 				ReportObject->SetStringField(TEXT("title"), Title);
 				ReportObject->SetStringField(TEXT("description"), Description);
 				ReportObject->SetBoolField(TEXT("hasHandler"), bHasHandler);
-				ReportObject->SetStringField(TEXT("handlerCheckSource"), TEXT("legacy_source_scan"));
+				ReportObject->SetStringField(TEXT("handlerCheckSource"), TEXT("explicit_handler_registry"));
+				ReportObject->SetStringField(TEXT("handlerCategory"), HandlerEntry ? HandlerEntry->Category : TEXT(""));
+				ReportObject->SetStringField(TEXT("handlerSourceFile"), HandlerEntry ? HandlerEntry->SourceFile : TEXT(""));
 				ReportObject->SetBoolField(TEXT("hasExplicitRegistryEntry"), bHasExplicitRegistryEntry);
 				ReportObject->SetStringField(TEXT("registryCategory"), RegistryEntry ? RegistryEntry->Category : TEXT(""));
 				ReportObject->SetStringField(TEXT("docsPath"), DocsPath);

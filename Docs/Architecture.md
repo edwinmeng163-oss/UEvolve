@@ -9,6 +9,7 @@ Core layers:
 - `FUnrealMcpModule`: module startup, HTTP routing, MCP protocol handling, Chat command dispatch, and current tool execution.
 - Tool helpers in `UnrealMcpModule.cpp`: editor, actor, Blueprint, widget, scaffold, self-extension, memory, skill, build, and test logic.
 - `UnrealMcpToolRegistry`: explicit metadata for visibility, handler aliases, risk policy, owners, docs, dry-run support, and test coverage.
+- `UnrealMcpToolHandlerRegistry`: explicit handler registration map used by audit and registry validation instead of source-text scanning.
 - `UnrealMcpToolExecutionGuard` plus `UnrealMcp*OutcomeVerifier`: shared execution checks with category-specific state verification for Blueprint, Widget, Actor, Memory, Skill, Scaffold, and Self-extension tools.
 - `Tools/unreal_mcp_supervisor.py`: external process for restart-aware pipeline automation.
 - `Tools/UnrealMcpSupervisorTemplates`: versioned macOS/Windows supervisor launcher templates with placeholders instead of machine-specific paths.
@@ -33,6 +34,7 @@ Recommended split:
 
 - `Private/Core`: MCP protocol helpers, JSON-RPC response helpers, schema utilities.
 - `Private/ToolRegistry`: tool metadata, visibility, handler aliases, policy metadata.
+- `Private/ToolHandlers`: first-class handler registration metadata.
 - `Private/Execution`: shared execution guard plus category-specific preflight/postcheck verifiers.
 - `Private/Tools/SelfExtension`: self-extension workbench, pipeline status, MCP test execution, and extension pipeline helpers. The first split moved `unreal.mcp_workbench_status`, `unreal.mcp_pipeline_status`, `unreal.mcp_run_tool_test`, `unreal.mcp_run_test_suite`, and `unreal.mcp_extension_pipeline` into `UnrealMcpSelfExtensionTools.cpp`.
 - `Private/Tools/Editor`: status, logs, maps, assets, PIE, console, Python.
@@ -80,7 +82,7 @@ status output:
 - `owner`
 - `docsPath`
 
-`Tools/validate_tool_registry.py` provides an editor-independent check for required metadata, duplicate names, known categories, documentation files, write-tool execution-check coverage, and the mirrored plugin resource registry.
+`Tools/validate_tool_registry.py` provides an editor-independent check for required metadata, duplicate names, known categories, documentation files, handler map coverage, write-tool execution-check coverage, and the mirrored plugin resource registry.
 
 ## Data and State
 

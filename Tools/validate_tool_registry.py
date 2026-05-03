@@ -8,6 +8,7 @@ can run it before opening Unreal Editor or as a lightweight CI step.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 REGISTRY_PATH = ROOT / "Tools" / "UnrealMcpToolRegistry" / "tools.json"
 MIRROR_PATH = ROOT / "Plugins" / "UnrealMcp" / "Resources" / "ToolRegistry" / "tools.json"
+HANDLER_REGISTRY_PATH = ROOT / "Plugins" / "UnrealMcp" / "Source" / "UnrealMcp" / "Private" / "UnrealMcpToolHandlerRegistry.cpp"
 KNOWN_CATEGORIES = {
     "actors",
     "blueprint",
@@ -63,6 +65,14 @@ def main() -> int:
     mirror = load_json(MIRROR_PATH)
     tools = registry.get("tools", [])
     mirror_tools = mirror.get("tools", [])
+    handler_registry_text = HANDLER_REGISTRY_PATH.read_text(encoding="utf-8")
+    handler_entries = {
+        match.group("name"): match.group("category")
+        for match in re.finditer(
+            r'MakeHandlerEntry\(TEXT\("(?P<name>[^"]+)"\),\s*TEXT\("(?P<category>[^"]+)"\)',
+            handler_registry_text,
+        )
+    }
 
     if [tool.get("name") for tool in tools] != [tool.get("name") for tool in mirror_tools]:
         issues.append("Registry mirror tool names/order differ from Tools/UnrealMcpToolRegistry/tools.json.")
@@ -86,6 +96,14 @@ def main() -> int:
             issues.append(f"{name}: write-capable tools should enable preflightSupport and postcheckSupport.")
         if not docs_file_exists(str(tool.get("docsPath", ""))):
             issues.append(f"{name}: docsPath file does not exist: {tool.get('docsPath')!r}")
+        handler_name = str(tool.get("handlerName", ""))
+        if handler_name not in handler_entries:
+            issues.append(f"{name}: handlerName {handler_name!r} is missing from UnrealMcpToolHandlerRegistry.cpp")
+        elif handler_entries[handler_name] != tool.get("category"):
+            issues.append(
+                f"{name}: handlerName {handler_name!r} category mismatch: "
+                f"handler registry has {handler_entries[handler_name]!r}, tool registry has {tool.get('category')!r}"
+            )
 
     for name, count in sorted(seen.items()):
         if count > 1:
@@ -94,6 +112,7 @@ def main() -> int:
     summary = {
         "toolCount": len(tools),
         "mirrorToolCount": len(mirror_tools),
+        "handlerCount": len(handler_entries),
         "issueCount": len(issues),
         "categories": sorted({tool.get("category", "") for tool in tools}),
     }

@@ -62,7 +62,7 @@ Write-capable tools attach structured `preflight` and `postcheck` results. Gener
 
 ## Remaining Hardening Work
 
-- Replace the remaining source-scan handler audit with a first-class handler registration map.
+- Add CI coverage for ToolRegistry/ToolHandlerRegistry validation.
 - Add optional policy enforcement that blocks high-risk tools unless enabled.
 - Add an audit log for all write-capable tool calls.
 - Add CI checks for schema compatibility and missing documentation.

@@ -34,6 +34,7 @@ The repository currently contains:
 - Self-extension safety rails: schema validation, snippet validation, dry-run diffs, backups, build/test handoff, rollback manifests, project memory, and project-local skills.
 - Versioned core MCP test fixtures under `Tools/UnrealMcpTests`.
 - Explicit ToolRegistry metadata under `Tools/UnrealMcpToolRegistry/tools.json` for category, handler alias, risk level, write/build/process/restart/memory/lock requirements, dry-run support, owner, docs path, and test coverage.
+- Explicit ToolHandlerRegistry metadata in `UnrealMcpToolHandlerRegistry.cpp` so audit checks handler presence without scanning source text.
 - Tool-specific preflight/postcheck verifiers for Blueprint graph, Widget Blueprint, level actor, project memory, skill, scaffold, and self-extension workflow tools.
 
 ## Planning Docs

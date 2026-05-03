@@ -7,6 +7,7 @@
 #include "Misc/Paths.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
+#include "UnrealMcpToolHandlerRegistry.h"
 
 namespace UnrealMcp
 {
@@ -444,6 +445,18 @@ namespace UnrealMcp
 			{
 				AddValidationIssue(Issues, TEXT("error"), TEXT("missing_handler_name"), Entry.Name, TEXT("Registry entry handlerName is empty."));
 			}
+			else
+			{
+				const FToolHandlerRegistryEntry* HandlerEntry = FindToolHandlerRegistryEntry(Entry.HandlerName);
+				if (!HandlerEntry)
+				{
+					AddValidationIssue(Issues, TEXT("error"), TEXT("handler_not_registered"), Entry.Name, FString::Printf(TEXT("handlerName '%s' is missing from UnrealMcpToolHandlerRegistry."), *Entry.HandlerName));
+				}
+				else if (!HandlerEntry->Category.Equals(Entry.Category, ESearchCase::CaseSensitive))
+				{
+					AddValidationIssue(Issues, TEXT("warning"), TEXT("handler_category_mismatch"), Entry.Name, FString::Printf(TEXT("handlerName '%s' is registered under category '%s', but tool registry category is '%s'."), *Entry.HandlerName, *HandlerEntry->Category, *Entry.Category));
+				}
+			}
 			if (Entry.Policy.Owner.TrimStartAndEnd().IsEmpty())
 			{
 				AddValidationIssue(Issues, TEXT("error"), TEXT("missing_owner"), Entry.Name, TEXT("Registry entry owner is empty."));
@@ -520,6 +533,7 @@ namespace UnrealMcp
 		ValidationObject->SetNumberField(TEXT("explicitEntryCount"), ExplicitEntryCount);
 		ValidationObject->SetNumberField(TEXT("legacyHiddenCount"), HiddenEntryCount);
 		ValidationObject->SetNumberField(TEXT("handlerAliasCount"), AliasEntryCount);
+		ValidationObject->SetNumberField(TEXT("registeredHandlerCount"), GetToolHandlerRegistryEntries().Num());
 		ValidationObject->SetNumberField(TEXT("docsPathExistsCount"), DocsPathExistsCount);
 		ValidationObject->SetNumberField(TEXT("issueCount"), Issues.Num());
 		ValidationObject->SetObjectField(TEXT("categoryCounts"), MapToJsonObject(CategoryCounts));
@@ -578,6 +592,7 @@ namespace UnrealMcp
 		StructuredContent->SetArrayField(TEXT("toolRegistryEntries"), EntryValues);
 		StructuredContent->SetArrayField(TEXT("legacyHiddenTools"), HiddenValues);
 		StructuredContent->SetArrayField(TEXT("handlerAliases"), AliasValues);
+		StructuredContent->SetObjectField(TEXT("toolHandlerRegistry"), MakeToolHandlerRegistryStatusObject());
 		StructuredContent->SetObjectField(TEXT("toolRegistryValidation"), MakeToolRegistryValidationObject());
 	}
 }
