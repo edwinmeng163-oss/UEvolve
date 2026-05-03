@@ -17706,7 +17706,8 @@ TUniquePtr<FHttpServerResponse> FUnrealMcpModule::HandleToolsCall(const TSharedP
 		TSharedPtr<FJsonObject> ActivityDetails = MakeShared<FJsonObject>();
 		ActivityDetails->SetStringField(TEXT("toolName"), ToolName);
 		ActivityDetails->SetBoolField(TEXT("isError"), Result.bIsError);
-		ActivityDetails->SetStringField(TEXT("textPreview"), Result.Text.Left(1000));
+		ActivityDetails->SetNumberField(TEXT("textLength"), Result.Text.Len());
+		ActivityDetails->SetBoolField(TEXT("hasStructuredContent"), Result.StructuredContent.IsValid());
 		UnrealMcp::RecordSkillActivityEvent(TEXT("mcp_tool_result"), FString::Printf(TEXT("MCP tool %s %s."), *ToolName, Result.bIsError ? TEXT("failed") : TEXT("completed")), ActivityDetails);
 	}
 

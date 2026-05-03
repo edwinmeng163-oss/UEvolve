@@ -156,7 +156,7 @@ Behavior notes:
 - Unreal MCP also synchronizes Unreal's global HTTP connection/activity timeouts for AI turns so macOS does not fall back to the engine's default 30-second connection timeout.
 - The default AI tool-round budget is 16 so scaffold-style requests have more room to inspect, create assets, and then summarize.
 - The conversation history is persisted at `Saved/UnrealMcp/ChatHistory.json`.
-- High-level activity recording writes local JSONL events under `Saved/UnrealMcp/ActivityLog/*.jsonl`; it records MCP tool calls/results and a periodic editor heartbeat roughly once per minute while recording is active.
+- High-level activity recording is opt-in and starts only after `unreal.skill_recording_start`; while active, it writes local JSONL events under `Saved/UnrealMcp/ActivityLog/*.jsonl`. It records MCP tool call/result metadata and a periodic editor heartbeat roughly once per minute, but it does not store tool result text previews.
 - On the first AI turn after the panel reloads, Unreal MCP now also replays a small, compact slice of the persisted local transcript back to the model for continuity, so saved history is not just UI-only.
 - `Copy Chat` copies the full visible transcript, and `Copy Log` copies the most recent `/log` or `unreal.tail_log` output.
 - For AI-driven editing, prefer the fixed-schema wrapper tools such as `unreal.spawn_actor_basic`, `unreal.spawn_static_mesh_actor`, `unreal.batch_set_actor_scale`, `unreal.batch_set_actor_tags`, `unreal.batch_set_point_light_properties`, `unreal.batch_configure_static_mesh_actors`, the `unreal.bp_*` Blueprint graph editing tools, the `unreal.widget_*` UMG editing tools, and the `unreal.scaffold_*` gameplay scaffold tools.

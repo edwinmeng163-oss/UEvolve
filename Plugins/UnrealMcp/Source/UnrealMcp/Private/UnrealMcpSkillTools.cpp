@@ -25,9 +25,9 @@ namespace UnrealMcp
 	namespace
 	{
 		FCriticalSection GSkillActivityMutex;
-		bool GSkillActivityRecording = true;
+		bool GSkillActivityRecording = false;
 		FString GSkillActivitySessionId;
-		FString GSkillActivityGoal = TEXT("Continuous Unreal MCP activity recording.");
+		FString GSkillActivityGoal = TEXT("Activity recording is off until unreal.skill_recording_start is called.");
 		FDateTime GSkillActivityStartedAtUtc;
 		FDateTime GSkillActivityLastHeartbeatAtUtc;
 		double GSkillActivityRecordIntervalSeconds = 60.0;
