@@ -6,8 +6,11 @@
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Editor.h"
+#include "EditorScriptingHelpers.h"
 #include "Engine/World.h"
+#include "FileHelpers.h"
 #include "GenericPlatform/GenericPlatformOutputDevices.h"
+#include "IContentBrowserSingleton.h"
 #include "IPythonScriptPlugin.h"
 #include "Logging/MessageLog.h"
 #include "Modules/ModuleManager.h"
@@ -18,7 +21,9 @@
 #include "Misc/Paths.h"
 #include "Misc/StringOutputDevice.h"
 #include "PlayInEditorDataTypes.h"
+#include "Subsystems/AssetEditorSubsystem.h"
 #include "Subsystems/EditorActorSubsystem.h"
+#include "Subsystems/EditorAssetSubsystem.h"
 #include "UnrealMcpModule.h"
 #include "UnrealMcpSettings.h"
 
@@ -686,6 +691,170 @@ namespace UnrealMcp
 			return MakeExecutionResult(Text, StructuredContent, !bExecuted || ErrorCount > 0);
 		}
 
+		UObject* EditorToolLoadAssetFromAnyPath(
+			UEditorAssetSubsystem* EditorAssetSubsystem,
+			const FString& AnyAssetPath,
+			FString& OutObjectPath,
+			FString& OutFailureReason)
+		{
+			if (!EditorAssetSubsystem)
+			{
+				OutFailureReason = TEXT("EditorAssetSubsystem is unavailable.");
+				return nullptr;
+			}
+
+			OutObjectPath = EditorScriptingHelpers::ConvertAnyPathToObjectPath(AnyAssetPath, OutFailureReason);
+			if (OutObjectPath.IsEmpty())
+			{
+				return nullptr;
+			}
+
+			UObject* LoadedAsset = EditorAssetSubsystem->LoadAsset(OutObjectPath);
+			if (!LoadedAsset)
+			{
+				OutFailureReason = FString::Printf(TEXT("Failed to load asset '%s'."), *OutObjectPath);
+			}
+
+			return LoadedAsset;
+		}
+
+		FUnrealMcpExecutionResult ExecuteOpenMap(const FString& ToolName, const FJsonObject& Arguments)
+		{
+			if (EditorToolIsEditorPlaying())
+			{
+				return EditorToolMakePieBlockedResult(ToolName);
+			}
+
+			FString MapPath;
+			if (!Arguments.TryGetStringField(TEXT("path"), MapPath) || MapPath.IsEmpty())
+			{
+				return MakeExecutionResult(TEXT("The path argument is required."), nullptr, true);
+			}
+
+			FString FailureReason;
+			const FString ObjectPath = EditorScriptingHelpers::ConvertAnyPathToObjectPath(MapPath, FailureReason);
+			if (ObjectPath.IsEmpty())
+			{
+				return MakeExecutionResult(FString::Printf(TEXT("Unable to resolve map path: %s"), *FailureReason), nullptr, true);
+			}
+
+			TGuardValue<bool> UnattendedScriptGuard(GIsRunningUnattendedScript, true);
+			const bool bLoaded = UEditorLoadingAndSavingUtils::LoadMap(ObjectPath) != nullptr;
+			if (!bLoaded)
+			{
+				return MakeExecutionResult(FString::Printf(TEXT("Failed to open map '%s'."), *ObjectPath), nullptr, true);
+			}
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("path"), ObjectPath);
+			return MakeExecutionResult(FString::Printf(TEXT("Opened map %s."), *ObjectPath), StructuredContent, false);
+		}
+
+		FUnrealMcpExecutionResult ExecuteOpenAsset(const FJsonObject& Arguments)
+		{
+			UEditorAssetSubsystem* EditorAssetSubsystem = GEditor ? GEditor->GetEditorSubsystem<UEditorAssetSubsystem>() : nullptr;
+			UAssetEditorSubsystem* AssetEditorSubsystem = GEditor ? GEditor->GetEditorSubsystem<UAssetEditorSubsystem>() : nullptr;
+			if (!EditorAssetSubsystem || !AssetEditorSubsystem)
+			{
+				return MakeExecutionResult(TEXT("Asset editor subsystems are unavailable."), nullptr, true);
+			}
+
+			FString AssetPath;
+			if (!Arguments.TryGetStringField(TEXT("path"), AssetPath) || AssetPath.IsEmpty())
+			{
+				return MakeExecutionResult(TEXT("The path argument is required."), nullptr, true);
+			}
+
+			FString ObjectPath;
+			FString FailureReason;
+			UObject* Asset = EditorToolLoadAssetFromAnyPath(EditorAssetSubsystem, AssetPath, ObjectPath, FailureReason);
+			if (!Asset)
+			{
+				return MakeExecutionResult(FailureReason, nullptr, true);
+			}
+
+			const bool bOpened = AssetEditorSubsystem->OpenEditorForAsset(Asset);
+			if (!bOpened)
+			{
+				return MakeExecutionResult(FString::Printf(TEXT("Failed to open an editor for '%s'."), *ObjectPath), nullptr, true);
+			}
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("objectPath"), ObjectPath);
+			StructuredContent->SetStringField(TEXT("classPath"), Asset->GetClass()->GetPathName());
+			return MakeExecutionResult(FString::Printf(TEXT("Opened asset %s."), *ObjectPath), StructuredContent, false);
+		}
+
+		FUnrealMcpExecutionResult ExecuteSyncContentBrowser(const FJsonObject& Arguments)
+		{
+			UEditorAssetSubsystem* EditorAssetSubsystem = GEditor ? GEditor->GetEditorSubsystem<UEditorAssetSubsystem>() : nullptr;
+			if (!EditorAssetSubsystem)
+			{
+				return MakeExecutionResult(TEXT("EditorAssetSubsystem is unavailable."), nullptr, true);
+			}
+
+			FString RequestedPath;
+			if (!Arguments.TryGetStringField(TEXT("path"), RequestedPath) || RequestedPath.IsEmpty())
+			{
+				return MakeExecutionResult(TEXT("The path argument is required."), nullptr, true);
+			}
+
+			FContentBrowserModule& ContentBrowserModule = FModuleManager::LoadModuleChecked<FContentBrowserModule>(TEXT("ContentBrowser"));
+			const FAssetData AssetData = EditorAssetSubsystem->FindAssetData(RequestedPath);
+			if (AssetData.IsValid())
+			{
+				ContentBrowserModule.Get().SyncBrowserToAssets(TArray<FAssetData>{AssetData}, false, true);
+
+				TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+				StructuredContent->SetStringField(TEXT("objectPath"), AssetData.GetSoftObjectPath().ToString());
+				return MakeExecutionResult(
+					FString::Printf(TEXT("Synced Content Browser to asset %s."), *AssetData.GetSoftObjectPath().ToString()),
+					StructuredContent,
+					false);
+			}
+
+			FString FailureReason;
+			const FString FolderPath = EditorScriptingHelpers::ConvertAnyPathToLongPackagePath(RequestedPath, FailureReason);
+			if (FolderPath.IsEmpty())
+			{
+				return MakeExecutionResult(FString::Printf(TEXT("Unable to resolve path '%s': %s"), *RequestedPath, *FailureReason), nullptr, true);
+			}
+
+			ContentBrowserModule.Get().SyncBrowserToFolders(TArray<FString>{FolderPath}, false, true);
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("folderPath"), FolderPath);
+			return MakeExecutionResult(FString::Printf(TEXT("Synced Content Browser to folder %s."), *FolderPath), StructuredContent, false);
+		}
+
+		FUnrealMcpExecutionResult ExecuteSaveDirtyPackages(const FString& ToolName, const FJsonObject& Arguments)
+		{
+			if (EditorToolIsEditorPlaying())
+			{
+				return EditorToolMakePieBlockedResult(ToolName);
+			}
+
+			bool bSaveMaps = true;
+			bool bSaveAssets = true;
+			Arguments.TryGetBoolField(TEXT("saveMaps"), bSaveMaps);
+			Arguments.TryGetBoolField(TEXT("saveAssets"), bSaveAssets);
+
+			const bool bSaved = UEditorLoadingAndSavingUtils::SaveDirtyPackages(bSaveMaps, bSaveAssets);
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetBoolField(TEXT("saved"), bSaved);
+			StructuredContent->SetBoolField(TEXT("saveMaps"), bSaveMaps);
+			StructuredContent->SetBoolField(TEXT("saveAssets"), bSaveAssets);
+
+			const FString Text = FString::Printf(
+				TEXT("SaveDirtyPackages completed. saved=%s saveMaps=%s saveAssets=%s"),
+				bSaved ? TEXT("true") : TEXT("false"),
+				bSaveMaps ? TEXT("true") : TEXT("false"),
+				bSaveAssets ? TEXT("true") : TEXT("false"));
+
+			return MakeExecutionResult(Text, StructuredContent, false);
+		}
+
 		FUnrealMcpExecutionResult ExecuteListMaps()
 		{
 			FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
@@ -884,6 +1053,30 @@ namespace UnrealMcp
 		if (ToolName == TEXT("unreal.map_check"))
 		{
 			OutResult = ExecuteMapCheck(ToolName);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.open_map"))
+		{
+			OutResult = ExecuteOpenMap(ToolName, Arguments);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.open_asset"))
+		{
+			OutResult = ExecuteOpenAsset(Arguments);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.sync_content_browser"))
+		{
+			OutResult = ExecuteSyncContentBrowser(Arguments);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.save_dirty_packages"))
+		{
+			OutResult = ExecuteSaveDirtyPackages(ToolName, Arguments);
 			return true;
 		}
 
