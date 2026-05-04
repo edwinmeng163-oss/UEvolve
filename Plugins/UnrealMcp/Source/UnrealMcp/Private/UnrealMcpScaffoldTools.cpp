@@ -3,6 +3,9 @@
 #include "UnrealMcpModule.h"
 
 #include "Dom/JsonObject.h"
+#include "HAL/FileManager.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
 #include "Editor.h"
 #include "Subsystems/EditorAssetSubsystem.h"
 #include "AssetRegistry/AssetRegistryModule.h"
@@ -813,6 +816,325 @@ namespace UnrealMcp
 		TSharedPtr<FJsonObject> StructuredContent = MakeScaffoldStructuredContent(TEXT("scaffold_result_ui"), RootPath, Directories, Assets, Variables, Functions, Defaults, Finalized, NextSteps);
 		return MakeExecutionResult(FString::Printf(TEXT("Scaffolded result UI under %s."), *RootPath), StructuredContent, false);
 	}
+
+	void AddNextStep(TArray<TSharedPtr<FJsonValue>>& NextSteps, const FString& Text)
+	{
+		NextSteps.Add(MakeShared<FJsonValueString>(Text));
+	}
+
+	FString SanitizeMcpToolIdForPath(const FString& ToolName)
+	{
+		FString CleanName = ToolName.TrimStartAndEnd();
+		if (CleanName.StartsWith(TEXT("unreal."), ESearchCase::IgnoreCase))
+		{
+			CleanName.RightChopInline(7);
+		}
+
+		FString Result;
+		for (const TCHAR Character : CleanName)
+		{
+			const bool bIsAlphaNumeric =
+				(Character >= TEXT('A') && Character <= TEXT('Z'))
+				|| (Character >= TEXT('a') && Character <= TEXT('z'))
+				|| (Character >= TEXT('0') && Character <= TEXT('9'));
+			Result.AppendChar(bIsAlphaNumeric ? Character : TEXT('_'));
+		}
+
+		while (Result.Contains(TEXT("__")))
+		{
+			Result.ReplaceInline(TEXT("__"), TEXT("_"));
+		}
+		Result.TrimStartAndEndInline();
+		while (Result.StartsWith(TEXT("_")))
+		{
+			Result.RightChopInline(1);
+		}
+		while (Result.EndsWith(TEXT("_")))
+		{
+			Result.LeftChopInline(1);
+		}
+
+		return Result.IsEmpty() ? TEXT("custom_tool") : Result;
+	}
+
+	FString EscapeForCppTextLiteral(FString Value)
+	{
+		Value.ReplaceInline(TEXT("\\"), TEXT("\\\\"));
+		Value.ReplaceInline(TEXT("\""), TEXT("\\\""));
+		Value.ReplaceInline(TEXT("\r"), TEXT(""));
+		Value.ReplaceInline(TEXT("\n"), TEXT("\\n"));
+		return Value;
+	}
+
+	bool ResolveProjectOutputDirectory(const FString& RequestedOutputRoot, FString& OutDirectory, FString& OutFailureReason)
+	{
+		FString OutputRoot = RequestedOutputRoot.TrimStartAndEnd();
+		if (OutputRoot.IsEmpty())
+		{
+			OutputRoot = TEXT("Tools/UnrealMcpToolScaffolds");
+		}
+
+		FString ProjectDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+		FPaths::NormalizeDirectoryName(ProjectDir);
+		FPaths::CollapseRelativeDirectories(ProjectDir);
+
+		FString ResolvedDirectory = FPaths::IsRelative(OutputRoot)
+			? FPaths::Combine(ProjectDir, OutputRoot)
+			: OutputRoot;
+		ResolvedDirectory = FPaths::ConvertRelativePathToFull(ResolvedDirectory);
+		FPaths::NormalizeDirectoryName(ResolvedDirectory);
+		FPaths::CollapseRelativeDirectories(ResolvedDirectory);
+
+		const FString ProjectDirPrefix = ProjectDir.EndsWith(TEXT("/")) ? ProjectDir : ProjectDir + TEXT("/");
+		if (!ResolvedDirectory.Equals(ProjectDir, ESearchCase::IgnoreCase)
+			&& !ResolvedDirectory.StartsWith(ProjectDirPrefix, ESearchCase::IgnoreCase))
+		{
+			OutFailureReason = FString::Printf(
+				TEXT("outputRoot '%s' resolves outside the project directory '%s'."),
+				*ResolvedDirectory,
+				*ProjectDir);
+			return false;
+		}
+
+		OutDirectory = ResolvedDirectory;
+		return true;
+	}
+
+	bool WriteMcpScaffoldFile(
+		const FString& FilePath,
+		const FString& Content,
+		bool bOverwrite,
+		TArray<TSharedPtr<FJsonValue>>& Files,
+		FString& OutFailureReason)
+	{
+		const FString Directory = FPaths::GetPath(FilePath);
+		if (!IFileManager::Get().MakeDirectory(*Directory, true))
+		{
+			OutFailureReason = FString::Printf(TEXT("Failed to create directory '%s'."), *Directory);
+			return false;
+		}
+
+		const bool bExists = FPaths::FileExists(FilePath);
+		if (bExists && !bOverwrite)
+		{
+			OutFailureReason = FString::Printf(TEXT("Refusing to overwrite existing file '%s'. Set overwrite=true to replace it."), *FilePath);
+			return false;
+		}
+
+		if (!FFileHelper::SaveStringToFile(Content, *FilePath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+		{
+			OutFailureReason = FString::Printf(TEXT("Failed to write file '%s'."), *FilePath);
+			return false;
+		}
+
+		TSharedPtr<FJsonObject> FileObject = MakeShared<FJsonObject>();
+		FileObject->SetStringField(TEXT("path"), FilePath);
+		FileObject->SetBoolField(TEXT("created"), !bExists);
+		FileObject->SetBoolField(TEXT("overwritten"), bExists && bOverwrite);
+		Files.Add(MakeShared<FJsonValueObject>(FileObject));
+		return true;
+	}
+
+	FString BuildMcpToolDefinitionSnippet(const FString& ToolName, const FString& Title, const FString& Description)
+	{
+		return FString::Printf(
+			TEXT("// Insert inside FUnrealMcpModule::AppendToolDefinitions.\n")
+			TEXT("{\n")
+			TEXT("\tTSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();\n")
+			TEXT("\t// TODO: Add fixed-schema fields, for example:\n")
+			TEXT("\t// PropertiesObject->SetObjectField(TEXT(\"message\"), UnrealMcp::MakeStringProperty(TEXT(\"Message to process.\")));\n\n")
+			TEXT("\tTSharedPtr<FJsonObject> InputSchema = UnrealMcp::MakeObjectSchema();\n")
+			TEXT("\tInputSchema->SetObjectField(TEXT(\"properties\"), PropertiesObject);\n\n")
+			TEXT("\tUnrealMcp::AddToolDefinition(\n")
+			TEXT("\t\tToolsArray,\n")
+			TEXT("\t\tTEXT(\"%s\"),\n")
+			TEXT("\t\tTEXT(\"%s\"),\n")
+			TEXT("\t\tTEXT(\"%s\"),\n")
+			TEXT("\t\tInputSchema);\n")
+			TEXT("}\n"),
+			*EscapeForCppTextLiteral(ToolName),
+			*EscapeForCppTextLiteral(Title),
+			*EscapeForCppTextLiteral(Description));
+	}
+
+	FString BuildMcpToolHandlerSnippet(const FString& ToolName, const FString& Title)
+	{
+		return FString::Printf(
+			TEXT("// Insert inside FUnrealMcpModule::ExecuteTool before the final unknown-tool result.\n")
+			TEXT("if (ToolName == TEXT(\"%s\"))\n")
+			TEXT("{\n")
+			TEXT("\t// TODO: Validate Arguments and implement the editor operation.\n")
+			TEXT("\tFString Message;\n")
+			TEXT("\tArguments.TryGetStringField(TEXT(\"message\"), Message);\n\n")
+			TEXT("\tTSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();\n")
+			TEXT("\tStructuredContent->SetStringField(TEXT(\"message\"), Message);\n")
+			TEXT("\tStructuredContent->SetStringField(TEXT(\"tool\"), TEXT(\"%s\"));\n\n")
+			TEXT("\treturn UnrealMcp::MakeExecutionResult(\n")
+			TEXT("\t\tFString::Printf(TEXT(\"%s completed. message=%%s\"), *Message),\n")
+			TEXT("\t\tStructuredContent,\n")
+			TEXT("\t\tfalse);\n")
+			TEXT("}\n"),
+			*EscapeForCppTextLiteral(ToolName),
+			*EscapeForCppTextLiteral(ToolName),
+			*EscapeForCppTextLiteral(Title));
+	}
+
+	FString BuildMcpToolChatCommandSnippet(const FString& ToolName)
+	{
+		return FString::Printf(
+			TEXT("// Optional: insert inside FUnrealMcpModule::ExecuteChatCommand.\n")
+			TEXT("if (UnrealMcp::MatchesCommand(TrimmedInput, TEXT(\"/%s\")))\n")
+			TEXT("{\n")
+			TEXT("\tTSharedPtr<FJsonObject> ArgumentsObject = MakeShared<FJsonObject>();\n")
+			TEXT("\tArgumentsObject->SetStringField(TEXT(\"message\"), UnrealMcp::GetCommandRemainder(TrimmedInput, TEXT(\"/%s\")));\n")
+			TEXT("\treturn ExecuteTool(TEXT(\"%s\"), *ArgumentsObject);\n")
+			TEXT("}\n"),
+			*EscapeForCppTextLiteral(SanitizeMcpToolIdForPath(ToolName)),
+			*EscapeForCppTextLiteral(SanitizeMcpToolIdForPath(ToolName)),
+			*EscapeForCppTextLiteral(ToolName));
+	}
+
+		FUnrealMcpExecutionResult ScaffoldMcpTool(const FJsonObject& Arguments)
+		{
+			FString ToolName;
+			if (!Arguments.TryGetStringField(TEXT("toolName"), ToolName) || ToolName.TrimStartAndEnd().IsEmpty())
+		{
+			return MakeExecutionResult(TEXT("Missing required field 'toolName'."), nullptr, true);
+		}
+		ToolName = ToolName.TrimStartAndEnd();
+		if (!ToolName.StartsWith(TEXT("unreal."), ESearchCase::CaseSensitive))
+		{
+			return MakeExecutionResult(TEXT("toolName must start with 'unreal.'."), nullptr, true);
+		}
+
+		FString Title;
+		FString Description;
+		FString OutputRoot;
+		FString ArgumentSchemaJson;
+		FString ExampleArgumentsJson;
+		FString ImplementationNotes;
+		bool bOverwrite = false;
+		bool bIncludeChatCommandSnippet = true;
+		Arguments.TryGetStringField(TEXT("title"), Title);
+		Arguments.TryGetStringField(TEXT("description"), Description);
+		Arguments.TryGetStringField(TEXT("outputRoot"), OutputRoot);
+		Arguments.TryGetStringField(TEXT("argumentSchemaJson"), ArgumentSchemaJson);
+		Arguments.TryGetStringField(TEXT("exampleArgumentsJson"), ExampleArgumentsJson);
+		Arguments.TryGetStringField(TEXT("implementationNotes"), ImplementationNotes);
+		Arguments.TryGetBoolField(TEXT("overwrite"), bOverwrite);
+		Arguments.TryGetBoolField(TEXT("includeChatCommandSnippet"), bIncludeChatCommandSnippet);
+
+		if (Title.TrimStartAndEnd().IsEmpty())
+		{
+			Title = SanitizeMcpToolIdForPath(ToolName).Replace(TEXT("_"), TEXT(" "));
+		}
+		if (Description.TrimStartAndEnd().IsEmpty())
+		{
+			Description = FString::Printf(TEXT("Custom Unreal MCP tool scaffold for %s."), *ToolName);
+		}
+		if (ArgumentSchemaJson.TrimStartAndEnd().IsEmpty())
+		{
+			ArgumentSchemaJson = TEXT("{\"type\":\"object\",\"properties\":{\"message\":{\"type\":\"string\",\"description\":\"Message or payload for the tool.\"}}}");
+		}
+		if (ExampleArgumentsJson.TrimStartAndEnd().IsEmpty())
+		{
+			ExampleArgumentsJson = TEXT("{\"message\":\"hello\"}");
+		}
+
+		FString ResolvedOutputRoot;
+		FString FailureReason;
+		if (!ResolveProjectOutputDirectory(OutputRoot, ResolvedOutputRoot, FailureReason))
+		{
+			return MakeExecutionResult(FailureReason, nullptr, true);
+		}
+
+		const FString ToolId = SanitizeMcpToolIdForPath(ToolName);
+		const FString ToolDirectory = FPaths::Combine(ResolvedOutputRoot, ToolId);
+
+		const FString DefinitionSnippet = BuildMcpToolDefinitionSnippet(ToolName, Title, Description);
+		const FString HandlerSnippet = BuildMcpToolHandlerSnippet(ToolName, Title);
+		const FString ChatCommandSnippet = BuildMcpToolChatCommandSnippet(ToolName);
+		const FString TestRequest = FString::Printf(
+			TEXT("{\n")
+			TEXT("  \"jsonrpc\": \"2.0\",\n")
+			TEXT("  \"id\": 1,\n")
+			TEXT("  \"method\": \"tools/call\",\n")
+			TEXT("  \"params\": {\n")
+			TEXT("    \"name\": \"%s\",\n")
+			TEXT("    \"arguments\": %s\n")
+			TEXT("  }\n")
+			TEXT("}\n"),
+			*ToolName,
+			*ExampleArgumentsJson);
+
+		const FString Readme = FString::Printf(
+			TEXT("# %s MCP Tool Scaffold\n\n")
+			TEXT("Tool name: `%s`\n\n")
+			TEXT("Title: `%s`\n\n")
+			TEXT("Description: %s\n\n")
+			TEXT("## Important\n\n")
+			TEXT("This scaffold does not hot-load a C++ MCP tool into the running editor. Review the snippets, integrate them into `Plugins/UnrealMcp/Source/UnrealMcp/Private/UnrealMcpModule.cpp`, rebuild the current `<ProjectName>Editor` target, and restart Unreal Editor if needed.\n\n")
+			TEXT("## Requested Argument Schema\n\n")
+			TEXT("```json\n%s\n```\n\n")
+			TEXT("## Example Arguments\n\n")
+			TEXT("```json\n%s\n```\n\n")
+			TEXT("## Implementation Notes\n\n")
+			TEXT("%s\n"),
+			*ToolId,
+			*ToolName,
+			*Title,
+			*Description,
+			*ArgumentSchemaJson,
+			*ExampleArgumentsJson,
+			ImplementationNotes.TrimStartAndEnd().IsEmpty() ? TEXT("- Add validation, editor safety checks, structured content, docs, and tests before shipping.") : *ImplementationNotes);
+
+		const FString Checklist = FString::Printf(
+			TEXT("# Integration Checklist\n\n")
+			TEXT("- Add `ToolDefinition.cpp.snippet` to `FUnrealMcpModule::AppendToolDefinitions`.\n")
+			TEXT("- Add `ExecuteToolHandler.cpp.snippet` to `FUnrealMcpModule::ExecuteTool`.\n")
+			TEXT("- Optionally add `ChatCommand.cpp.snippet` to `FUnrealMcpModule::ExecuteChatCommand`.\n")
+			TEXT("- Add a short example to `Plugins/UnrealMcp/README.md`.\n")
+			TEXT("- Rebuild the current `<ProjectName>Editor` target.\n")
+			TEXT("- Start Unreal Editor and call `/tool %s %s` from Unreal MCP Chat.\n")
+			TEXT("- Verify `tools/list` includes `%s`.\n"),
+			*ToolName,
+			*ExampleArgumentsJson,
+			*ToolName);
+
+		TArray<TSharedPtr<FJsonValue>> Files;
+		if (!WriteMcpScaffoldFile(FPaths::Combine(ToolDirectory, TEXT("README.md")), Readme, bOverwrite, Files, FailureReason)
+			|| !WriteMcpScaffoldFile(FPaths::Combine(ToolDirectory, TEXT("ToolDefinition.cpp.snippet")), DefinitionSnippet, bOverwrite, Files, FailureReason)
+			|| !WriteMcpScaffoldFile(FPaths::Combine(ToolDirectory, TEXT("ExecuteToolHandler.cpp.snippet")), HandlerSnippet, bOverwrite, Files, FailureReason)
+			|| !WriteMcpScaffoldFile(FPaths::Combine(ToolDirectory, TEXT("TestRequest.json")), TestRequest, bOverwrite, Files, FailureReason)
+			|| !WriteMcpScaffoldFile(FPaths::Combine(ToolDirectory, TEXT("IntegrationChecklist.md")), Checklist, bOverwrite, Files, FailureReason))
+		{
+			return MakeExecutionResult(FailureReason, nullptr, true);
+		}
+
+		if (bIncludeChatCommandSnippet
+			&& !WriteMcpScaffoldFile(FPaths::Combine(ToolDirectory, TEXT("ChatCommand.cpp.snippet")), ChatCommandSnippet, bOverwrite, Files, FailureReason))
+		{
+			return MakeExecutionResult(FailureReason, nullptr, true);
+		}
+
+		TArray<TSharedPtr<FJsonValue>> NextSteps;
+		AddNextStep(NextSteps, TEXT("Review generated snippets before integrating them into the plugin source."));
+		AddNextStep(NextSteps, TEXT("Prefer fixed JSON schemas; avoid additionalProperties=true when the tool should be visible to OpenAI function calling."));
+		AddNextStep(NextSteps, TEXT("Rebuild the current <ProjectName>Editor target after integrating the C++ snippets."));
+
+		TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+		StructuredContent->SetStringField(TEXT("action"), TEXT("scaffold_mcp_tool"));
+		StructuredContent->SetStringField(TEXT("toolName"), ToolName);
+		StructuredContent->SetStringField(TEXT("toolId"), ToolId);
+		StructuredContent->SetStringField(TEXT("directory"), ToolDirectory);
+		StructuredContent->SetArrayField(TEXT("files"), Files);
+		StructuredContent->SetArrayField(TEXT("nextSteps"), NextSteps);
+
+		return MakeExecutionResult(
+			FString::Printf(TEXT("Scaffolded MCP tool extension files for %s under %s."), *ToolName, *ToolDirectory),
+			StructuredContent,
+				false);
+		}
 
 	namespace
 	{
