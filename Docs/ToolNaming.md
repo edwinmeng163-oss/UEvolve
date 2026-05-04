@@ -53,6 +53,17 @@ Prefer one implementation function per public capability group. A handler should
 - Put structured output into `structuredContent`.
 - Avoid writing source, assets, or external process state unless the ToolRegistry policy marks that risk.
 
+## Descriptor-First Registration
+
+New tools should be registered descriptor-first:
+
+- Add a fixed-schema tool definition through `FUnrealMcpToolDescriptor` and `FUnrealMcpToolRegistrar` in C++.
+- Keep the handler implementation in the relevant category file, not in `UnrealMcpModule.cpp`.
+- Let the reviewed JSON registry override policy metadata, legacy hiding, handler aliases, owners, docs, and test coverage.
+- Do not rely on source scanning or heuristic policy inference for new tools.
+
+This split keeps tool identity close to compiled code while keeping risk review and team ownership in versioned JSON.
+
 ## ToolRegistry Metadata
 
 Every AI-facing tool should have reviewed policy metadata:

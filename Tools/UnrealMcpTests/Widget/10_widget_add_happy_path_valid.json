@@ -1,0 +1,23 @@
+{
+  "name": "widget_add_happy_path_valid",
+  "description": "Widget category happy-path fixture. Creates a Widget Blueprint in the disposable /Game/__UEvolveMcpTest sandbox.",
+  "category": "happy_path",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": false,
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 202,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.widget_add",
+      "arguments": {
+        "widgetBlueprintPath": "/Game/__UEvolveMcpTest/Widget/WBP_McpSmoke",
+        "parentWidgetName": "RootCanvas",
+        "widgetName": "SmokeLabel",
+        "widgetClass": "TextBlock",
+        "isVariable": true
+      }
+    }
+  }
+}

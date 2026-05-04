@@ -11,6 +11,7 @@ namespace UnrealMcp
 		FString HandlerName;
 		FString Category;
 		FString SourceFile;
+		bool bLoadedFromDescriptor = false;
 	};
 
 	const TArray<FToolHandlerRegistryEntry>& GetToolHandlerRegistryEntries();

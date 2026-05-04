@@ -1,0 +1,20 @@
+{
+  "name": "bp_list_graph_nodes_valid",
+  "description": "Read back Blueprint graph nodes from the disposable Blueprint test asset.",
+  "category": "happy_path",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": false,
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 103,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.bp_list_graph_nodes",
+      "arguments": {
+        "blueprintPath": "/Game/__UEvolveMcpTest/Blueprint/BP_McpGraphSmoke",
+        "includePins": false
+      }
+    }
+  }
+}

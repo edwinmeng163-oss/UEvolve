@@ -48,6 +48,65 @@ namespace UnrealMcp
 	UFunction* ResolveFunctionByClassAndName(UEditorAssetSubsystem* EditorAssetSubsystem, const FString& FunctionClassPath, const FString& FunctionName, FString& OutFailureReason);
 	UEdGraph* FindStandardMacroGraph(const FString& MacroName);
 
+	void GatherBlueprintGraphs(UBlueprint* Blueprint, TArray<UEdGraph*>& OutGraphs)
+	{
+		if (!Blueprint)
+		{
+			return;
+		}
+
+		for (UEdGraph* Graph : Blueprint->UbergraphPages)
+		{
+			if (Graph)
+			{
+				OutGraphs.AddUnique(Graph);
+			}
+		}
+		for (UEdGraph* Graph : Blueprint->FunctionGraphs)
+		{
+			if (Graph)
+			{
+				OutGraphs.AddUnique(Graph);
+			}
+		}
+		for (UEdGraph* Graph : Blueprint->MacroGraphs)
+		{
+			if (Graph)
+			{
+				OutGraphs.AddUnique(Graph);
+			}
+		}
+	}
+
+	TSharedPtr<FJsonObject> DescribeBlueprintGraph(UEdGraph* Graph, bool bIncludePins)
+	{
+		TSharedPtr<FJsonObject> GraphObject = MakeShared<FJsonObject>();
+		if (!Graph)
+		{
+			return GraphObject;
+		}
+
+		GraphObject->SetStringField(TEXT("name"), Graph->GetName());
+		GraphObject->SetStringField(TEXT("schema"), Graph->Schema ? Graph->Schema->GetPathName() : FString());
+		TArray<TSharedPtr<FJsonValue>> NodeValues;
+		for (UEdGraphNode* Node : Graph->Nodes)
+		{
+			if (!Node)
+			{
+				continue;
+			}
+			TSharedPtr<FJsonObject> NodeObject = DescribeBlueprintNode(Node);
+			if (!bIncludePins)
+			{
+				NodeObject->SetArrayField(TEXT("pins"), TArray<TSharedPtr<FJsonValue>>());
+			}
+			NodeValues.Add(MakeShared<FJsonValueObject>(NodeObject));
+		}
+		GraphObject->SetNumberField(TEXT("nodeCount"), NodeValues.Num());
+		GraphObject->SetArrayField(TEXT("nodes"), NodeValues);
+		return GraphObject;
+	}
+
 	UObject* LoadAssetFromAnyPath(
 		UEditorAssetSubsystem* EditorAssetSubsystem,
 		const FString& AnyAssetPath,
@@ -1590,8 +1649,151 @@ namespace UnrealMcp
 		}
 	}
 
+	FUnrealMcpExecutionResult ListGraphNodesTool(const FJsonObject& Arguments)
+	{
+		FString BlueprintPath;
+		FString GraphName;
+		bool bIncludePins = true;
+		Arguments.TryGetStringField(TEXT("blueprintPath"), BlueprintPath);
+		Arguments.TryGetStringField(TEXT("graphName"), GraphName);
+		Arguments.TryGetBoolField(TEXT("includePins"), bIncludePins);
+
+		if (BlueprintPath.TrimStartAndEnd().IsEmpty())
+		{
+			return MakeExecutionResult(TEXT("Provide blueprintPath."), nullptr, true);
+		}
+
+		UEditorAssetSubsystem* EditorAssetSubsystem = GEditor ? GEditor->GetEditorSubsystem<UEditorAssetSubsystem>() : nullptr;
+		FString ObjectPath;
+		FString FailureReason;
+		UBlueprint* Blueprint = LoadBlueprintAsset(EditorAssetSubsystem, BlueprintPath, ObjectPath, FailureReason);
+		if (!Blueprint)
+		{
+			return MakeExecutionResult(FailureReason, nullptr, true);
+		}
+
+		TArray<UEdGraph*> Graphs;
+		if (GraphName.TrimStartAndEnd().IsEmpty())
+		{
+			GatherBlueprintGraphs(Blueprint, Graphs);
+		}
+		else
+		{
+			UEdGraph* Graph = ResolveBlueprintGraph(Blueprint, GraphName, false, FailureReason);
+			if (!Graph)
+			{
+				return MakeExecutionResult(FailureReason, nullptr, true);
+			}
+			Graphs.Add(Graph);
+		}
+
+		TArray<TSharedPtr<FJsonValue>> GraphValues;
+		int32 NodeCount = 0;
+		for (UEdGraph* Graph : Graphs)
+		{
+			if (!Graph)
+			{
+				continue;
+			}
+			NodeCount += Graph->Nodes.Num();
+			GraphValues.Add(MakeShared<FJsonValueObject>(DescribeBlueprintGraph(Graph, bIncludePins)));
+		}
+
+		TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+		StructuredContent->SetStringField(TEXT("action"), TEXT("bp_list_graph_nodes"));
+		StructuredContent->SetStringField(TEXT("blueprintPath"), ObjectPath);
+		StructuredContent->SetNumberField(TEXT("graphCount"), GraphValues.Num());
+		StructuredContent->SetNumberField(TEXT("nodeCount"), NodeCount);
+		StructuredContent->SetBoolField(TEXT("includePins"), bIncludePins);
+		StructuredContent->SetArrayField(TEXT("graphs"), GraphValues);
+		return MakeExecutionResult(FString::Printf(TEXT("Listed %d Blueprint graph node(s) across %d graph(s)."), NodeCount, GraphValues.Num()), StructuredContent, false);
+	}
+
+	FUnrealMcpExecutionResult TracePinConnectionsTool(const FJsonObject& Arguments)
+	{
+		FString BlueprintPath;
+		FString GraphName = TEXT("EventGraph");
+		FString NodeGuid;
+		FString PinName;
+		Arguments.TryGetStringField(TEXT("blueprintPath"), BlueprintPath);
+		Arguments.TryGetStringField(TEXT("graphName"), GraphName);
+		Arguments.TryGetStringField(TEXT("nodeGuid"), NodeGuid);
+		Arguments.TryGetStringField(TEXT("pinName"), PinName);
+
+		if (BlueprintPath.TrimStartAndEnd().IsEmpty())
+		{
+			return MakeExecutionResult(TEXT("Provide blueprintPath."), nullptr, true);
+		}
+		if (NodeGuid.TrimStartAndEnd().IsEmpty())
+		{
+			return MakeExecutionResult(TEXT("Provide nodeGuid."), nullptr, true);
+		}
+
+		UEditorAssetSubsystem* EditorAssetSubsystem = GEditor ? GEditor->GetEditorSubsystem<UEditorAssetSubsystem>() : nullptr;
+		FString ObjectPath;
+		FString FailureReason;
+		UBlueprint* Blueprint = LoadBlueprintAsset(EditorAssetSubsystem, BlueprintPath, ObjectPath, FailureReason);
+		if (!Blueprint)
+		{
+			return MakeExecutionResult(FailureReason, nullptr, true);
+		}
+
+		UEdGraph* Graph = ResolveBlueprintGraph(Blueprint, GraphName, false, FailureReason);
+		if (!Graph)
+		{
+			return MakeExecutionResult(FailureReason, nullptr, true);
+		}
+
+		UEdGraphNode* Node = FindBlueprintNodeByGuid(Graph, NodeGuid);
+		if (!Node)
+		{
+			return MakeExecutionResult(FString::Printf(TEXT("Node '%s' was not found in graph '%s'."), *NodeGuid, *Graph->GetName()), nullptr, true);
+		}
+
+		TArray<TSharedPtr<FJsonValue>> PinValues;
+		if (PinName.TrimStartAndEnd().IsEmpty())
+		{
+			for (UEdGraphPin* Pin : Node->Pins)
+			{
+				if (Pin)
+				{
+					PinValues.Add(MakeShared<FJsonValueObject>(DescribeBlueprintPin(Pin)));
+				}
+			}
+		}
+		else
+		{
+			UEdGraphPin* Pin = FindBlueprintPinByName(Node, PinName);
+			if (!Pin)
+			{
+				return MakeExecutionResult(FString::Printf(TEXT("Pin '%s' was not found on node '%s'."), *PinName, *NodeGuid), nullptr, true);
+			}
+			PinValues.Add(MakeShared<FJsonValueObject>(DescribeBlueprintPin(Pin)));
+		}
+
+		TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+		StructuredContent->SetStringField(TEXT("action"), TEXT("bp_trace_pin_connections"));
+		StructuredContent->SetStringField(TEXT("blueprintPath"), ObjectPath);
+		StructuredContent->SetStringField(TEXT("graph"), Graph->GetName());
+		StructuredContent->SetObjectField(TEXT("node"), DescribeBlueprintNode(Node));
+		StructuredContent->SetArrayField(TEXT("pins"), PinValues);
+		return MakeExecutionResult(FString::Printf(TEXT("Traced %d pin(s) on node %s."), PinValues.Num(), *NodeGuid), StructuredContent, false);
+	}
+
 	bool TryExecuteBlueprintTool(const FString& ToolName, const FJsonObject& Arguments, FUnrealMcpExecutionResult& OutResult)
 	{
+		if (ToolName == TEXT("unreal.bp_list_graph_nodes"))
+		{
+			OutResult = ListGraphNodesTool(Arguments);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.bp_trace_pin_connections"))
+		{
+			OutResult = TracePinConnectionsTool(Arguments);
+			return true;
+		}
+
 		if (ToolName == TEXT("unreal.bp_add_variable"))
 		{
 			OutResult = AddVariableTool(Arguments);

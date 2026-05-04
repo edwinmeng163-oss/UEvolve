@@ -49,6 +49,7 @@ namespace UnrealMcp
 		FString Notes;
 		FToolPolicy Policy;
 		bool bLoadedFromExplicitRegistry = false;
+		bool bLoadedFromDescriptor = false;
 	};
 
 	const TArray<FToolRegistryEntry>& GetToolRegistryEntries();

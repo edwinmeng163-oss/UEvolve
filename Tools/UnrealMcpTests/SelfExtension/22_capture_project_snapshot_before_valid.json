@@ -1,0 +1,21 @@
+{
+  "name": "capture_project_snapshot_before_valid",
+  "description": "Capture a small before snapshot for project diff testing.",
+  "category": "happy_path",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": false,
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 322,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.capture_project_snapshot",
+      "arguments": {
+        "snapshotName": "uevolve-selfext-before",
+        "actorLimit": 25,
+        "assetLimit": 25
+      }
+    }
+  }
+}

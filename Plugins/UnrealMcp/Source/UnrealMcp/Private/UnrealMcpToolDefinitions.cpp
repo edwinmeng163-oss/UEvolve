@@ -1,4 +1,5 @@
 #include "UnrealMcpModule.h"
+#include "UnrealMcpToolRegistrar.h"
 
 namespace UnrealMcp
 {
@@ -28,6 +29,8 @@ namespace UnrealMcp
 
 void FUnrealMcpModule::AppendToolDefinitions(TArray<TSharedPtr<FJsonValue>>& ToolsArray) const
 {
+	UnrealMcp::AppendRegisteredToolDefinitions(ToolsArray);
+
 	{
 		TSharedPtr<FJsonObject> InputSchema = UnrealMcp::MakeObjectSchema();
 		UnrealMcp::AddToolDefinition(

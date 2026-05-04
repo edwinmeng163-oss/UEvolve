@@ -8,6 +8,7 @@
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "UnrealMcpToolHandlerRegistry.h"
+#include "UnrealMcpToolRegistrar.h"
 
 namespace UnrealMcp
 {
@@ -46,6 +47,29 @@ namespace UnrealMcp
 				return EToolRiskLevel::Critical;
 			}
 			return EToolRiskLevel::Low;
+		}
+
+		EToolExposure ConvertDescriptorExposure(EUnrealMcpToolExposure Exposure)
+		{
+			return Exposure == EUnrealMcpToolExposure::LegacyHidden ? EToolExposure::LegacyHidden : EToolExposure::Visible;
+		}
+
+		EToolRiskLevel ConvertDescriptorRisk(EUnrealMcpToolRisk Risk)
+		{
+			switch (Risk)
+			{
+			case EUnrealMcpToolRisk::ReadOnly:
+				return EToolRiskLevel::ReadOnly;
+			case EUnrealMcpToolRisk::Medium:
+				return EToolRiskLevel::Medium;
+			case EUnrealMcpToolRisk::High:
+				return EToolRiskLevel::High;
+			case EUnrealMcpToolRisk::Critical:
+				return EToolRiskLevel::Critical;
+			case EUnrealMcpToolRisk::Low:
+			default:
+				return EToolRiskLevel::Low;
+			}
 		}
 
 		FString GetStringFieldOrDefault(const TSharedPtr<FJsonObject>& Object, const FString& FieldName, const FString& DefaultValue = FString())
@@ -138,7 +162,69 @@ namespace UnrealMcp
 			Entry.Notes = Notes;
 			Entry.Policy = Policy;
 			Entry.bLoadedFromExplicitRegistry = false;
+			Entry.bLoadedFromDescriptor = false;
 			return Entry;
+		}
+
+		FToolRegistryEntry MakeDescriptorRegistryEntry(const FUnrealMcpToolDescriptor& Descriptor)
+		{
+			FToolRegistryEntry Entry;
+			Entry.Name = Descriptor.Name;
+			Entry.Category = Descriptor.Category;
+			Entry.HandlerName = Descriptor.HandlerName.IsEmpty() ? Descriptor.Name : Descriptor.HandlerName;
+			Entry.Exposure = ConvertDescriptorExposure(Descriptor.Exposure);
+			Entry.Notes = Descriptor.Notes;
+			Entry.bLoadedFromExplicitRegistry = false;
+			Entry.bLoadedFromDescriptor = true;
+			Entry.Policy.RiskLevel = ConvertDescriptorRisk(Descriptor.RiskLevel);
+			Entry.Policy.bRequiresWrite = Descriptor.bRequiresWrite;
+			Entry.Policy.bRequiresBuild = Descriptor.bRequiresBuild;
+			Entry.Policy.bRequiresExternalProcess = Descriptor.bRequiresExternalProcess;
+			Entry.Policy.bRequiresRestart = Descriptor.bRequiresRestart;
+			Entry.Policy.bRequiresProjectMemory = Descriptor.bRequiresProjectMemory;
+			Entry.Policy.bRequiresLock = Descriptor.bRequiresLock;
+			Entry.Policy.bDryRunSupport = Descriptor.bDryRunSupport;
+			Entry.Policy.bPreflightSupport = Descriptor.bPreflightSupport;
+			Entry.Policy.bPostcheckSupport = Descriptor.bPostcheckSupport;
+			Entry.Policy.TestCoverage = UnrealMcp::LexToString(Descriptor.TestCoverage);
+			Entry.Policy.Owner = Descriptor.Owner;
+			Entry.Policy.DocsPath = Descriptor.DocsPath;
+			Entry.Policy.Reason = Descriptor.Reason;
+			return Entry;
+		}
+
+		TArray<FToolRegistryEntry> MakeDescriptorRegistryEntries()
+		{
+			TArray<FToolRegistryEntry> Entries;
+			for (const FRegisteredUnrealMcpToolDescriptor& RegisteredTool : GetRegisteredMcpToolDescriptors())
+			{
+				Entries.Add(MakeDescriptorRegistryEntry(RegisteredTool.Descriptor));
+			}
+			return Entries;
+		}
+
+		void MergeRegistryOverrides(TArray<FToolRegistryEntry>& BaseEntries, const TArray<FToolRegistryEntry>& OverrideEntries)
+		{
+			TMap<FString, int32> NameToIndex;
+			for (int32 Index = 0; Index < BaseEntries.Num(); ++Index)
+			{
+				NameToIndex.Add(BaseEntries[Index].Name, Index);
+			}
+
+			for (const FToolRegistryEntry& OverrideEntry : OverrideEntries)
+			{
+				if (int32* ExistingIndex = NameToIndex.Find(OverrideEntry.Name))
+				{
+					const bool bWasDescriptorBacked = BaseEntries[*ExistingIndex].bLoadedFromDescriptor;
+					BaseEntries[*ExistingIndex] = OverrideEntry;
+					BaseEntries[*ExistingIndex].bLoadedFromDescriptor = bWasDescriptorBacked;
+				}
+				else
+				{
+					NameToIndex.Add(OverrideEntry.Name, BaseEntries.Num());
+					BaseEntries.Add(OverrideEntry);
+				}
+			}
 		}
 
 		TArray<FToolRegistryEntry> MakeBuiltInFallbackEntries()
@@ -215,6 +301,7 @@ namespace UnrealMcp
 				Entry.Exposure = ParseExposure(GetStringFieldOrDefault(ToolObject, TEXT("exposure"), TEXT("visible")));
 				Entry.Notes = GetStringFieldOrDefault(ToolObject, TEXT("notes"));
 				Entry.bLoadedFromExplicitRegistry = true;
+				Entry.bLoadedFromDescriptor = false;
 
 				Entry.Policy.RiskLevel = ParseRiskLevel(GetStringFieldOrDefault(ToolObject, TEXT("riskLevel"), TEXT("low")));
 				Entry.Policy.bRequiresWrite = GetBoolFieldOrDefault(ToolObject, TEXT("requiresWrite"));
@@ -245,6 +332,7 @@ namespace UnrealMcp
 
 		FLoadedToolRegistry LoadToolRegistry()
 		{
+			TArray<FToolRegistryEntry> DescriptorEntries = MakeDescriptorRegistryEntries();
 			TArray<FString> CandidatePaths;
 			AddRegistryCandidatePaths(CandidatePaths);
 
@@ -253,17 +341,19 @@ namespace UnrealMcp
 				TArray<FToolRegistryEntry> LoadedEntries;
 				if (LoadRegistryEntriesFromPath(CandidatePath, LoadedEntries))
 				{
+					MergeRegistryOverrides(DescriptorEntries, LoadedEntries);
 					FLoadedToolRegistry Registry;
-					Registry.Entries = MoveTemp(LoadedEntries);
-					Registry.SourcePath = CandidatePath;
+					Registry.Entries = MoveTemp(DescriptorEntries);
+					Registry.SourcePath = FString::Printf(TEXT("<code descriptors> + %s"), *CandidatePath);
 					Registry.bLoadedExplicitRegistry = true;
 					return Registry;
 				}
 			}
 
 			FLoadedToolRegistry Registry;
-			Registry.Entries = MakeBuiltInFallbackEntries();
-			Registry.SourcePath = TEXT("<built-in fallback>");
+			const bool bHasDescriptorEntries = DescriptorEntries.Num() > 0;
+			Registry.Entries = bHasDescriptorEntries ? MoveTemp(DescriptorEntries) : MakeBuiltInFallbackEntries();
+			Registry.SourcePath = bHasDescriptorEntries ? TEXT("<code descriptors>") : TEXT("<built-in fallback>");
 			Registry.bLoadedExplicitRegistry = false;
 			return Registry;
 		}
@@ -382,6 +472,10 @@ namespace UnrealMcp
 		PolicyObject->SetStringField(TEXT("docsPath"), Policy.DocsPath);
 		PolicyObject->SetStringField(TEXT("reason"), Policy.Reason);
 		PolicyObject->SetBoolField(TEXT("explicitRegistryEntry"), HasExplicitToolRegistryEntry(ToolName));
+		if (const FToolRegistryEntry* Entry = FindToolRegistryEntry(ToolName))
+		{
+			PolicyObject->SetBoolField(TEXT("descriptorBacked"), Entry->bLoadedFromDescriptor);
+		}
 		return PolicyObject;
 	}
 
@@ -395,6 +489,8 @@ namespace UnrealMcp
 		TMap<FString, int32> CategoryCounts;
 		TMap<FString, int32> TestCoverageCounts;
 		int32 ExplicitEntryCount = 0;
+		int32 DescriptorBackedCount = 0;
+		int32 DescriptorOnlyCount = 0;
 		int32 HiddenEntryCount = 0;
 		int32 AliasEntryCount = 0;
 		int32 DocsPathExistsCount = 0;
@@ -421,6 +517,8 @@ namespace UnrealMcp
 			CategoryCounts.FindOrAdd(Entry.Category)++;
 			TestCoverageCounts.FindOrAdd(Entry.Policy.TestCoverage)++;
 			ExplicitEntryCount += Entry.bLoadedFromExplicitRegistry ? 1 : 0;
+			DescriptorBackedCount += Entry.bLoadedFromDescriptor ? 1 : 0;
+			DescriptorOnlyCount += Entry.bLoadedFromDescriptor && !Entry.bLoadedFromExplicitRegistry ? 1 : 0;
 			HiddenEntryCount += Entry.Exposure == EToolExposure::LegacyHidden ? 1 : 0;
 			AliasEntryCount += (!Entry.HandlerName.IsEmpty() && !Entry.HandlerName.Equals(Entry.Name, ESearchCase::CaseSensitive)) ? 1 : 0;
 			DocsPathExistsCount += RegistryDocsPathExists(Entry.Policy.DocsPath) ? 1 : 0;
@@ -527,10 +625,12 @@ namespace UnrealMcp
 		};
 
 		TSharedPtr<FJsonObject> ValidationObject = MakeShared<FJsonObject>();
-		ValidationObject->SetBoolField(TEXT("complete"), Issues.Num() == 0 && ExplicitEntryCount == Entries.Num());
+		ValidationObject->SetBoolField(TEXT("complete"), Issues.Num() == 0);
 		ValidationObject->SetStringField(TEXT("sourcePath"), GetToolRegistrySourcePath());
 		ValidationObject->SetNumberField(TEXT("entryCount"), Entries.Num());
 		ValidationObject->SetNumberField(TEXT("explicitEntryCount"), ExplicitEntryCount);
+		ValidationObject->SetNumberField(TEXT("descriptorBackedCount"), DescriptorBackedCount);
+		ValidationObject->SetNumberField(TEXT("descriptorOnlyCount"), DescriptorOnlyCount);
 		ValidationObject->SetNumberField(TEXT("legacyHiddenCount"), HiddenEntryCount);
 		ValidationObject->SetNumberField(TEXT("handlerAliasCount"), AliasEntryCount);
 		ValidationObject->SetNumberField(TEXT("registeredHandlerCount"), GetToolHandlerRegistryEntries().Num());
@@ -558,6 +658,8 @@ namespace UnrealMcp
 		TArray<TSharedPtr<FJsonValue>> HiddenValues;
 		TArray<TSharedPtr<FJsonValue>> AliasValues;
 		int32 ExplicitEntryCount = 0;
+		int32 DescriptorBackedCount = 0;
+		int32 DescriptorOnlyCount = 0;
 
 		for (const FToolRegistryEntry& Entry : GetToolRegistryEntries())
 		{
@@ -568,12 +670,15 @@ namespace UnrealMcp
 			EntryObject->SetStringField(TEXT("exposure"), Entry.Exposure == EToolExposure::Visible ? TEXT("visible") : TEXT("legacy_hidden"));
 			EntryObject->SetStringField(TEXT("notes"), Entry.Notes);
 			EntryObject->SetBoolField(TEXT("explicitRegistryEntry"), Entry.bLoadedFromExplicitRegistry);
+			EntryObject->SetBoolField(TEXT("descriptorBacked"), Entry.bLoadedFromDescriptor);
 			EntryObject->SetObjectField(TEXT("policy"), MakeToolPolicyObject(Entry.Name));
 
 			TSharedPtr<FJsonValue> EntryValue = MakeShared<FJsonValueObject>(EntryObject);
 			EntryValues.Add(EntryValue);
 
 			ExplicitEntryCount += Entry.bLoadedFromExplicitRegistry ? 1 : 0;
+			DescriptorBackedCount += Entry.bLoadedFromDescriptor ? 1 : 0;
+			DescriptorOnlyCount += Entry.bLoadedFromDescriptor && !Entry.bLoadedFromExplicitRegistry ? 1 : 0;
 			if (Entry.Exposure == EToolExposure::LegacyHidden)
 			{
 				HiddenValues.Add(EntryValue);
@@ -587,12 +692,15 @@ namespace UnrealMcp
 		StructuredContent->SetStringField(TEXT("toolRegistrySourcePath"), GetToolRegistrySourcePath());
 		StructuredContent->SetNumberField(TEXT("toolRegistryEntryCount"), GetToolRegistryEntries().Num());
 		StructuredContent->SetNumberField(TEXT("explicitToolRegistryEntryCount"), ExplicitEntryCount);
+		StructuredContent->SetNumberField(TEXT("descriptorBackedToolCount"), DescriptorBackedCount);
+		StructuredContent->SetNumberField(TEXT("descriptorOnlyToolCount"), DescriptorOnlyCount);
 		StructuredContent->SetNumberField(TEXT("legacyHiddenToolCount"), HiddenValues.Num());
 		StructuredContent->SetNumberField(TEXT("handlerAliasCount"), AliasValues.Num());
 		StructuredContent->SetArrayField(TEXT("toolRegistryEntries"), EntryValues);
 		StructuredContent->SetArrayField(TEXT("legacyHiddenTools"), HiddenValues);
 		StructuredContent->SetArrayField(TEXT("handlerAliases"), AliasValues);
 		StructuredContent->SetObjectField(TEXT("toolHandlerRegistry"), MakeToolHandlerRegistryStatusObject());
+		StructuredContent->SetObjectField(TEXT("toolDescriptorRegistry"), MakeToolDescriptorStatusObject());
 		StructuredContent->SetObjectField(TEXT("toolRegistryValidation"), MakeToolRegistryValidationObject());
 	}
 }

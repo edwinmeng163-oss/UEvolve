@@ -1,0 +1,21 @@
+{
+  "name": "mcp_prepare_test_sandbox_dry_run_valid",
+  "description": "Dry-run the constrained MCP test sandbox preparation tool.",
+  "category": "happy_path",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": false,
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 326,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.mcp_prepare_test_sandbox",
+      "arguments": {
+        "contentPath": "/Game/__UEvolveMcpDryRun",
+        "reset": true,
+        "dryRun": true
+      }
+    }
+  }
+}

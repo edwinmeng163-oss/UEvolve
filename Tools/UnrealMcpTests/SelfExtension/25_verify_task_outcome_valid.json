@@ -1,0 +1,27 @@
+{
+  "name": "verify_task_outcome_valid",
+  "description": "Verify expected tool presence and textual evidence.",
+  "category": "happy_path",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": false,
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 325,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.verify_task_outcome",
+      "arguments": {
+        "task": "Verify self-extension precision tools are registered.",
+        "expectedTools": [
+          "unreal.preview_change_plan",
+          "unreal.capture_project_snapshot",
+          "unreal.diff_project_snapshot",
+          "unreal.verify_task_outcome"
+        ],
+        "evidenceText": "descriptor-backed precision tools are registered",
+        "requiredEvidenceText": "precision tools"
+      }
+    }
+  }
+}

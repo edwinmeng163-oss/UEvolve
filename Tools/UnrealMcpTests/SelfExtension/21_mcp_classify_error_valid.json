@@ -1,0 +1,19 @@
+{
+  "name": "mcp_classify_error_valid",
+  "description": "Classify a representative schema and endpoint error.",
+  "category": "happy_path",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": false,
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 321,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.mcp_classify_error",
+      "arguments": {
+        "text": "tools/list skipped a schema because additionalProperties=true, then HTTP request timed out at 127.0.0.1:8765."
+      }
+    }
+  }
+}

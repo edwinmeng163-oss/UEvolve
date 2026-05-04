@@ -76,6 +76,12 @@ namespace UnrealMcp
 	FUnrealMcpExecutionResult CompileErrorFixPlan(const FJsonObject& Arguments);
 	FUnrealMcpExecutionResult DiffLastMcpApply(const FJsonObject& Arguments);
 	FUnrealMcpExecutionResult CleanMcpTestArtifacts(const FJsonObject& Arguments);
+	FUnrealMcpExecutionResult PreviewChangePlan(const FJsonObject& Arguments, const TArray<TSharedPtr<FJsonValue>>& ToolsArray);
+	FUnrealMcpExecutionResult CaptureProjectSnapshot(const FJsonObject& Arguments);
+	FUnrealMcpExecutionResult DiffProjectSnapshot(const FJsonObject& Arguments);
+	FUnrealMcpExecutionResult VerifyTaskOutcome(const FJsonObject& Arguments, const TArray<TSharedPtr<FJsonValue>>& ToolsArray);
+	FUnrealMcpExecutionResult ClassifyMcpError(const FJsonObject& Arguments);
+	FUnrealMcpExecutionResult PrepareTestSandbox(const FJsonObject& Arguments);
 	bool IsEditorPlaying();
 	FUnrealMcpExecutionResult MakePieBlockedResult(const FString& ToolName);
 	FString GetMcpExtensionLockPath();
@@ -1771,6 +1777,42 @@ namespace UnrealMcp
 		if (ToolName == TEXT("unreal.mcp_clean_test_artifacts"))
 		{
 			OutResult = CleanMcpTestArtifacts(Arguments);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.preview_change_plan"))
+		{
+			OutResult = PreviewChangePlan(Arguments, ToolsArray);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.capture_project_snapshot"))
+		{
+			OutResult = CaptureProjectSnapshot(Arguments);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.diff_project_snapshot"))
+		{
+			OutResult = DiffProjectSnapshot(Arguments);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.verify_task_outcome"))
+		{
+			OutResult = VerifyTaskOutcome(Arguments, ToolsArray);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.mcp_classify_error"))
+		{
+			OutResult = ClassifyMcpError(Arguments);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.mcp_prepare_test_sandbox"))
+		{
+			OutResult = PrepareTestSandbox(Arguments);
 			return true;
 		}
 

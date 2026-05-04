@@ -1,0 +1,19 @@
+{
+  "name": "bp_trace_pin_connections_missing_required",
+  "description": "Blueprint pin trace should fail safely when nodeGuid is missing.",
+  "category": "missing_required",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": true,
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 106,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.bp_trace_pin_connections",
+      "arguments": {
+        "blueprintPath": "/Game/__UEvolveMcpTest/Blueprint/BP_McpGraphSmoke"
+      }
+    }
+  }
+}

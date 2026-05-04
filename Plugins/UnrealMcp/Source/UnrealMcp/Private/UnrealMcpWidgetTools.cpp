@@ -77,6 +77,25 @@ namespace UnrealMcp
 	UEdGraph* ResolveBlueprintGraph(UBlueprint* Blueprint, const FString& GraphName, bool bCreateEventGraphIfMissing, FString& OutFailureReason);
 	bool BuildDefaultWidgetTemplate(UWidgetBlueprint* WidgetBlueprint, const FString& TitleText, FString& OutFailureReason);
 
+	TSharedPtr<FJsonObject> DescribeWidgetTreeNode(UWidget* Widget)
+	{
+		TSharedPtr<FJsonObject> NodeObject = DescribeWidget(Widget);
+		TArray<TSharedPtr<FJsonValue>> Children;
+		if (UPanelWidget* PanelWidget = Cast<UPanelWidget>(Widget))
+		{
+			for (int32 Index = 0; Index < PanelWidget->GetChildrenCount(); ++Index)
+			{
+				if (UWidget* Child = PanelWidget->GetChildAt(Index))
+				{
+					Children.Add(MakeShared<FJsonValueObject>(DescribeWidgetTreeNode(Child)));
+				}
+			}
+		}
+		NodeObject->SetNumberField(TEXT("childCount"), Children.Num());
+		NodeObject->SetArrayField(TEXT("children"), Children);
+		return NodeObject;
+	}
+
 	UWidgetBlueprint* LoadWidgetBlueprintAsset(
 		UEditorAssetSubsystem* EditorAssetSubsystem,
 		const FString& WidgetBlueprintPath,
@@ -122,7 +141,16 @@ namespace UnrealMcp
 		OutObjectPath = ObjectPath;
 		if (EditorAssetSubsystem->DoesAssetExist(ObjectPath))
 		{
-			return LoadWidgetBlueprintAsset(EditorAssetSubsystem, ObjectPath, OutObjectPath, OutFailureReason);
+			if (UWidgetBlueprint* ExistingWidgetBlueprint = LoadWidgetBlueprintAsset(EditorAssetSubsystem, ObjectPath, OutObjectPath, OutFailureReason))
+			{
+				return ExistingWidgetBlueprint;
+			}
+			if (!ObjectPath.StartsWith(TEXT("/Game/__UEvolve"), ESearchCase::CaseSensitive))
+			{
+				return nullptr;
+			}
+			// Disposable tests may leave stale registry entries after a sandbox reset; allow recreation only in the sandbox prefix.
+			OutFailureReason.Reset();
 		}
 
 		FString CreateFailureReason;
@@ -1651,8 +1679,75 @@ namespace UnrealMcp
 		}
 	}
 
+	FUnrealMcpExecutionResult WidgetDumpTreeTool(const FJsonObject& Arguments)
+	{
+		FString WidgetBlueprintPath;
+		bool bIncludeDesignerTree = true;
+		bool bIncludeGraphNodes = false;
+		Arguments.TryGetStringField(TEXT("widgetBlueprintPath"), WidgetBlueprintPath);
+		Arguments.TryGetBoolField(TEXT("includeDesignerTree"), bIncludeDesignerTree);
+		Arguments.TryGetBoolField(TEXT("includeGraphNodes"), bIncludeGraphNodes);
+
+		if (WidgetBlueprintPath.TrimStartAndEnd().IsEmpty())
+		{
+			return MakeExecutionResult(TEXT("Provide widgetBlueprintPath."), nullptr, true);
+		}
+
+		UEditorAssetSubsystem* EditorAssetSubsystem = GEditor ? GEditor->GetEditorSubsystem<UEditorAssetSubsystem>() : nullptr;
+		FString ObjectPath;
+		FString FailureReason;
+		UWidgetBlueprint* WidgetBlueprint = LoadWidgetBlueprintAsset(EditorAssetSubsystem, WidgetBlueprintPath, ObjectPath, FailureReason);
+		if (!WidgetBlueprint)
+		{
+			return MakeExecutionResult(FailureReason, nullptr, true);
+		}
+
+		TSharedPtr<FJsonObject> StructuredContent = DescribeWidgetBlueprint(WidgetBlueprint, TEXT("widget_dump_tree"));
+		StructuredContent->SetStringField(TEXT("objectPath"), ObjectPath);
+		StructuredContent->SetBoolField(TEXT("includeDesignerTree"), bIncludeDesignerTree);
+		StructuredContent->SetBoolField(TEXT("includeGraphNodes"), bIncludeGraphNodes);
+		if (bIncludeDesignerTree && WidgetBlueprint->WidgetTree && WidgetBlueprint->WidgetTree->RootWidget)
+		{
+			StructuredContent->SetObjectField(TEXT("tree"), DescribeWidgetTreeNode(WidgetBlueprint->WidgetTree->RootWidget));
+		}
+
+		if (bIncludeGraphNodes)
+		{
+			FString GraphFailureReason;
+			UEdGraph* Graph = ResolveBlueprintGraph(WidgetBlueprint, TEXT("EventGraph"), false, GraphFailureReason);
+			TArray<TSharedPtr<FJsonValue>> Nodes;
+			if (Graph)
+			{
+				for (UEdGraphNode* Node : Graph->Nodes)
+				{
+					if (Node)
+					{
+						Nodes.Add(MakeShared<FJsonValueObject>(DescribeBlueprintNode(Node)));
+					}
+				}
+			}
+			StructuredContent->SetArrayField(TEXT("graphNodes"), Nodes);
+			StructuredContent->SetNumberField(TEXT("graphNodeCount"), Nodes.Num());
+			if (!GraphFailureReason.IsEmpty())
+			{
+				StructuredContent->SetStringField(TEXT("graphWarning"), GraphFailureReason);
+			}
+		}
+
+		return MakeExecutionResult(
+			FString::Printf(TEXT("Dumped Widget Blueprint tree for %s with %d widget(s)."), *ObjectPath, static_cast<int32>(StructuredContent->GetNumberField(TEXT("widgetCount")))),
+			StructuredContent,
+			false);
+	}
+
 	bool TryExecuteWidgetTool(const FString& ToolName, const FJsonObject& Arguments, FUnrealMcpExecutionResult& OutResult)
 	{
+		if (ToolName == TEXT("unreal.widget_dump_tree"))
+		{
+			OutResult = WidgetDumpTreeTool(Arguments);
+			return true;
+		}
+
 		if (ToolName == TEXT("unreal.widget_add"))
 		{
 			OutResult = WidgetAddTool(Arguments);

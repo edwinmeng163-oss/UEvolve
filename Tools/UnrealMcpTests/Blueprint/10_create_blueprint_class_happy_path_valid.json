@@ -1,0 +1,22 @@
+{
+  "name": "create_blueprint_class_happy_path_valid",
+  "description": "Blueprint category happy-path fixture. Creates a Blueprint in the disposable /Game/__UEvolveMcpTest sandbox.",
+  "category": "happy_path",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": false,
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 101,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.create_blueprint_class",
+      "arguments": {
+        "assetPath": "/Game/__UEvolveMcpTest/Blueprint/BP_McpGraphSmoke",
+        "parentClass": "/Script/Engine.Actor",
+        "openAfterCreate": false,
+        "compile": true
+      }
+    }
+  }
+}

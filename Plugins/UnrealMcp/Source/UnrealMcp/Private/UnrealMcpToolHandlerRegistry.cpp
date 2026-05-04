@@ -2,6 +2,7 @@
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
+#include "UnrealMcpToolRegistrar.h"
 
 namespace UnrealMcp
 {
@@ -15,11 +16,23 @@ namespace UnrealMcp
 			Entry.SourceFile = SourceFile;
 			return Entry;
 		}
+
+		FToolHandlerRegistryEntry MakeHandlerEntryFromDescriptor(const FUnrealMcpToolDescriptor& Descriptor)
+		{
+			FToolHandlerRegistryEntry Entry;
+			Entry.HandlerName = Descriptor.HandlerName.IsEmpty() ? Descriptor.Name : Descriptor.HandlerName;
+			Entry.Category = Descriptor.Category;
+			Entry.SourceFile = Descriptor.SourceFile;
+			Entry.bLoadedFromDescriptor = true;
+			return Entry;
+		}
 	}
 
 	const TArray<FToolHandlerRegistryEntry>& GetToolHandlerRegistryEntries()
 	{
-		static const TArray<FToolHandlerRegistryEntry> Entries = {
+		static const TArray<FToolHandlerRegistryEntry> Entries = []()
+		{
+			TArray<FToolHandlerRegistryEntry> Result = {
 			MakeHandlerEntry(TEXT("unreal.batch_configure_static_mesh_actors"), TEXT("actors"), TEXT("UnrealMcpActorTools.cpp")),
 			MakeHandlerEntry(TEXT("unreal.batch_set_actor_properties"), TEXT("actors"), TEXT("UnrealMcpActorTools.cpp")),
 			MakeHandlerEntry(TEXT("unreal.batch_set_actor_scale"), TEXT("actors"), TEXT("UnrealMcpActorTools.cpp")),
@@ -34,12 +47,16 @@ namespace UnrealMcp
 			MakeHandlerEntry(TEXT("unreal.bp_arrange_graph"), TEXT("blueprint"), TEXT("UnrealMcpBlueprintTools.cpp")),
 			MakeHandlerEntry(TEXT("unreal.bp_compile_save"), TEXT("blueprint"), TEXT("UnrealMcpBlueprintTools.cpp")),
 			MakeHandlerEntry(TEXT("unreal.bp_connect_pins"), TEXT("blueprint"), TEXT("UnrealMcpBlueprintTools.cpp")),
+			MakeHandlerEntry(TEXT("unreal.bp_list_graph_nodes"), TEXT("blueprint"), TEXT("UnrealMcpBlueprintTools.cpp")),
 			MakeHandlerEntry(TEXT("unreal.bp_set_pin_default"), TEXT("blueprint"), TEXT("UnrealMcpBlueprintTools.cpp")),
+			MakeHandlerEntry(TEXT("unreal.bp_trace_pin_connections"), TEXT("blueprint"), TEXT("UnrealMcpBlueprintTools.cpp")),
+			MakeHandlerEntry(TEXT("unreal.capture_project_snapshot"), TEXT("self-extension"), TEXT("UnrealMcpSelfExtensionPrecisionTools.cpp")),
 			MakeHandlerEntry(TEXT("unreal.clear_level_environment"), TEXT("actors"), TEXT("UnrealMcpActorTools.cpp")),
 			MakeHandlerEntry(TEXT("unreal.compile_blueprint"), TEXT("blueprint"), TEXT("UnrealMcpBlueprintTools.cpp")),
 			MakeHandlerEntry(TEXT("unreal.compile_blueprints_in_path"), TEXT("blueprint"), TEXT("UnrealMcpBlueprintTools.cpp")),
 			MakeHandlerEntry(TEXT("unreal.create_blueprint_class"), TEXT("blueprint"), TEXT("UnrealMcpBlueprintTools.cpp")),
 			MakeHandlerEntry(TEXT("unreal.destroy_selected_actors"), TEXT("actors"), TEXT("UnrealMcpActorTools.cpp")),
+			MakeHandlerEntry(TEXT("unreal.diff_project_snapshot"), TEXT("self-extension"), TEXT("UnrealMcpSelfExtensionPrecisionTools.cpp")),
 			MakeHandlerEntry(TEXT("unreal.editor_status"), TEXT("editor"), TEXT("UnrealMcpEditorTools.cpp")),
 			MakeHandlerEntry(TEXT("unreal.execute_console_command"), TEXT("editor"), TEXT("UnrealMcpEditorTools.cpp")),
 			MakeHandlerEntry(TEXT("unreal.execute_python"), TEXT("editor"), TEXT("UnrealMcpEditorTools.cpp")),
@@ -55,6 +72,7 @@ namespace UnrealMcp
 			MakeHandlerEntry(TEXT("unreal.mcp_apply_scaffold"), TEXT("self-extension"), TEXT("UnrealMcpSelfExtensionTools.cpp")),
 			MakeHandlerEntry(TEXT("unreal.mcp_backup_project_state"), TEXT("self-extension"), TEXT("UnrealMcpSelfExtensionTools.cpp")),
 			MakeHandlerEntry(TEXT("unreal.mcp_build_editor"), TEXT("self-extension"), TEXT("UnrealMcpSelfExtensionTools.cpp")),
+			MakeHandlerEntry(TEXT("unreal.mcp_classify_error"), TEXT("self-extension"), TEXT("UnrealMcpSelfExtensionPrecisionTools.cpp")),
 			MakeHandlerEntry(TEXT("unreal.mcp_clean_test_artifacts"), TEXT("self-extension"), TEXT("UnrealMcpSelfExtensionTools.cpp")),
 			MakeHandlerEntry(TEXT("unreal.mcp_compile_error_fix_plan"), TEXT("self-extension"), TEXT("UnrealMcpSelfExtensionTools.cpp")),
 			MakeHandlerEntry(TEXT("unreal.mcp_diff_last_apply"), TEXT("self-extension"), TEXT("UnrealMcpSelfExtensionTools.cpp")),
@@ -65,6 +83,7 @@ namespace UnrealMcp
 			MakeHandlerEntry(TEXT("unreal.mcp_lock_extension_session"), TEXT("self-extension"), TEXT("UnrealMcpSelfExtensionTools.cpp")),
 			MakeHandlerEntry(TEXT("unreal.mcp_patch_scaffold_snippet"), TEXT("self-extension"), TEXT("UnrealMcpSelfExtensionTools.cpp")),
 			MakeHandlerEntry(TEXT("unreal.mcp_pipeline_status"), TEXT("self-extension"), TEXT("UnrealMcpSelfExtensionTools.cpp")),
+			MakeHandlerEntry(TEXT("unreal.mcp_prepare_test_sandbox"), TEXT("self-extension"), TEXT("UnrealMcpSelfExtensionPrecisionTools.cpp")),
 			MakeHandlerEntry(TEXT("unreal.mcp_rollback_last_extension"), TEXT("self-extension"), TEXT("UnrealMcpSelfExtensionTools.cpp")),
 			MakeHandlerEntry(TEXT("unreal.mcp_rollback_to_manifest"), TEXT("self-extension"), TEXT("UnrealMcpSelfExtensionTools.cpp")),
 			MakeHandlerEntry(TEXT("unreal.mcp_run_test_suite"), TEXT("self-extension"), TEXT("UnrealMcpSelfExtensionTools.cpp")),
@@ -76,6 +95,7 @@ namespace UnrealMcp
 			MakeHandlerEntry(TEXT("unreal.mcp_workbench_status"), TEXT("self-extension"), TEXT("UnrealMcpSelfExtensionTools.cpp")),
 			MakeHandlerEntry(TEXT("unreal.open_asset"), TEXT("editor"), TEXT("UnrealMcpEditorTools.cpp")),
 			MakeHandlerEntry(TEXT("unreal.open_map"), TEXT("editor"), TEXT("UnrealMcpEditorTools.cpp")),
+			MakeHandlerEntry(TEXT("unreal.preview_change_plan"), TEXT("self-extension"), TEXT("UnrealMcpSelfExtensionPrecisionTools.cpp")),
 			MakeHandlerEntry(TEXT("unreal.project_memory_delete"), TEXT("memory"), TEXT("UnrealMcpMemoryTools.cpp")),
 			MakeHandlerEntry(TEXT("unreal.project_memory_edit"), TEXT("memory"), TEXT("UnrealMcpMemoryTools.cpp")),
 			MakeHandlerEntry(TEXT("unreal.project_memory_read"), TEXT("memory"), TEXT("UnrealMcpMemoryTools.cpp")),
@@ -106,14 +126,39 @@ namespace UnrealMcp
 			MakeHandlerEntry(TEXT("unreal.stop_pie"), TEXT("editor"), TEXT("UnrealMcpEditorTools.cpp")),
 			MakeHandlerEntry(TEXT("unreal.sync_content_browser"), TEXT("editor"), TEXT("UnrealMcpEditorTools.cpp")),
 			MakeHandlerEntry(TEXT("unreal.tail_log"), TEXT("editor"), TEXT("UnrealMcpEditorTools.cpp")),
+			MakeHandlerEntry(TEXT("unreal.verify_task_outcome"), TEXT("self-extension"), TEXT("UnrealMcpSelfExtensionPrecisionTools.cpp")),
 			MakeHandlerEntry(TEXT("unreal.widget_add"), TEXT("widget"), TEXT("UnrealMcpWidgetTools.cpp")),
 			MakeHandlerEntry(TEXT("unreal.widget_bind_blueprint_variable"), TEXT("widget"), TEXT("UnrealMcpWidgetTools.cpp")),
 			MakeHandlerEntry(TEXT("unreal.widget_bind_event"), TEXT("widget"), TEXT("UnrealMcpWidgetTools.cpp")),
 			MakeHandlerEntry(TEXT("unreal.widget_build_template"), TEXT("widget"), TEXT("UnrealMcpWidgetTools.cpp")),
+			MakeHandlerEntry(TEXT("unreal.widget_dump_tree"), TEXT("widget"), TEXT("UnrealMcpWidgetTools.cpp")),
 			MakeHandlerEntry(TEXT("unreal.widget_remove"), TEXT("widget"), TEXT("UnrealMcpWidgetTools.cpp")),
 			MakeHandlerEntry(TEXT("unreal.widget_set_property"), TEXT("widget"), TEXT("UnrealMcpWidgetTools.cpp")),
 			MakeHandlerEntry(TEXT("unreal.widget_set_slot_layout"), TEXT("widget"), TEXT("UnrealMcpWidgetTools.cpp")),
-		};
+			};
+
+			TMap<FString, int32> HandlerToIndex;
+			for (int32 Index = 0; Index < Result.Num(); ++Index)
+			{
+				HandlerToIndex.Add(Result[Index].HandlerName, Index);
+			}
+			for (const FRegisteredUnrealMcpToolDescriptor& RegisteredTool : GetRegisteredMcpToolDescriptors())
+			{
+				const FString HandlerName = RegisteredTool.Descriptor.HandlerName.IsEmpty()
+					? RegisteredTool.Descriptor.Name
+					: RegisteredTool.Descriptor.HandlerName;
+				if (int32* ExistingIndex = HandlerToIndex.Find(HandlerName))
+				{
+					Result[*ExistingIndex].bLoadedFromDescriptor = true;
+				}
+				else
+				{
+					Result.Add(MakeHandlerEntryFromDescriptor(RegisteredTool.Descriptor));
+					HandlerToIndex.Add(HandlerName, Result.Num() - 1);
+				}
+			}
+			return Result;
+		}();
 		return Entries;
 	}
 
@@ -144,6 +189,7 @@ namespace UnrealMcp
 			EntryObject->SetStringField(TEXT("handlerName"), Entry.HandlerName);
 			EntryObject->SetStringField(TEXT("category"), Entry.Category);
 			EntryObject->SetStringField(TEXT("sourceFile"), Entry.SourceFile);
+			EntryObject->SetBoolField(TEXT("descriptorBacked"), Entry.bLoadedFromDescriptor);
 			HandlerValues.Add(MakeShared<FJsonValueObject>(EntryObject));
 			CategoryCounts.FindOrAdd(Entry.Category)++;
 		}

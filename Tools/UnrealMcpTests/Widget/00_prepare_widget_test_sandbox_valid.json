@@ -1,0 +1,21 @@
+{
+  "name": "prepare_widget_test_sandbox_valid",
+  "description": "Reset a disposable /Game sandbox before Widget happy-path tests.",
+  "category": "happy_path",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": false,
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 200,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.mcp_prepare_test_sandbox",
+      "arguments": {
+        "contentPath": "/Game/__UEvolveMcpTest",
+        "reset": true,
+        "dryRun": false
+      }
+    }
+  }
+}

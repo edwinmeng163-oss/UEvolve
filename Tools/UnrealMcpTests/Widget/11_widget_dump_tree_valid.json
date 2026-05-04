@@ -1,0 +1,21 @@
+{
+  "name": "widget_dump_tree_valid",
+  "description": "Read back the disposable Widget Blueprint hierarchy after widget_add.",
+  "category": "happy_path",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": false,
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 203,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.widget_dump_tree",
+      "arguments": {
+        "widgetBlueprintPath": "/Game/__UEvolveMcpTest/Widget/WBP_McpSmoke",
+        "includeDesignerTree": true,
+        "includeGraphNodes": false
+      }
+    }
+  }
+}

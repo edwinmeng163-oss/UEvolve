@@ -8,10 +8,13 @@ Prefer small, reviewable tool changes over broad source edits. The self-extensio
 
 1. Define the tool purpose and owner category.
 2. Pick a name that follows [Tool Naming](ToolNaming.md).
-3. Use existing fixed-schema wrappers before adding flexible inputs.
-4. Prefer fixed schemas with `additionalProperties=false`.
-5. Add docs and at least one test request.
-6. Run schema validation and tool audit.
+3. Add an `FUnrealMcpToolDescriptor` and fixed input schema through the C++ tool registrar.
+4. Use existing fixed-schema wrappers before adding flexible inputs.
+5. Prefer fixed schemas with `additionalProperties=false`.
+6. Add or confirm handler registry coverage.
+7. Add reviewed ToolRegistry JSON override metadata when the descriptor defaults are not enough.
+8. Add docs and at least one test request.
+9. Run schema validation, registry validation, build, restart, tests, and tool audit.
 
 ## Recommended Extension Flow
 
@@ -39,7 +42,7 @@ Suggested ownership domains:
 - Supervisor and cross-platform launch.
 - Documentation and tests.
 
-Avoid adding new tool logic to `UnrealMcpModule.cpp`; it is intentionally a thin lifecycle entrypoint. Add tool behavior to the relevant category file and update the explicit ToolRegistry, handler registry, docs, and tests in the same change.
+Avoid adding new tool logic to `UnrealMcpModule.cpp`; it is intentionally a thin lifecycle entrypoint. Add tool behavior to the relevant category file and update the descriptor registrar, explicit ToolRegistry override, handler registry, docs, and tests in the same change.
 
 The repository also includes `.github/CODEOWNERS` so pull requests touching MCP source, supervisor launch, docs, tests, schemas, or project-local skills request review from the current project owner by default.
 
@@ -63,6 +66,7 @@ The repository also includes `.github/CODEOWNERS` so pull requests touching MCP 
 ## Review Checklist
 
 - Tool appears in `tools/list` if AI-facing.
+- Tool is descriptor-backed unless it is a documented legacy compatibility path.
 - Tool has a handler.
 - Tool is documented in root or plugin README.
 - Schema passes OpenAI function calling compatibility checks.

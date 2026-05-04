@@ -1,0 +1,20 @@
+{
+  "name": "diff_project_snapshot_valid",
+  "description": "Diff the two versioned self-extension snapshots.",
+  "category": "happy_path",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": false,
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 324,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.diff_project_snapshot",
+      "arguments": {
+        "beforeSnapshotPath": "Saved/UnrealMcp/ProjectSnapshots/uevolve-selfext-before.json",
+        "afterSnapshotPath": "Saved/UnrealMcp/ProjectSnapshots/uevolve-selfext-after.json"
+      }
+    }
+  }
+}

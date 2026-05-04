@@ -1,0 +1,24 @@
+{
+  "name": "widget_build_template_valid",
+  "description": "Create a disposable Widget Blueprint before widget mutation happy-path tests.",
+  "category": "happy_path",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": false,
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 201,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.widget_build_template",
+      "arguments": {
+        "widgetBlueprintPath": "/Game/__UEvolveMcpTest/Widget/WBP_McpSmoke",
+        "templateName": "mcp_demo_hud",
+        "title": "UEvolve MCP Smoke",
+        "replaceRoot": true,
+        "compile": false,
+        "savePackage": false
+      }
+    }
+  }
+}

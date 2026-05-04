@@ -403,6 +403,20 @@ namespace UnrealMcp
 		const FString& Description,
 		const TSharedPtr<FJsonObject>& InputSchema)
 	{
+		for (const TSharedPtr<FJsonValue>& ExistingToolValue : ToolsArray)
+		{
+			if (!ExistingToolValue.IsValid() || ExistingToolValue->Type != EJson::Object || !ExistingToolValue->AsObject().IsValid())
+			{
+				continue;
+			}
+			FString ExistingName;
+			if (ExistingToolValue->AsObject()->TryGetStringField(TEXT("name"), ExistingName)
+				&& ExistingName.Equals(Name, ESearchCase::CaseSensitive))
+			{
+				return;
+			}
+		}
+
 		if (!ShouldExposeToolToAi(Name))
 		{
 			return;
@@ -418,6 +432,7 @@ namespace UnrealMcp
 			ToolObject->SetStringField(TEXT("handlerName"), RegistryEntry->HandlerName.IsEmpty() ? Name : RegistryEntry->HandlerName);
 			ToolObject->SetStringField(TEXT("exposure"), RegistryEntry->Exposure == EToolExposure::Visible ? TEXT("visible") : TEXT("legacy_hidden"));
 			ToolObject->SetBoolField(TEXT("explicitRegistryEntry"), RegistryEntry->bLoadedFromExplicitRegistry);
+			ToolObject->SetBoolField(TEXT("descriptorBacked"), RegistryEntry->bLoadedFromDescriptor);
 			ToolObject->SetStringField(TEXT("registryNotes"), RegistryEntry->Notes);
 		}
 		else

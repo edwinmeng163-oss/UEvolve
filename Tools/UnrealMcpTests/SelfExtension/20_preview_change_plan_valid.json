@@ -1,0 +1,19 @@
+{
+  "name": "preview_change_plan_valid",
+  "description": "Preview a structured plan for a Blueprint and Widget task.",
+  "category": "happy_path",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": false,
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 320,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.preview_change_plan",
+      "arguments": {
+        "task": "Add a Blueprint variable and update a Widget, then verify the result."
+      }
+    }
+  }
+}
