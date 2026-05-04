@@ -5,6 +5,7 @@
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Editor.h"
+#include "Editor/EditorEngine.h"
 #include "EditorScriptingHelpers.h"
 #include "Engine/StaticMesh.h"
 #include "GameFramework/Actor.h"
@@ -18,6 +19,13 @@ namespace UnrealMcp
 {
 	bool IsEditorPlaying();
 	FUnrealMcpExecutionResult MakePieBlockedResult(const FString& ToolName);
+	UClass* ResolveClassPath(const FString& ClassPath, UEditorAssetSubsystem* EditorAssetSubsystem);
+	bool ApplyPropertyMapToActor(
+		AActor* Actor,
+		const FJsonObject& PropertyValues,
+		TArray<TSharedPtr<FJsonValue>>& OutEditResults,
+		int32& OutSuccessCount,
+		int32& OutFailureCount);
 
 	namespace
 	{
@@ -76,6 +84,45 @@ namespace UnrealMcp
 			}
 
 			return true;
+		}
+
+		bool ActorToolTryGetObjectArrayField(const FJsonObject& Arguments, const FString& FieldName, TArray<TSharedPtr<FJsonObject>>& OutValues)
+		{
+			const TArray<TSharedPtr<FJsonValue>>* JsonArray = nullptr;
+			if (!Arguments.TryGetArrayField(FieldName, JsonArray) || !JsonArray)
+			{
+				return false;
+			}
+
+			for (const TSharedPtr<FJsonValue>& Value : *JsonArray)
+			{
+				if (!Value.IsValid() || Value->Type != EJson::Object || !Value->AsObject().IsValid())
+				{
+					return false;
+				}
+
+				OutValues.Add(Value->AsObject());
+			}
+
+			return true;
+		}
+
+		void ActorToolCopyNumberFieldIfPresent(const FJsonObject& Source, const FString& FieldName, const TSharedPtr<FJsonObject>& Destination)
+		{
+			double Value = 0.0;
+			if (Destination.IsValid() && Source.TryGetNumberField(FieldName, Value))
+			{
+				Destination->SetNumberField(FieldName, Value);
+			}
+		}
+
+		void ActorToolCopyStringFieldIfPresent(const FJsonObject& Source, const FString& FieldName, const TSharedPtr<FJsonObject>& Destination)
+		{
+			FString Value;
+			if (Destination.IsValid() && Source.TryGetStringField(FieldName, Value))
+			{
+				Destination->SetStringField(FieldName, Value);
+			}
 		}
 
 		TArray<TSharedPtr<FJsonValue>> ActorToolMakeJsonStringArray(const TArray<FString>& Values)
@@ -1765,6 +1812,362 @@ namespace UnrealMcp
 
 			return ActorToolMakeExecutionResult(Text, StructuredContent, FailureCount > 0);
 		}
+
+		FUnrealMcpExecutionResult ExecuteSpawnActor(const FString& ToolName, const FJsonObject& Arguments)
+		{
+			if (IsEditorPlaying())
+			{
+				return MakePieBlockedResult(ToolName);
+			}
+
+			UEditorActorSubsystem* EditorActorSubsystem = ActorToolGetEditorActorSubsystem();
+			UEditorAssetSubsystem* EditorAssetSubsystem = ActorToolGetEditorAssetSubsystem();
+			if (!EditorActorSubsystem || !EditorAssetSubsystem)
+			{
+				return ActorToolMakeExecutionResult(TEXT("Editor actor subsystems are unavailable."), nullptr, true);
+			}
+
+			FString ClassPath;
+			if (!Arguments.TryGetStringField(TEXT("classPath"), ClassPath) || ClassPath.IsEmpty())
+			{
+				return ActorToolMakeExecutionResult(TEXT("The classPath argument is required."), nullptr, true);
+			}
+
+			UClass* ResolvedClass = ResolveClassPath(ClassPath, EditorAssetSubsystem);
+			if (!ResolvedClass)
+			{
+				return ActorToolMakeExecutionResult(FString::Printf(TEXT("Unable to resolve class '%s'."), *ClassPath), nullptr, true);
+			}
+
+			if (!ResolvedClass->IsChildOf(AActor::StaticClass()))
+			{
+				return ActorToolMakeExecutionResult(FString::Printf(TEXT("Class '%s' is not an Actor class."), *ResolvedClass->GetPathName()), nullptr, true);
+			}
+
+			double X = 0.0;
+			double Y = 0.0;
+			double Z = 0.0;
+			double Pitch = 0.0;
+			double Yaw = 0.0;
+			double Roll = 0.0;
+			double ScaleX = 1.0;
+			double ScaleY = 1.0;
+			double ScaleZ = 1.0;
+			bool bHasScaleX = false;
+			bool bHasScaleY = false;
+			bool bHasScaleZ = false;
+			FString Label;
+
+			Arguments.TryGetNumberField(TEXT("x"), X);
+			Arguments.TryGetNumberField(TEXT("y"), Y);
+			Arguments.TryGetNumberField(TEXT("z"), Z);
+			Arguments.TryGetNumberField(TEXT("pitch"), Pitch);
+			Arguments.TryGetNumberField(TEXT("yaw"), Yaw);
+			Arguments.TryGetNumberField(TEXT("roll"), Roll);
+			bHasScaleX = Arguments.TryGetNumberField(TEXT("sx"), ScaleX);
+			bHasScaleY = Arguments.TryGetNumberField(TEXT("sy"), ScaleY);
+			bHasScaleZ = Arguments.TryGetNumberField(TEXT("sz"), ScaleZ);
+			Arguments.TryGetStringField(TEXT("label"), Label);
+
+			AActor* NewActor = EditorActorSubsystem->SpawnActorFromClass(
+				ResolvedClass,
+				FVector(X, Y, Z),
+				FRotator(Pitch, Yaw, Roll),
+				false);
+
+			if (!NewActor)
+			{
+				return ActorToolMakeExecutionResult(FString::Printf(TEXT("Failed to spawn actor from class '%s'."), *ResolvedClass->GetPathName()), nullptr, true);
+			}
+
+			if (!Label.IsEmpty())
+			{
+				FActorLabelUtilities::SetActorLabelUnique(NewActor, Label);
+			}
+
+			if (bHasScaleX || bHasScaleY || bHasScaleZ)
+			{
+				const FVector CurrentScale = NewActor->GetActorScale3D();
+				NewActor->SetActorScale3D(FVector(
+					bHasScaleX ? ScaleX : CurrentScale.X,
+					bHasScaleY ? ScaleY : CurrentScale.Y,
+					bHasScaleZ ? ScaleZ : CurrentScale.Z));
+			}
+
+			TSharedPtr<FJsonObject> StructuredContent = ActorToolMakeActorObject(NewActor);
+			StructuredContent->SetObjectField(TEXT("scale"), ActorToolMakeVectorObject(NewActor->GetActorScale3D()));
+
+			const TSharedPtr<FJsonObject>* PropertyValuesObject = nullptr;
+			int32 PropertySuccessCount = 0;
+			int32 PropertyFailureCount = 0;
+			TArray<TSharedPtr<FJsonValue>> PropertyEdits;
+			if (Arguments.TryGetObjectField(TEXT("properties"), PropertyValuesObject) && PropertyValuesObject && (*PropertyValuesObject)->Values.Num() > 0)
+			{
+				ApplyPropertyMapToActor(NewActor, **PropertyValuesObject, PropertyEdits, PropertySuccessCount, PropertyFailureCount);
+				StructuredContent->SetNumberField(TEXT("propertySuccessCount"), PropertySuccessCount);
+				StructuredContent->SetNumberField(TEXT("propertyFailureCount"), PropertyFailureCount);
+				StructuredContent->SetArrayField(TEXT("propertyEdits"), PropertyEdits);
+			}
+
+			FString Text = FString::Printf(TEXT("Spawned actor %s."), *NewActor->GetActorLabel());
+			if (PropertySuccessCount > 0 || PropertyFailureCount > 0)
+			{
+				Text += FString::Printf(
+					TEXT(" propertySuccess=%d propertyFailure=%d"),
+					PropertySuccessCount,
+					PropertyFailureCount);
+			}
+
+			return ActorToolMakeExecutionResult(
+				Text,
+				StructuredContent,
+				PropertyFailureCount > 0);
+		}
+
+		FUnrealMcpExecutionResult ExecuteSpawnActorBatch(const FString& ToolName, const FJsonObject& Arguments)
+		{
+			if (IsEditorPlaying())
+			{
+				return MakePieBlockedResult(ToolName);
+			}
+
+			UEditorActorSubsystem* EditorActorSubsystem = ActorToolGetEditorActorSubsystem();
+			if (!EditorActorSubsystem)
+			{
+				return ActorToolMakeExecutionResult(TEXT("EditorActorSubsystem is unavailable."), nullptr, true);
+			}
+
+			TArray<TSharedPtr<FJsonObject>> SpawnItems;
+			if (!ActorToolTryGetObjectArrayField(Arguments, TEXT("items"), SpawnItems) || SpawnItems.Num() == 0)
+			{
+				return ActorToolMakeExecutionResult(TEXT("The items argument must be a non-empty array of objects."), nullptr, true);
+			}
+
+			FString DefaultClassPath;
+			bool bSelectSpawned = true;
+			Arguments.TryGetStringField(TEXT("classPath"), DefaultClassPath);
+			Arguments.TryGetBoolField(TEXT("selectSpawned"), bSelectSpawned);
+
+			TArray<TSharedPtr<FJsonValue>> ResultItems;
+			TArray<AActor*> SpawnedActors;
+			TArray<FString> TextLines;
+			int32 SuccessCount = 0;
+			int32 FailureCount = 0;
+			int32 PropertyFailureCount = 0;
+
+			for (int32 ItemIndex = 0; ItemIndex < SpawnItems.Num(); ++ItemIndex)
+			{
+				TSharedPtr<FJsonObject> MergedArguments = MakeShared<FJsonObject>();
+				MergedArguments->Values = SpawnItems[ItemIndex]->Values;
+
+				if (!MergedArguments->HasField(TEXT("classPath")) && !DefaultClassPath.IsEmpty())
+				{
+					MergedArguments->SetStringField(TEXT("classPath"), DefaultClassPath);
+				}
+
+				FUnrealMcpExecutionResult SpawnResult = ExecuteSpawnActor(TEXT("unreal.spawn_actor"), *MergedArguments);
+
+				TSharedPtr<FJsonObject> ItemResult = SpawnResult.StructuredContent.IsValid()
+					? MakeShared<FJsonObject>(*SpawnResult.StructuredContent)
+					: MakeShared<FJsonObject>();
+				bool bSpawnedActor = false;
+
+				if (SpawnResult.StructuredContent.IsValid())
+				{
+					double ItemPropertyFailureCount = 0.0;
+					if (SpawnResult.StructuredContent->TryGetNumberField(TEXT("propertyFailureCount"), ItemPropertyFailureCount))
+					{
+						PropertyFailureCount += static_cast<int32>(ItemPropertyFailureCount);
+					}
+
+					FString ActorPath;
+					if (SpawnResult.StructuredContent->TryGetStringField(TEXT("path"), ActorPath))
+					{
+						bSpawnedActor = true;
+
+						FString ResolveFailureReason;
+						if (AActor* SpawnedActor = ActorToolResolveActorReference(EditorActorSubsystem, ActorPath, FString(), ResolveFailureReason))
+						{
+							SpawnedActors.Add(SpawnedActor);
+						}
+					}
+				}
+
+				ItemResult->SetNumberField(TEXT("index"), ItemIndex);
+				ItemResult->SetBoolField(TEXT("success"), !SpawnResult.bIsError);
+				ItemResult->SetBoolField(TEXT("spawned"), bSpawnedActor);
+				ItemResult->SetBoolField(TEXT("toolError"), SpawnResult.bIsError);
+				ItemResult->SetStringField(TEXT("text"), SpawnResult.Text);
+				ResultItems.Add(MakeShared<FJsonValueObject>(ItemResult));
+
+				if (bSpawnedActor)
+				{
+					++SuccessCount;
+				}
+				else
+				{
+					++FailureCount;
+				}
+
+				TextLines.Add(FString::Printf(TEXT("[%d] %s"), ItemIndex, *SpawnResult.Text));
+			}
+
+			if (bSelectSpawned)
+			{
+				EditorActorSubsystem->SelectNothing();
+				for (AActor* SpawnedActor : SpawnedActors)
+				{
+					EditorActorSubsystem->SetActorSelectionState(SpawnedActor, true);
+				}
+			}
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("defaultClassPath"), DefaultClassPath);
+			StructuredContent->SetBoolField(TEXT("selectSpawned"), bSelectSpawned);
+			StructuredContent->SetNumberField(TEXT("requestedCount"), SpawnItems.Num());
+			StructuredContent->SetNumberField(TEXT("successCount"), SuccessCount);
+			StructuredContent->SetNumberField(TEXT("failureCount"), FailureCount);
+			StructuredContent->SetNumberField(TEXT("propertyFailureCount"), PropertyFailureCount);
+			StructuredContent->SetArrayField(TEXT("items"), ResultItems);
+
+			FString Text = FString::Printf(
+				TEXT("Spawned %d/%d actors in batch. failures=%d propertyFailures=%d"),
+				SuccessCount,
+				SpawnItems.Num(),
+				FailureCount,
+				PropertyFailureCount);
+			if (TextLines.Num() > 0)
+			{
+				Text += TEXT("\n") + FString::Join(TextLines, TEXT("\n"));
+			}
+
+			return ActorToolMakeExecutionResult(Text, StructuredContent, FailureCount > 0 || PropertyFailureCount > 0);
+		}
+
+		FUnrealMcpExecutionResult ExecuteSpawnStaticMeshActor(const FString& ToolName, const FJsonObject& Arguments)
+		{
+			if (IsEditorPlaying())
+			{
+				return MakePieBlockedResult(ToolName);
+			}
+
+			UEditorActorSubsystem* EditorActorSubsystem = ActorToolGetEditorActorSubsystem();
+			UEditorAssetSubsystem* EditorAssetSubsystem = ActorToolGetEditorAssetSubsystem();
+			if (!EditorActorSubsystem || !EditorAssetSubsystem)
+			{
+				return ActorToolMakeExecutionResult(TEXT("Editor actor subsystems are unavailable."), nullptr, true);
+			}
+
+			FString StaticMeshPath;
+			if (!Arguments.TryGetStringField(TEXT("staticMeshPath"), StaticMeshPath) || StaticMeshPath.TrimStartAndEnd().IsEmpty())
+			{
+				return ActorToolMakeExecutionResult(TEXT("The staticMeshPath argument is required."), nullptr, true);
+			}
+
+			FString MaterialPath;
+			Arguments.TryGetStringField(TEXT("materialPath"), MaterialPath);
+			double MaterialSlotValue = 0.0;
+			Arguments.TryGetNumberField(TEXT("materialSlot"), MaterialSlotValue);
+			const int32 MaterialSlot = FMath::Max(0, static_cast<int32>(MaterialSlotValue));
+
+			FString MeshObjectPath;
+			FString FailureReason;
+			UObject* LoadedMeshAsset = ActorToolLoadAssetFromAnyPath(EditorAssetSubsystem, StaticMeshPath, MeshObjectPath, FailureReason);
+			UStaticMesh* StaticMeshAsset = Cast<UStaticMesh>(LoadedMeshAsset);
+			if (!StaticMeshAsset)
+			{
+				return ActorToolMakeExecutionResult(
+					LoadedMeshAsset
+						? FString::Printf(TEXT("Asset '%s' is not a StaticMesh."), *MeshObjectPath)
+						: FailureReason,
+					nullptr,
+					true);
+			}
+
+			UMaterialInterface* MaterialAsset = nullptr;
+			FString MaterialObjectPath;
+			if (!MaterialPath.TrimStartAndEnd().IsEmpty())
+			{
+				UObject* LoadedMaterialAsset = ActorToolLoadAssetFromAnyPath(EditorAssetSubsystem, MaterialPath, MaterialObjectPath, FailureReason);
+				MaterialAsset = Cast<UMaterialInterface>(LoadedMaterialAsset);
+				if (!MaterialAsset)
+				{
+					return ActorToolMakeExecutionResult(
+						LoadedMaterialAsset
+							? FString::Printf(TEXT("Asset '%s' is not a material or material instance."), *MaterialObjectPath)
+							: FailureReason,
+						nullptr,
+						true);
+				}
+			}
+
+			TSharedPtr<FJsonObject> SpawnArguments = MakeShared<FJsonObject>();
+			SpawnArguments->SetStringField(TEXT("classPath"), TEXT("/Script/Engine.StaticMeshActor"));
+			ActorToolCopyNumberFieldIfPresent(Arguments, TEXT("x"), SpawnArguments);
+			ActorToolCopyNumberFieldIfPresent(Arguments, TEXT("y"), SpawnArguments);
+			ActorToolCopyNumberFieldIfPresent(Arguments, TEXT("z"), SpawnArguments);
+			ActorToolCopyNumberFieldIfPresent(Arguments, TEXT("pitch"), SpawnArguments);
+			ActorToolCopyNumberFieldIfPresent(Arguments, TEXT("yaw"), SpawnArguments);
+			ActorToolCopyNumberFieldIfPresent(Arguments, TEXT("roll"), SpawnArguments);
+			ActorToolCopyNumberFieldIfPresent(Arguments, TEXT("sx"), SpawnArguments);
+			ActorToolCopyNumberFieldIfPresent(Arguments, TEXT("sy"), SpawnArguments);
+			ActorToolCopyNumberFieldIfPresent(Arguments, TEXT("sz"), SpawnArguments);
+			ActorToolCopyStringFieldIfPresent(Arguments, TEXT("label"), SpawnArguments);
+
+			FUnrealMcpExecutionResult SpawnResult = ExecuteSpawnActor(TEXT("unreal.spawn_actor"), *SpawnArguments);
+			if (SpawnResult.bIsError || !SpawnResult.StructuredContent.IsValid())
+			{
+				return SpawnResult;
+			}
+
+			FString SpawnedActorPath;
+			if (!SpawnResult.StructuredContent->TryGetStringField(TEXT("path"), SpawnedActorPath) || SpawnedActorPath.IsEmpty())
+			{
+				return ActorToolMakeExecutionResult(TEXT("The spawned StaticMeshActor did not report a valid actor path."), nullptr, true);
+			}
+
+			AActor* SpawnedActor = ActorToolResolveActorReference(EditorActorSubsystem, SpawnedActorPath, FString(), FailureReason);
+			if (!SpawnedActor)
+			{
+				return ActorToolMakeExecutionResult(FailureReason, nullptr, true);
+			}
+
+			UStaticMeshComponent* StaticMeshComponent = SpawnedActor->FindComponentByClass<UStaticMeshComponent>();
+			if (!StaticMeshComponent)
+			{
+				return ActorToolMakeExecutionResult(
+					FString::Printf(TEXT("Spawned actor '%s' does not have a StaticMeshComponent."), *SpawnedActor->GetActorLabel()),
+					nullptr,
+					true);
+			}
+
+			SpawnedActor->Modify();
+			StaticMeshComponent->Modify();
+			StaticMeshComponent->SetStaticMesh(StaticMeshAsset);
+			if (MaterialAsset)
+			{
+				StaticMeshComponent->SetMaterial(MaterialSlot, MaterialAsset);
+			}
+			StaticMeshComponent->MarkPackageDirty();
+			SpawnedActor->MarkPackageDirty();
+
+			TSharedPtr<FJsonObject> StructuredContent = ActorToolMakeActorObject(SpawnedActor);
+			StructuredContent->SetObjectField(TEXT("scale"), ActorToolMakeVectorObject(SpawnedActor->GetActorScale3D()));
+			StructuredContent->SetStringField(TEXT("staticMeshPath"), MeshObjectPath);
+			if (MaterialAsset)
+			{
+				StructuredContent->SetStringField(TEXT("materialPath"), MaterialObjectPath);
+				StructuredContent->SetNumberField(TEXT("materialSlot"), MaterialSlot);
+			}
+
+			FString Text = FString::Printf(TEXT("Spawned StaticMeshActor %s with mesh %s."), *SpawnedActor->GetActorLabel(), *MeshObjectPath);
+			if (MaterialAsset)
+			{
+				Text += FString::Printf(TEXT(" Applied material %s to slot %d."), *MaterialObjectPath, MaterialSlot);
+			}
+
+			return ActorToolMakeExecutionResult(Text, StructuredContent, false);
+		}
 	}
 
 	bool TryExecuteActorTool(const FString& ToolName, const FJsonObject& Arguments, FUnrealMcpExecutionResult& OutResult)
@@ -1838,6 +2241,24 @@ namespace UnrealMcp
 		if (ToolName == TEXT("unreal.layout_actors_circle"))
 		{
 			OutResult = ExecuteLayoutActorsCircle(ToolName, Arguments);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.spawn_actor") || ToolName == TEXT("unreal.spawn_actor_basic"))
+		{
+			OutResult = ExecuteSpawnActor(TEXT("unreal.spawn_actor"), Arguments);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.spawn_actor_batch") || ToolName == TEXT("unreal.spawn_actor_batch_basic"))
+		{
+			OutResult = ExecuteSpawnActorBatch(TEXT("unreal.spawn_actor_batch"), Arguments);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.spawn_static_mesh_actor"))
+		{
+			OutResult = ExecuteSpawnStaticMeshActor(ToolName, Arguments);
 			return true;
 		}
 
