@@ -93,6 +93,7 @@
 #include "UnrealMcpActorTools.h"
 #include "UnrealMcpBlueprintTools.h"
 #include "UnrealMcpEditorTools.h"
+#include "UnrealMcpScaffoldTools.h"
 #include "UnrealMcpSelfExtensionTools.h"
 #include "UnrealMcpSettings.h"
 #include "UnrealMcpSkillTools.h"
@@ -12801,7 +12802,6 @@ FUnrealMcpExecutionResult FUnrealMcpModule::ExecuteTool(const FString& ToolName,
 
 FUnrealMcpExecutionResult FUnrealMcpModule::ExecuteToolInternal(const FString& ToolName, const FJsonObject& Arguments) const
 {
-	UEditorAssetSubsystem* EditorAssetSubsystem = GEditor ? GEditor->GetEditorSubsystem<UEditorAssetSubsystem>() : nullptr;
 	FUnrealMcpExecutionResult EditorToolResult;
 	if (UnrealMcp::TryExecuteEditorTool(ToolName, Arguments, EditorToolResult))
 	{
@@ -12826,79 +12826,11 @@ FUnrealMcpExecutionResult FUnrealMcpModule::ExecuteToolInternal(const FString& T
 		return WidgetToolResult;
 	}
 
-	if (ToolName == TEXT("unreal.scaffold_round_system"))
+	FUnrealMcpExecutionResult ScaffoldToolResult;
+	if (UnrealMcp::TryExecuteScaffoldTool(ToolName, Arguments, ScaffoldToolResult))
 	{
-		if (UnrealMcp::IsEditorPlaying())
-		{
-			return UnrealMcp::MakePieBlockedResult(ToolName);
-		}
-		if (!EditorAssetSubsystem)
-		{
-			return UnrealMcp::MakeExecutionResult(TEXT("EditorAssetSubsystem is unavailable."), nullptr, true);
-		}
-		return UnrealMcp::ScaffoldRoundSystem(EditorAssetSubsystem, Arguments);
+		return ScaffoldToolResult;
 	}
-
-	if (ToolName == TEXT("unreal.scaffold_shop_system"))
-	{
-		if (UnrealMcp::IsEditorPlaying())
-		{
-			return UnrealMcp::MakePieBlockedResult(ToolName);
-		}
-		if (!EditorAssetSubsystem)
-		{
-			return UnrealMcp::MakeExecutionResult(TEXT("EditorAssetSubsystem is unavailable."), nullptr, true);
-		}
-		return UnrealMcp::ScaffoldShopSystem(EditorAssetSubsystem, Arguments);
-	}
-
-	if (ToolName == TEXT("unreal.scaffold_economy_system"))
-	{
-		if (UnrealMcp::IsEditorPlaying())
-		{
-			return UnrealMcp::MakePieBlockedResult(ToolName);
-		}
-		if (!EditorAssetSubsystem)
-		{
-			return UnrealMcp::MakeExecutionResult(TEXT("EditorAssetSubsystem is unavailable."), nullptr, true);
-		}
-		return UnrealMcp::ScaffoldEconomySystem(EditorAssetSubsystem, Arguments);
-	}
-
-	if (ToolName == TEXT("unreal.scaffold_autobattler_ai"))
-	{
-		if (UnrealMcp::IsEditorPlaying())
-		{
-			return UnrealMcp::MakePieBlockedResult(ToolName);
-		}
-		if (!EditorAssetSubsystem)
-		{
-			return UnrealMcp::MakeExecutionResult(TEXT("EditorAssetSubsystem is unavailable."), nullptr, true);
-		}
-		return UnrealMcp::ScaffoldAutobattlerAi(EditorAssetSubsystem, Arguments);
-	}
-
-	if (ToolName == TEXT("unreal.scaffold_result_ui"))
-	{
-		if (UnrealMcp::IsEditorPlaying())
-		{
-			return UnrealMcp::MakePieBlockedResult(ToolName);
-		}
-		if (!EditorAssetSubsystem)
-		{
-			return UnrealMcp::MakeExecutionResult(TEXT("EditorAssetSubsystem is unavailable."), nullptr, true);
-		}
-		return UnrealMcp::ScaffoldResultUi(EditorAssetSubsystem, Arguments);
-	}
-
-		if (ToolName == TEXT("unreal.scaffold_mcp_tool"))
-		{
-			if (UnrealMcp::IsEditorPlaying())
-			{
-				return UnrealMcp::MakePieBlockedResult(ToolName);
-			}
-			return UnrealMcp::ScaffoldMcpTool(Arguments);
-		}
 
 		if (ToolName == TEXT("unreal.mcp_list_scaffolds"))
 		{
