@@ -12848,7 +12848,14 @@ FUnrealMcpExecutionResult FUnrealMcpModule::ExecuteToolInternal(const FString& T
 	TArray<TSharedPtr<FJsonValue>> ToolDefinitions;
 	AppendToolDefinitions(ToolDefinitions);
 	FUnrealMcpExecutionResult SelfExtensionToolResult;
-	if (UnrealMcp::TryExecuteSelfExtensionTool(ToolName, Arguments, ToolDefinitions, SelfExtensionToolResult))
+	if (UnrealMcp::TryExecuteSelfExtensionTool(
+		ToolName,
+		Arguments,
+		ToolDefinitions,
+		[this](const FJsonObject& ToolArguments) { return RunMcpToolTest(ToolArguments); },
+		[this](const FJsonObject& ToolArguments) { return RunMcpTestSuite(ToolArguments); },
+		[this](const FJsonObject& ToolArguments) { return RunMcpExtensionPipeline(ToolArguments); },
+		SelfExtensionToolResult))
 	{
 		return SelfExtensionToolResult;
 	}
@@ -12862,40 +12869,6 @@ FUnrealMcpExecutionResult FUnrealMcpModule::ExecuteToolInternal(const FString& T
 				}
 				return UnrealMcp::SkillPromoteDraft(Arguments);
 			}
-
-		if (ToolName == TEXT("unreal.mcp_run_tool_test"))
-		{
-			UnrealMcp::FScopedMcpExtensionSessionLock ScopedLock(ToolName, Arguments);
-			if (!ScopedLock.IsAcquired())
-			{
-				return UnrealMcp::MakeExecutionResult(ScopedLock.GetFailureReason(), ScopedLock.MakeStructuredContent(TEXT("mcp_extension_lock_failed")), true);
-			}
-			return RunMcpToolTest(Arguments);
-		}
-
-		if (ToolName == TEXT("unreal.mcp_run_test_suite"))
-		{
-			UnrealMcp::FScopedMcpExtensionSessionLock ScopedLock(ToolName, Arguments);
-			if (!ScopedLock.IsAcquired())
-			{
-				return UnrealMcp::MakeExecutionResult(ScopedLock.GetFailureReason(), ScopedLock.MakeStructuredContent(TEXT("mcp_extension_lock_failed")), true);
-			}
-			return RunMcpTestSuite(Arguments);
-		}
-
-		if (ToolName == TEXT("unreal.mcp_extension_pipeline"))
-		{
-			if (UnrealMcp::IsEditorPlaying())
-			{
-				return UnrealMcp::MakePieBlockedResult(ToolName);
-			}
-			UnrealMcp::FScopedMcpExtensionSessionLock ScopedLock(ToolName, Arguments);
-			if (!ScopedLock.IsAcquired())
-			{
-				return UnrealMcp::MakeExecutionResult(ScopedLock.GetFailureReason(), ScopedLock.MakeStructuredContent(TEXT("mcp_extension_lock_failed")), true);
-			}
-			return RunMcpExtensionPipeline(Arguments);
-		}
 
 	return UnrealMcp::MakeExecutionResult(FString::Printf(TEXT("Unknown tool '%s'."), *ToolName), nullptr, true);
 }

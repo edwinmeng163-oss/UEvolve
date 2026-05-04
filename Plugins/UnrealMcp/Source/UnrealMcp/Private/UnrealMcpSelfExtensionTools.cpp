@@ -164,7 +164,10 @@ namespace UnrealMcp
 				|| ToolName == TEXT("unreal.mcp_rollback_to_manifest")
 				|| ToolName == TEXT("unreal.mcp_supervisor_install")
 				|| ToolName == TEXT("unreal.mcp_generate_tests")
-				|| ToolName == TEXT("unreal.mcp_build_editor");
+				|| ToolName == TEXT("unreal.mcp_build_editor")
+				|| ToolName == TEXT("unreal.mcp_run_tool_test")
+				|| ToolName == TEXT("unreal.mcp_run_test_suite")
+				|| ToolName == TEXT("unreal.mcp_extension_pipeline");
 		}
 
 		bool IsSelfExtensionPieBlockedTool(const FString& ToolName)
@@ -172,7 +175,8 @@ namespace UnrealMcp
 			return ToolName == TEXT("unreal.mcp_apply_scaffold")
 				|| ToolName == TEXT("unreal.mcp_rollback_last_extension")
 				|| ToolName == TEXT("unreal.mcp_rollback_to_manifest")
-				|| ToolName == TEXT("unreal.mcp_generate_tests");
+				|| ToolName == TEXT("unreal.mcp_generate_tests")
+				|| ToolName == TEXT("unreal.mcp_extension_pipeline");
 		}
 
 		FUnrealMcpExecutionResult MakeSelfExtensionLockFailure(const FString& Action, const FScopedSelfExtensionToolLock& ScopedLock)
@@ -188,6 +192,9 @@ namespace UnrealMcp
 		const FString& ToolName,
 		const FJsonObject& Arguments,
 		const TArray<TSharedPtr<FJsonValue>>& ToolsArray,
+		const FSelfExtensionModuleToolRunner& RunToolTest,
+		const FSelfExtensionModuleToolRunner& RunTestSuite,
+		const FSelfExtensionModuleToolRunner& RunExtensionPipeline,
 		FUnrealMcpExecutionResult& OutResult)
 	{
 		if (ToolName == TEXT("unreal.mcp_list_scaffolds"))
@@ -310,6 +317,24 @@ namespace UnrealMcp
 			if (ToolName == TEXT("unreal.mcp_generate_tests"))
 			{
 				OutResult = GenerateMcpTests(Arguments, ToolsArray);
+				return true;
+			}
+
+			if (ToolName == TEXT("unreal.mcp_run_tool_test"))
+			{
+				OutResult = RunToolTest(Arguments);
+				return true;
+			}
+
+			if (ToolName == TEXT("unreal.mcp_run_test_suite"))
+			{
+				OutResult = RunTestSuite(Arguments);
+				return true;
+			}
+
+			if (ToolName == TEXT("unreal.mcp_extension_pipeline"))
+			{
+				OutResult = RunExtensionPipeline(Arguments);
 				return true;
 			}
 
