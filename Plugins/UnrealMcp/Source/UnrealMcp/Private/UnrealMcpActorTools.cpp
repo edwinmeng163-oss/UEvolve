@@ -1,11 +1,17 @@
 #include "UnrealMcpActorTools.h"
 
+#include "Components/PointLightComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Editor.h"
+#include "EditorScriptingHelpers.h"
+#include "Engine/StaticMesh.h"
 #include "GameFramework/Actor.h"
+#include "Materials/MaterialInterface.h"
 #include "ScopedTransaction.h"
 #include "Subsystems/EditorActorSubsystem.h"
+#include "Subsystems/EditorAssetSubsystem.h"
 #include "UnrealMcpModule.h"
 
 namespace UnrealMcp
@@ -162,6 +168,38 @@ namespace UnrealMcp
 		UEditorActorSubsystem* ActorToolGetEditorActorSubsystem()
 		{
 			return GEditor ? GEditor->GetEditorSubsystem<UEditorActorSubsystem>() : nullptr;
+		}
+
+		UEditorAssetSubsystem* ActorToolGetEditorAssetSubsystem()
+		{
+			return GEditor ? GEditor->GetEditorSubsystem<UEditorAssetSubsystem>() : nullptr;
+		}
+
+		UObject* ActorToolLoadAssetFromAnyPath(
+			UEditorAssetSubsystem* EditorAssetSubsystem,
+			const FString& AnyAssetPath,
+			FString& OutObjectPath,
+			FString& OutFailureReason)
+		{
+			if (!EditorAssetSubsystem)
+			{
+				OutFailureReason = TEXT("EditorAssetSubsystem is unavailable.");
+				return nullptr;
+			}
+
+			OutObjectPath = EditorScriptingHelpers::ConvertAnyPathToObjectPath(AnyAssetPath, OutFailureReason);
+			if (OutObjectPath.IsEmpty())
+			{
+				return nullptr;
+			}
+
+			UObject* LoadedAsset = EditorAssetSubsystem->LoadAsset(OutObjectPath);
+			if (!LoadedAsset)
+			{
+				OutFailureReason = FString::Printf(TEXT("Failed to load asset '%s'."), *OutObjectPath);
+			}
+
+			return LoadedAsset;
 		}
 
 		AActor* ActorToolResolveActorReference(
@@ -1102,6 +1140,326 @@ namespace UnrealMcp
 
 			return ActorToolMakeExecutionResult(Text, StructuredContent, false);
 		}
+
+		FUnrealMcpExecutionResult ExecuteBatchSetPointLightProperties(const FString& ToolName, const FJsonObject& Arguments)
+		{
+			if (IsEditorPlaying())
+			{
+				return MakePieBlockedResult(ToolName);
+			}
+
+			UEditorActorSubsystem* EditorActorSubsystem = ActorToolGetEditorActorSubsystem();
+			if (!EditorActorSubsystem)
+			{
+				return ActorToolMakeExecutionResult(TEXT("EditorActorSubsystem is unavailable."), nullptr, true);
+			}
+
+			double Intensity = 0.0;
+			double AttenuationRadius = 0.0;
+			double SourceRadius = 0.0;
+			double SoftSourceRadius = 0.0;
+			double Temperature = 6500.0;
+			bool bUseTemperature = false;
+			bool bCastShadows = true;
+			bool bVisible = true;
+			const bool bHasIntensity = Arguments.TryGetNumberField(TEXT("intensity"), Intensity);
+			const bool bHasAttenuationRadius = Arguments.TryGetNumberField(TEXT("attenuationRadius"), AttenuationRadius);
+			const bool bHasSourceRadius = Arguments.TryGetNumberField(TEXT("sourceRadius"), SourceRadius);
+			const bool bHasSoftSourceRadius = Arguments.TryGetNumberField(TEXT("softSourceRadius"), SoftSourceRadius);
+			const bool bHasTemperature = Arguments.TryGetNumberField(TEXT("temperature"), Temperature);
+			const bool bHasUseTemperature = Arguments.TryGetBoolField(TEXT("useTemperature"), bUseTemperature);
+			const bool bHasCastShadows = Arguments.TryGetBoolField(TEXT("castShadows"), bCastShadows);
+			const bool bHasVisible = Arguments.TryGetBoolField(TEXT("visible"), bVisible);
+			if (!bHasIntensity
+				&& !bHasAttenuationRadius
+				&& !bHasSourceRadius
+				&& !bHasSoftSourceRadius
+				&& !bHasTemperature
+				&& !bHasUseTemperature
+				&& !bHasCastShadows
+				&& !bHasVisible)
+			{
+				return ActorToolMakeExecutionResult(
+					TEXT("Provide at least one point light property such as intensity, attenuationRadius, sourceRadius, temperature, castShadows, or visible."),
+					nullptr,
+					true);
+			}
+
+			FActorToolQueryResult Query;
+			FString FailureReason;
+			if (!ActorToolResolveActorsFromArguments(EditorActorSubsystem, Arguments, Query, FailureReason))
+			{
+				return ActorToolMakeExecutionResult(FailureReason, nullptr, true);
+			}
+
+			FScopedTransaction Transaction(NSLOCTEXT("UnrealMcp", "BatchSetPointLightProperties", "Unreal MCP Batch Set Point Light Properties"));
+
+			int32 SuccessCount = 0;
+			int32 FailureCount = 0;
+			TArray<TSharedPtr<FJsonValue>> ActorResults;
+			TArray<FString> TextLines;
+
+			for (AActor* Actor : Query.Actors)
+			{
+				UPointLightComponent* PointLightComponent = Actor ? Actor->FindComponentByClass<UPointLightComponent>() : nullptr;
+				if (!PointLightComponent)
+				{
+					++FailureCount;
+					TSharedPtr<FJsonObject> ActorObject = ActorToolMakeActorObject(Actor);
+					ActorObject->SetBoolField(TEXT("success"), false);
+					ActorObject->SetStringField(TEXT("error"), TEXT("No PointLightComponent was found on this actor."));
+					ActorResults.Add(MakeShared<FJsonValueObject>(ActorObject));
+					TextLines.Add(FString::Printf(TEXT("%s: missing PointLightComponent"), *Actor->GetActorLabel()));
+					continue;
+				}
+
+				Actor->Modify();
+				PointLightComponent->Modify();
+
+				if (bHasIntensity)
+				{
+					PointLightComponent->SetIntensity(Intensity);
+				}
+				if (bHasAttenuationRadius)
+				{
+					PointLightComponent->SetAttenuationRadius(AttenuationRadius);
+				}
+				if (bHasSourceRadius)
+				{
+					PointLightComponent->SetSourceRadius(SourceRadius);
+				}
+				if (bHasSoftSourceRadius)
+				{
+					PointLightComponent->SetSoftSourceRadius(SoftSourceRadius);
+				}
+				if (bHasUseTemperature)
+				{
+					PointLightComponent->SetUseTemperature(bUseTemperature);
+				}
+				if (bHasTemperature)
+				{
+					PointLightComponent->SetTemperature(Temperature);
+				}
+				if (bHasCastShadows)
+				{
+					PointLightComponent->SetCastShadows(bCastShadows);
+				}
+				if (bHasVisible)
+				{
+					PointLightComponent->SetVisibility(bVisible);
+				}
+
+				PointLightComponent->MarkPackageDirty();
+				Actor->MarkPackageDirty();
+
+				++SuccessCount;
+				TSharedPtr<FJsonObject> ActorObject = ActorToolMakeActorObject(Actor);
+				ActorObject->SetBoolField(TEXT("success"), true);
+				if (bHasIntensity)
+				{
+					ActorObject->SetNumberField(TEXT("intensity"), Intensity);
+				}
+				if (bHasAttenuationRadius)
+				{
+					ActorObject->SetNumberField(TEXT("attenuationRadius"), AttenuationRadius);
+				}
+				if (bHasSourceRadius)
+				{
+					ActorObject->SetNumberField(TEXT("sourceRadius"), SourceRadius);
+				}
+				if (bHasSoftSourceRadius)
+				{
+					ActorObject->SetNumberField(TEXT("softSourceRadius"), SoftSourceRadius);
+				}
+				if (bHasUseTemperature)
+				{
+					ActorObject->SetBoolField(TEXT("useTemperature"), bUseTemperature);
+				}
+				if (bHasTemperature)
+				{
+					ActorObject->SetNumberField(TEXT("temperature"), Temperature);
+				}
+				if (bHasCastShadows)
+				{
+					ActorObject->SetBoolField(TEXT("castShadows"), bCastShadows);
+				}
+				if (bHasVisible)
+				{
+					ActorObject->SetBoolField(TEXT("visible"), bVisible);
+				}
+				ActorResults.Add(MakeShared<FJsonValueObject>(ActorObject));
+
+				TextLines.Add(FString::Printf(TEXT("%s: updated point light properties"), *Actor->GetActorLabel()));
+			}
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetNumberField(TEXT("matchCount"), Query.MatchCount);
+			StructuredContent->SetNumberField(TEXT("returnedCount"), Query.Actors.Num());
+			StructuredContent->SetBoolField(TEXT("truncated"), Query.bTruncated);
+			StructuredContent->SetNumberField(TEXT("successCount"), SuccessCount);
+			StructuredContent->SetNumberField(TEXT("failureCount"), FailureCount);
+			StructuredContent->SetArrayField(TEXT("actors"), ActorResults);
+
+			FString Text = FString::Printf(
+				TEXT("Updated point light properties on %d actors. success=%d failure=%d"),
+				Query.Actors.Num(),
+				SuccessCount,
+				FailureCount);
+			if (TextLines.Num() > 0)
+			{
+				Text += TEXT("\n") + FString::Join(TextLines, TEXT("\n"));
+			}
+
+			return ActorToolMakeExecutionResult(Text, StructuredContent, FailureCount > 0);
+		}
+
+		FUnrealMcpExecutionResult ExecuteBatchConfigureStaticMeshActors(const FString& ToolName, const FJsonObject& Arguments)
+		{
+			if (IsEditorPlaying())
+			{
+				return MakePieBlockedResult(ToolName);
+			}
+
+			UEditorActorSubsystem* EditorActorSubsystem = ActorToolGetEditorActorSubsystem();
+			UEditorAssetSubsystem* EditorAssetSubsystem = ActorToolGetEditorAssetSubsystem();
+			if (!EditorActorSubsystem || !EditorAssetSubsystem)
+			{
+				return ActorToolMakeExecutionResult(TEXT("Editor actor subsystems are unavailable."), nullptr, true);
+			}
+
+			FString StaticMeshPath;
+			FString MaterialPath;
+			Arguments.TryGetStringField(TEXT("staticMeshPath"), StaticMeshPath);
+			Arguments.TryGetStringField(TEXT("materialPath"), MaterialPath);
+			if (StaticMeshPath.TrimStartAndEnd().IsEmpty() && MaterialPath.TrimStartAndEnd().IsEmpty())
+			{
+				return ActorToolMakeExecutionResult(TEXT("Provide at least one of staticMeshPath or materialPath."), nullptr, true);
+			}
+
+			double MaterialSlotValue = 0.0;
+			Arguments.TryGetNumberField(TEXT("materialSlot"), MaterialSlotValue);
+			const int32 MaterialSlot = FMath::Max(0, static_cast<int32>(MaterialSlotValue));
+
+			UStaticMesh* StaticMeshAsset = nullptr;
+			FString MeshObjectPath;
+			FString FailureReason;
+			if (!StaticMeshPath.TrimStartAndEnd().IsEmpty())
+			{
+				UObject* LoadedMeshAsset = ActorToolLoadAssetFromAnyPath(EditorAssetSubsystem, StaticMeshPath, MeshObjectPath, FailureReason);
+				StaticMeshAsset = Cast<UStaticMesh>(LoadedMeshAsset);
+				if (!StaticMeshAsset)
+				{
+					return ActorToolMakeExecutionResult(
+						LoadedMeshAsset
+							? FString::Printf(TEXT("Asset '%s' is not a StaticMesh."), *MeshObjectPath)
+							: FailureReason,
+						nullptr,
+						true);
+				}
+			}
+
+			UMaterialInterface* MaterialAsset = nullptr;
+			FString MaterialObjectPath;
+			if (!MaterialPath.TrimStartAndEnd().IsEmpty())
+			{
+				UObject* LoadedMaterialAsset = ActorToolLoadAssetFromAnyPath(EditorAssetSubsystem, MaterialPath, MaterialObjectPath, FailureReason);
+				MaterialAsset = Cast<UMaterialInterface>(LoadedMaterialAsset);
+				if (!MaterialAsset)
+				{
+					return ActorToolMakeExecutionResult(
+						LoadedMaterialAsset
+							? FString::Printf(TEXT("Asset '%s' is not a material or material instance."), *MaterialObjectPath)
+							: FailureReason,
+						nullptr,
+						true);
+				}
+			}
+
+			FActorToolQueryResult Query;
+			if (!ActorToolResolveActorsFromArguments(EditorActorSubsystem, Arguments, Query, FailureReason))
+			{
+				return ActorToolMakeExecutionResult(FailureReason, nullptr, true);
+			}
+
+			FScopedTransaction Transaction(NSLOCTEXT("UnrealMcp", "BatchConfigureStaticMeshActors", "Unreal MCP Batch Configure Static Mesh Actors"));
+
+			int32 SuccessCount = 0;
+			int32 FailureCount = 0;
+			TArray<TSharedPtr<FJsonValue>> ActorResults;
+			TArray<FString> TextLines;
+
+			for (AActor* Actor : Query.Actors)
+			{
+				UStaticMeshComponent* StaticMeshComponent = Actor ? Actor->FindComponentByClass<UStaticMeshComponent>() : nullptr;
+				if (!StaticMeshComponent)
+				{
+					++FailureCount;
+					TSharedPtr<FJsonObject> ActorObject = ActorToolMakeActorObject(Actor);
+					ActorObject->SetBoolField(TEXT("success"), false);
+					ActorObject->SetStringField(TEXT("error"), TEXT("No StaticMeshComponent was found on this actor."));
+					ActorResults.Add(MakeShared<FJsonValueObject>(ActorObject));
+					TextLines.Add(FString::Printf(TEXT("%s: missing StaticMeshComponent"), *Actor->GetActorLabel()));
+					continue;
+				}
+
+				Actor->Modify();
+				StaticMeshComponent->Modify();
+				if (StaticMeshAsset)
+				{
+					StaticMeshComponent->SetStaticMesh(StaticMeshAsset);
+				}
+				if (MaterialAsset)
+				{
+					StaticMeshComponent->SetMaterial(MaterialSlot, MaterialAsset);
+				}
+				StaticMeshComponent->MarkPackageDirty();
+				Actor->MarkPackageDirty();
+
+				++SuccessCount;
+				TSharedPtr<FJsonObject> ActorObject = ActorToolMakeActorObject(Actor);
+				ActorObject->SetBoolField(TEXT("success"), true);
+				if (StaticMeshAsset)
+				{
+					ActorObject->SetStringField(TEXT("staticMeshPath"), MeshObjectPath);
+				}
+				if (MaterialAsset)
+				{
+					ActorObject->SetStringField(TEXT("materialPath"), MaterialObjectPath);
+					ActorObject->SetNumberField(TEXT("materialSlot"), MaterialSlot);
+				}
+				ActorResults.Add(MakeShared<FJsonValueObject>(ActorObject));
+
+				TextLines.Add(FString::Printf(TEXT("%s: updated static mesh configuration"), *Actor->GetActorLabel()));
+			}
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetNumberField(TEXT("matchCount"), Query.MatchCount);
+			StructuredContent->SetNumberField(TEXT("returnedCount"), Query.Actors.Num());
+			StructuredContent->SetBoolField(TEXT("truncated"), Query.bTruncated);
+			StructuredContent->SetNumberField(TEXT("successCount"), SuccessCount);
+			StructuredContent->SetNumberField(TEXT("failureCount"), FailureCount);
+			if (StaticMeshAsset)
+			{
+				StructuredContent->SetStringField(TEXT("staticMeshPath"), MeshObjectPath);
+			}
+			if (MaterialAsset)
+			{
+				StructuredContent->SetStringField(TEXT("materialPath"), MaterialObjectPath);
+				StructuredContent->SetNumberField(TEXT("materialSlot"), MaterialSlot);
+			}
+			StructuredContent->SetArrayField(TEXT("actors"), ActorResults);
+
+			FString Text = FString::Printf(
+				TEXT("Configured static mesh actors. success=%d failure=%d"),
+				SuccessCount,
+				FailureCount);
+			if (TextLines.Num() > 0)
+			{
+				Text += TEXT("\n") + FString::Join(TextLines, TEXT("\n"));
+			}
+
+			return ActorToolMakeExecutionResult(Text, StructuredContent, FailureCount > 0);
+		}
 	}
 
 	bool TryExecuteActorTool(const FString& ToolName, const FJsonObject& Arguments, FUnrealMcpExecutionResult& OutResult)
@@ -1151,6 +1509,18 @@ namespace UnrealMcp
 		if (ToolName == TEXT("unreal.batch_set_actor_tags"))
 		{
 			OutResult = ExecuteBatchSetActorTags(ToolName, Arguments);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.batch_set_point_light_properties"))
+		{
+			OutResult = ExecuteBatchSetPointLightProperties(ToolName, Arguments);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.batch_configure_static_mesh_actors"))
+		{
+			OutResult = ExecuteBatchConfigureStaticMeshActors(ToolName, Arguments);
 			return true;
 		}
 

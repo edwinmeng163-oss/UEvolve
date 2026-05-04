@@ -20,11 +20,11 @@ namespace UnrealMcp
 	const TArray<FToolHandlerRegistryEntry>& GetToolHandlerRegistryEntries()
 	{
 		static const TArray<FToolHandlerRegistryEntry> Entries = {
-			MakeHandlerEntry(TEXT("unreal.batch_configure_static_mesh_actors"), TEXT("actors")),
+			MakeHandlerEntry(TEXT("unreal.batch_configure_static_mesh_actors"), TEXT("actors"), TEXT("UnrealMcpActorTools.cpp")),
 			MakeHandlerEntry(TEXT("unreal.batch_set_actor_properties"), TEXT("actors")),
 			MakeHandlerEntry(TEXT("unreal.batch_set_actor_scale"), TEXT("actors"), TEXT("UnrealMcpActorTools.cpp")),
 			MakeHandlerEntry(TEXT("unreal.batch_set_actor_tags"), TEXT("actors"), TEXT("UnrealMcpActorTools.cpp")),
-			MakeHandlerEntry(TEXT("unreal.batch_set_point_light_properties"), TEXT("editor")),
+			MakeHandlerEntry(TEXT("unreal.batch_set_point_light_properties"), TEXT("actors"), TEXT("UnrealMcpActorTools.cpp")),
 			MakeHandlerEntry(TEXT("unreal.bp_add_branch_node"), TEXT("blueprint")),
 			MakeHandlerEntry(TEXT("unreal.bp_add_call_function_node"), TEXT("blueprint")),
 			MakeHandlerEntry(TEXT("unreal.bp_add_event_node"), TEXT("blueprint")),

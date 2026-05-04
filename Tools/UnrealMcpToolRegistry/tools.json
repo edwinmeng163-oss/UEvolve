@@ -89,7 +89,7 @@
     },
     {
       "name": "unreal.batch_set_point_light_properties",
-      "category": "editor",
+      "category": "actors",
       "handlerName": "unreal.batch_set_point_light_properties",
       "exposure": "visible",
       "riskLevel": "low",
@@ -105,7 +105,7 @@
       "testCoverage": "missing",
       "owner": "UEvolve Core",
       "docsPath": "README.md#tool-coverage",
-      "reason": "Explicit registry: low-risk editor session operation.",
+      "reason": "Explicit registry: actors tool with controlled write or workflow side effects.",
       "notes": ""
     },
     {
