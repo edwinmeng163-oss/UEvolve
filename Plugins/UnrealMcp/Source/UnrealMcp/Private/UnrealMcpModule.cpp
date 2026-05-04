@@ -12845,54 +12845,13 @@ FUnrealMcpExecutionResult FUnrealMcpModule::ExecuteToolInternal(const FString& T
 		return SkillToolResult;
 	}
 
-		if (ToolName == TEXT("unreal.mcp_list_scaffolds"))
-		{
-			TArray<TSharedPtr<FJsonValue>> ToolsArray;
-			AppendToolDefinitions(ToolsArray);
-			return UnrealMcp::ListMcpScaffolds(Arguments, ToolsArray);
-		}
-
-		if (ToolName == TEXT("unreal.mcp_inspect_scaffold"))
-		{
-			TArray<TSharedPtr<FJsonValue>> ToolsArray;
-			AppendToolDefinitions(ToolsArray);
-			return UnrealMcp::InspectMcpScaffold(Arguments, ToolsArray);
-		}
-
-		if (ToolName == TEXT("unreal.mcp_validate_cpp_snippet"))
-		{
-			return UnrealMcp::ValidateCppSnippet(Arguments);
-		}
-
-		if (ToolName == TEXT("unreal.mcp_patch_scaffold_snippet"))
-		{
-			if (UnrealMcp::IsEditorPlaying())
-			{
-				return UnrealMcp::MakePieBlockedResult(ToolName);
-			}
-			return UnrealMcp::PatchScaffoldSnippet(Arguments);
-		}
-
-		if (ToolName == TEXT("unreal.mcp_validate_tool_schema"))
-		{
-			TArray<TSharedPtr<FJsonValue>> ToolsArray;
-			AppendToolDefinitions(ToolsArray);
-			return UnrealMcp::ValidateMcpToolSchema(Arguments, ToolsArray);
-		}
-
-		if (ToolName == TEXT("unreal.mcp_tool_audit"))
-		{
-			TArray<TSharedPtr<FJsonValue>> ToolsArray;
-			AppendToolDefinitions(ToolsArray);
-			return UnrealMcp::AuditMcpTools(ToolsArray);
-		}
-
-		if (ToolName == TEXT("unreal.mcp_workbench_status"))
-		{
-			TArray<TSharedPtr<FJsonValue>> ToolsArray;
-			AppendToolDefinitions(ToolsArray);
-			return UnrealMcp::WorkbenchStatus(Arguments, ToolsArray);
-		}
+	TArray<TSharedPtr<FJsonValue>> ToolDefinitions;
+	AppendToolDefinitions(ToolDefinitions);
+	FUnrealMcpExecutionResult SelfExtensionToolResult;
+	if (UnrealMcp::TryExecuteSelfExtensionTool(ToolName, Arguments, ToolDefinitions, SelfExtensionToolResult))
+	{
+		return SelfExtensionToolResult;
+	}
 
 			if (ToolName == TEXT("unreal.skill_promote_draft"))
 			{
@@ -12959,11 +12918,6 @@ FUnrealMcpExecutionResult FUnrealMcpModule::ExecuteToolInternal(const FString& T
 				return UnrealMcp::MakeExecutionResult(ScopedLock.GetFailureReason(), ScopedLock.MakeStructuredContent(TEXT("mcp_extension_lock_failed")), true);
 			}
 			return UnrealMcp::RollbackToManifest(Arguments);
-		}
-
-		if (ToolName == TEXT("unreal.mcp_compile_error_fix_plan"))
-		{
-			return UnrealMcp::CompileErrorFixPlan(Arguments);
 		}
 
 		if (ToolName == TEXT("unreal.mcp_supervisor_install"))
@@ -13034,21 +12988,6 @@ FUnrealMcpExecutionResult FUnrealMcpModule::ExecuteToolInternal(const FString& T
 				return UnrealMcp::MakeExecutionResult(ScopedLock.GetFailureReason(), ScopedLock.MakeStructuredContent(TEXT("mcp_extension_lock_failed")), true);
 			}
 			return RunMcpExtensionPipeline(Arguments);
-		}
-
-		if (ToolName == TEXT("unreal.mcp_pipeline_status"))
-		{
-			return UnrealMcp::PipelineStatus(Arguments);
-		}
-
-		if (ToolName == TEXT("unreal.mcp_diff_last_apply"))
-		{
-			return UnrealMcp::DiffLastMcpApply(Arguments);
-		}
-
-		if (ToolName == TEXT("unreal.mcp_clean_test_artifacts"))
-		{
-			return UnrealMcp::CleanMcpTestArtifacts(Arguments);
 		}
 
 	return UnrealMcp::MakeExecutionResult(FString::Printf(TEXT("Unknown tool '%s'."), *ToolName), nullptr, true);

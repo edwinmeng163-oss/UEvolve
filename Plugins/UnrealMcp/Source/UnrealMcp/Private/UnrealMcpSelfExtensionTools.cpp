@@ -56,12 +56,96 @@ namespace UnrealMcp
 	FUnrealMcpExecutionResult ApplyMcpScaffold(const FJsonObject& Arguments);
 	FUnrealMcpExecutionResult BackupProjectState(const FJsonObject& Arguments);
 	FUnrealMcpExecutionResult BuildEditor(const FJsonObject& Arguments);
+	FUnrealMcpExecutionResult ListMcpScaffolds(const FJsonObject& Arguments, const TArray<TSharedPtr<FJsonValue>>& ToolsArray);
+	FUnrealMcpExecutionResult InspectMcpScaffold(const FJsonObject& Arguments, const TArray<TSharedPtr<FJsonValue>>& ToolsArray);
+	FUnrealMcpExecutionResult ValidateCppSnippet(const FJsonObject& Arguments);
+	FUnrealMcpExecutionResult PatchScaffoldSnippet(const FJsonObject& Arguments);
+	FUnrealMcpExecutionResult CompileErrorFixPlan(const FJsonObject& Arguments);
+	FUnrealMcpExecutionResult DiffLastMcpApply(const FJsonObject& Arguments);
+	FUnrealMcpExecutionResult CleanMcpTestArtifacts(const FJsonObject& Arguments);
+	bool IsEditorPlaying();
+	FUnrealMcpExecutionResult MakePieBlockedResult(const FString& ToolName);
 	bool ResolveMcpTestsDirectory(
 		const FJsonObject& Arguments,
 		FString& OutTestsDirectory,
 		FString& OutScaffoldDirectory,
 		FString& OutToolName,
 		FString& OutFailureReason);
+
+	bool TryExecuteSelfExtensionTool(
+		const FString& ToolName,
+		const FJsonObject& Arguments,
+		const TArray<TSharedPtr<FJsonValue>>& ToolsArray,
+		FUnrealMcpExecutionResult& OutResult)
+	{
+		if (ToolName == TEXT("unreal.mcp_list_scaffolds"))
+		{
+			OutResult = ListMcpScaffolds(Arguments, ToolsArray);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.mcp_inspect_scaffold"))
+		{
+			OutResult = InspectMcpScaffold(Arguments, ToolsArray);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.mcp_validate_cpp_snippet"))
+		{
+			OutResult = ValidateCppSnippet(Arguments);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.mcp_patch_scaffold_snippet"))
+		{
+			OutResult = IsEditorPlaying() ? MakePieBlockedResult(ToolName) : PatchScaffoldSnippet(Arguments);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.mcp_validate_tool_schema"))
+		{
+			OutResult = ValidateMcpToolSchema(Arguments, ToolsArray);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.mcp_tool_audit"))
+		{
+			OutResult = AuditMcpTools(ToolsArray);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.mcp_workbench_status"))
+		{
+			OutResult = WorkbenchStatus(Arguments, ToolsArray);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.mcp_compile_error_fix_plan"))
+		{
+			OutResult = CompileErrorFixPlan(Arguments);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.mcp_pipeline_status"))
+		{
+			OutResult = PipelineStatus(Arguments);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.mcp_diff_last_apply"))
+		{
+			OutResult = DiffLastMcpApply(Arguments);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.mcp_clean_test_artifacts"))
+		{
+			OutResult = CleanMcpTestArtifacts(Arguments);
+			return true;
+		}
+
+		return false;
+	}
 
 	FUnrealMcpExecutionResult PipelineStatus(const FJsonObject& Arguments)
 	{

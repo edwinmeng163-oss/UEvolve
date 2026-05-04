@@ -36,7 +36,7 @@ Recommended split:
 - `Private/ToolRegistry`: tool metadata, visibility, handler aliases, policy metadata.
 - `Private/ToolHandlers`: first-class handler registration metadata.
 - `Private/Execution`: shared execution guard plus category-specific preflight/postcheck verifiers.
-- `Private/Tools/SelfExtension`: self-extension workbench, pipeline status, MCP test execution, and extension pipeline helpers. The first split moved `unreal.mcp_workbench_status`, `unreal.mcp_pipeline_status`, `unreal.mcp_run_tool_test`, `unreal.mcp_run_test_suite`, and `unreal.mcp_extension_pipeline` into `UnrealMcpSelfExtensionTools.cpp`.
+- `Private/Tools/SelfExtension`: self-extension workbench, pipeline status, audit/schema/snippet helpers, MCP test execution, and extension pipeline helpers. Lock-free self-extension dispatch now lives in `UnrealMcpSelfExtensionTools.cpp`; apply/build/test/rollback pipeline branches still route through the module for extension-lock ownership.
 - `Private/Tools/Editor`: status, logs, maps, assets, PIE, console, Python, Content Browser focus, map/asset opening, and save-dirty-packages. These editor tools now live in `UnrealMcpEditorTools.cpp`.
 - `Private/Tools/Actors`: actor selection, transforms, spawning, layout, batch edits. Actor query/selection, basic write tools, batch edits, point-light edits, static-mesh actor configuration, actor layout tools, and spawn tools now live in `UnrealMcpActorTools.cpp`.
 - `Private/Tools/Blueprint`: Blueprint class and graph editing. Blueprint asset operations and Blueprint graph-node editing tools now live in `UnrealMcpBlueprintTools.cpp`; shared Blueprint/Widget helpers remain in `UnrealMcpModule.cpp` until the Widget split can promote them into a small utility file.
