@@ -6,8 +6,8 @@ The plugin runs inside Unreal Editor and exposes a local HTTP JSON-RPC MCP endpo
 
 Core layers:
 
-- `FUnrealMcpModule`: module startup, HTTP routing, MCP protocol handling, Chat command dispatch, and current tool execution.
-- Tool helpers in `UnrealMcpModule.cpp` plus split tool files: Blueprint graph, widget, scaffold, memory, and remaining self-extension logic still have module-local pieces, while editor, actor, Blueprint asset, skill, and major self-extension flows are moving into category files.
+- `FUnrealMcpModule`: thin module lifecycle shell for startup/shutdown, the skill activity ticker, assistant turn creation, tab/menu registration, and `IMPLEMENT_MODULE`.
+- Split implementation files own protocol routing, tool dispatch, tool categories, UI, registry, execution guards, verifiers, and self-extension workflows. New tool work should happen in the relevant category file, not in `UnrealMcpModule.cpp`.
 - `UnrealMcpToolRegistry`: explicit metadata for visibility, handler aliases, risk policy, owners, docs, dry-run support, and test coverage.
 - `UnrealMcpToolHandlerRegistry`: explicit handler registration map used by audit and registry validation instead of source-text scanning.
 - `UnrealMcpToolExecutionGuard` plus `UnrealMcp*OutcomeVerifier`: shared execution checks with category-specific state verification for Blueprint, Widget, Actor, Memory, Skill, Scaffold, and Self-extension tools.
@@ -15,7 +15,7 @@ Core layers:
 - `Tools/UnrealMcpSupervisorTemplates`: versioned macOS/Windows supervisor launcher templates with placeholders instead of machine-specific paths.
 - `Saved/UnrealMcp/ActivityLog`: local JSONL activity stream used to distill repeatable workflows into skill drafts.
 - `Schemas/UnrealMcpExtensionManifest.schema.json`: versioned contract for source apply manifests.
-- `Schemas/UnrealMcpToolRegistry.schema.json`: versioned contract for explicit tool metadata under `Tools/UnrealMcpToolRegistry/tools.json`.
+- `Tools/UnrealMcpToolRegistry/schema.json`: versioned contract for explicit tool metadata under `Tools/UnrealMcpToolRegistry/tools.json`.
 - `Saved/UnrealMcp`: local runtime state, memory, manifests, backups, generated tests, and logs.
 
 ## Editor UI Surfaces
@@ -24,9 +24,9 @@ Core layers:
 - `SUnrealMcpWorkbenchPanel`: thin self-extension console over existing MCP tools. It should not own self-extension business logic; it delegates to `ExecuteToolFromEditorUI` so Chat, HTTP MCP, tests, and Workbench continue sharing the same backend behavior.
 - `Tools/UnrealMcpSkills`: project-local skill instructions.
 
-## Current Bottleneck
+## Module Split Status
 
-Most behavior still lives in `Plugins/UnrealMcp/Source/UnrealMcp/Private/UnrealMcpModule.cpp`. This works for rapid prototyping but is not ideal for team development because unrelated tool changes collide in the same file.
+`Plugins/UnrealMcp/Source/UnrealMcp/Private/UnrealMcpModule.cpp` has been reduced to a thin lifecycle entrypoint. The previous multi-thousand-line bottleneck has been split into category and infrastructure files so unrelated tool work can proceed with far fewer merge conflicts.
 
 ## Target Module Layout
 
@@ -39,11 +39,11 @@ Recommended split:
 - `Private/Tools/SelfExtension`: self-extension workbench, pipeline status, audit/schema/snippet helpers, MCP test execution, and extension pipeline helpers. Self-extension dispatch now lives in `UnrealMcpSelfExtensionTools.cpp`; module-private orchestration methods are invoked through explicit callbacks.
 - `Private/Tools/Editor`: status, logs, maps, assets, PIE, console, Python, Content Browser focus, map/asset opening, and save-dirty-packages. These editor tools now live in `UnrealMcpEditorTools.cpp`.
 - `Private/Tools/Actors`: actor selection, transforms, spawning, layout, batch edits. Actor query/selection, basic write tools, batch edits, point-light edits, static-mesh actor configuration, actor layout tools, and spawn tools now live in `UnrealMcpActorTools.cpp`.
-- `Private/Tools/Blueprint`: Blueprint class and graph editing. Blueprint asset operations and Blueprint graph-node editing tools now live in `UnrealMcpBlueprintTools.cpp`; shared Blueprint/Widget helpers remain in `UnrealMcpModule.cpp` until the Widget split can promote them into a small utility file.
-- `Private/Tools/Widget`: Widget Blueprint hierarchy, layout, event binding. Widget handler tools now live in `UnrealMcpWidgetTools.cpp`; shared WidgetTree/template helpers remain in `UnrealMcpModule.cpp` while Scaffold still depends on them.
-- `Private/Tools/Scaffold`: gameplay scaffolds and MCP tool scaffolds. Scaffold handler dispatch now lives in `UnrealMcpScaffoldTools.cpp`; implementation helpers still remain in `UnrealMcpModule.cpp` until the next scaffold implementation split.
+- `Private/Tools/Blueprint`: Blueprint class and graph editing in `UnrealMcpBlueprintTools.cpp`, with outcome verification in `UnrealMcpBlueprintOutcomeVerifier.cpp`.
+- `Private/Tools/Widget`: Widget Blueprint hierarchy, layout, event binding, and template helpers in `UnrealMcpWidgetTools.cpp`, with outcome verification in `UnrealMcpWidgetOutcomeVerifier.cpp`.
+- `Private/Tools/Scaffold`: gameplay scaffolds and MCP tool scaffolds in `UnrealMcpScaffoldTools.cpp`.
 - `Private/Tools/SelfExtension`: validate, apply, build, test, audit, rollback, pipeline.
-- `Private/Tools/Memory`: project memory CRUD. Memory handler dispatch now lives in `UnrealMcpMemoryTools.cpp`; storage helpers still remain in `UnrealMcpModule.cpp` until the implementation split.
+- `Private/Tools/Memory`: project memory CRUD in `UnrealMcpMemoryTools.cpp`.
 - `Private/Tools/Skills`: project skill discovery, application, local activity recording, and skill distillation. Skill dispatch now lives in `UnrealMcpSkillTools.cpp`; promote still receives its extension-lock behavior through an explicit module callback.
 - `Private/UI`: Chat panel and future Workbench panel.
 
@@ -82,7 +82,7 @@ status output:
 - `owner`
 - `docsPath`
 
-`Tools/validate_tool_registry.py` provides an editor-independent check for required metadata, duplicate names, known categories, documentation files, handler map coverage, write-tool execution-check coverage, and the mirrored plugin resource registry.
+`Tools/validate_tool_registry.py` provides an editor-independent check for the registry schema file, required metadata, duplicate names, known categories, documentation files, handler map coverage, write-tool execution-check coverage, committed test fixture coverage, and exact mirror parity with the plugin resource registry.
 
 ## Data and State
 
@@ -94,7 +94,7 @@ Activity recording is intentionally local-first: JSONL events, distilled drafts,
 
 ## Execution Verification
 
-Write-capable tools receive structured execution guard metadata:
+Write-capable tools receive structured execution guard metadata. The preflight object is built before the tool handler runs, then attached to the final result together with postcheck evidence:
 
 - `policy`: explicit ToolRegistry risk and side-effect metadata.
 - `preflight`: expected mutation areas plus category-specific readiness evidence when available.

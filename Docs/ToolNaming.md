@@ -73,7 +73,7 @@ Validate the versioned registry before committing tool changes:
 python3 Tools/validate_tool_registry.py
 ```
 
-The validator checks required metadata, duplicate names, reviewed categories, docs paths, handler map coverage, write-tool preflight/postcheck coverage, and the plugin-resource mirror at `Plugins/UnrealMcp/Resources/ToolRegistry/tools.json`.
+The validator checks the versioned schema file, required metadata, duplicate names, reviewed categories, docs paths, handler map coverage, write-tool preflight/postcheck coverage, committed test fixture coverage, and exact plugin-resource mirror parity at `Plugins/UnrealMcp/Resources/ToolRegistry/tools.json`.
 
 ## Test and Documentation Names
 

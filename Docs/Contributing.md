@@ -39,7 +39,7 @@ Suggested ownership domains:
 - Supervisor and cross-platform launch.
 - Documentation and tests.
 
-Avoid having multiple people edit `UnrealMcpModule.cpp` in unrelated regions at the same time until the module is split.
+Avoid adding new tool logic to `UnrealMcpModule.cpp`; it is intentionally a thin lifecycle entrypoint. Add tool behavior to the relevant category file and update the explicit ToolRegistry, handler registry, docs, and tests in the same change.
 
 The repository also includes `.github/CODEOWNERS` so pull requests touching MCP source, supervisor launch, docs, tests, schemas, or project-local skills request review from the current project owner by default.
 

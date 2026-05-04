@@ -37,3 +37,8 @@ Run a category suite from Editor Chat:
 Some happy-path write fixtures are marked `executeTool:false` because they create
 Blueprint or Widget assets and should be run only in a disposable validation
 project. Error-path and dry-run fixtures are safe to run repeatedly.
+
+Wrapped test cases can include `expectToolCallStructuredFields` to assert scalar
+fields inside the executed tool's `structuredContent` using dot-separated paths,
+for example `preflight.evaluatedBeforeExecution`. This keeps safety metadata
+testable instead of relying on manual inspection.

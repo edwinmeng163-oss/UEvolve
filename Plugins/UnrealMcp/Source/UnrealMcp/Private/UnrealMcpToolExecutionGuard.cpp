@@ -92,6 +92,7 @@ namespace UnrealMcp
 			Preflight->SetArrayField(TEXT("argumentKeys"), ExecutionGuardMakeStringValues(ExecutionGuardGetArgumentKeys(Arguments)));
 			Preflight->SetArrayField(TEXT("expectedMutationAreas"), ExecutionGuardMakeStringValues(InferMutationAreas(ToolName, Policy)));
 			Preflight->SetStringField(TEXT("checkLevel"), TEXT("registry_metadata"));
+			Preflight->SetBoolField(TEXT("evaluatedBeforeExecution"), true);
 			Preflight->SetStringField(TEXT("summary"), Policy.bDryRunSupport
 				? TEXT("Tool supports dryRun; prefer dryRun=true before applying write changes.")
 				: TEXT("Tool execution plan inferred from explicit ToolRegistry metadata."));
@@ -119,35 +120,28 @@ namespace UnrealMcp
 			Postcheck->SetBoolField(TEXT("hasStructuredContent"), Result.StructuredContent.IsValid());
 			return Postcheck;
 		}
+
+		bool NeedsExecutionCheck(const FToolPolicy& Policy)
+		{
+			return Policy.bRequiresWrite
+				|| Policy.bRequiresBuild
+				|| Policy.bRequiresExternalProcess
+				|| Policy.bRequiresRestart
+				|| Policy.bRequiresLock
+				|| Policy.bPreflightSupport
+				|| Policy.bPostcheckSupport;
+		}
 	}
 
-	void AttachToolExecutionCheck(
+	TSharedPtr<FJsonObject> BuildToolExecutionPreflight(
 		const FString& RequestedToolName,
-		const FJsonObject& Arguments,
-		FUnrealMcpExecutionResult& Result)
+		const FJsonObject& Arguments)
 	{
 		const FToolPolicy Policy = GetToolPolicy(RequestedToolName);
-		const bool bNeedsExecutionCheck =
-			Policy.bRequiresWrite
-			|| Policy.bRequiresBuild
-			|| Policy.bRequiresExternalProcess
-			|| Policy.bRequiresRestart
-			|| Policy.bRequiresLock
-			|| Policy.bPreflightSupport
-			|| Policy.bPostcheckSupport;
-
-		if (!bNeedsExecutionCheck)
+		if (!NeedsExecutionCheck(Policy))
 		{
-			return;
+			return nullptr;
 		}
-
-		if (!Result.StructuredContent.IsValid())
-		{
-			Result.StructuredContent = MakeShared<FJsonObject>();
-			Result.StructuredContent->SetStringField(TEXT("message"), Result.Text);
-		}
-
-		Result.StructuredContent->SetObjectField(TEXT("policy"), MakeToolPolicyObject(RequestedToolName));
 
 		TSharedPtr<FJsonObject> Preflight = MakePreflightObject(RequestedToolName, Arguments, Policy);
 		if (TSharedPtr<FJsonObject> BlueprintPreflight = BuildBlueprintToolPreflight(RequestedToolName, Arguments, Preflight))
@@ -166,7 +160,49 @@ namespace UnrealMcp
 		{
 			Preflight = WorkflowPreflight;
 		}
-		Result.StructuredContent->SetObjectField(TEXT("preflight"), Preflight);
+		return Preflight;
+	}
+
+	void AttachToolExecutionCheck(
+		const FString& RequestedToolName,
+		const FJsonObject& Arguments,
+		FUnrealMcpExecutionResult& Result)
+	{
+		AttachToolExecutionCheck(RequestedToolName, Arguments, BuildToolExecutionPreflight(RequestedToolName, Arguments), Result);
+	}
+
+	void AttachToolExecutionCheck(
+		const FString& RequestedToolName,
+		const FJsonObject& Arguments,
+		const TSharedPtr<FJsonObject>& PreflightBeforeExecution,
+		FUnrealMcpExecutionResult& Result)
+	{
+		const FToolPolicy Policy = GetToolPolicy(RequestedToolName);
+		if (!NeedsExecutionCheck(Policy))
+		{
+			return;
+		}
+
+		if (!Result.StructuredContent.IsValid())
+		{
+			Result.StructuredContent = MakeShared<FJsonObject>();
+			Result.StructuredContent->SetStringField(TEXT("message"), Result.Text);
+		}
+
+		Result.StructuredContent->SetObjectField(TEXT("policy"), MakeToolPolicyObject(RequestedToolName));
+		if (PreflightBeforeExecution.IsValid())
+		{
+			Result.StructuredContent->SetObjectField(TEXT("preflight"), PreflightBeforeExecution);
+		}
+		else
+		{
+			TSharedPtr<FJsonObject> LatePreflight = BuildToolExecutionPreflight(RequestedToolName, Arguments);
+			if (LatePreflight.IsValid())
+			{
+				LatePreflight->SetBoolField(TEXT("evaluatedBeforeExecution"), false);
+				Result.StructuredContent->SetObjectField(TEXT("preflight"), LatePreflight);
+			}
+		}
 
 		TSharedPtr<FJsonObject> Postcheck = VerifyBlueprintToolOutcome(RequestedToolName, Arguments, Result);
 		if (!Postcheck.IsValid())

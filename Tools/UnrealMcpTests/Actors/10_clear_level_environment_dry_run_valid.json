@@ -5,6 +5,12 @@
   "expectToolListed": true,
   "executeTool": true,
   "expectToolCallError": false,
+  "expectToolCallStructuredFields": {
+    "dryRun": true,
+    "preflight.evaluatedBeforeExecution": true,
+    "preflight.checkLevel": "tool_specific_preflight",
+    "postcheck.checkLevel": "tool_specific_state"
+  },
   "request": {
     "jsonrpc": "2.0",
     "id": 301,

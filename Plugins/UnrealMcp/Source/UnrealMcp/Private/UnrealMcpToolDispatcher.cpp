@@ -126,8 +126,9 @@ FUnrealMcpExecutionResult FUnrealMcpModule::ExecuteTool(const FString& ToolName,
 		UnrealMcp::RecordSkillActivityEvent(TEXT("mcp_tool_call"), FString::Printf(TEXT("Called MCP tool %s."), *ToolName), ActivityDetails);
 	}
 
+	TSharedPtr<FJsonObject> PreflightBeforeExecution = UnrealMcp::BuildToolExecutionPreflight(ToolName, Arguments);
 	FUnrealMcpExecutionResult Result = ExecuteToolInternal(RegisteredHandlerName, Arguments);
-	UnrealMcp::AttachToolExecutionCheck(ToolName, Arguments, Result);
+	UnrealMcp::AttachToolExecutionCheck(ToolName, Arguments, PreflightBeforeExecution, Result);
 	return Result;
 }
 

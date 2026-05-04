@@ -2062,6 +2062,148 @@ namespace UnrealMcp
 			bHealthy ? TEXT("true") : TEXT("false"));
 		return MakeExecutionResult(Text, StructuredContent, false);
 	}
+
+	FString GetJsonValueTypeName(EJson JsonType)
+	{
+		switch (JsonType)
+		{
+		case EJson::None:
+			return TEXT("none");
+		case EJson::Null:
+			return TEXT("null");
+		case EJson::String:
+			return TEXT("string");
+		case EJson::Number:
+			return TEXT("number");
+		case EJson::Boolean:
+			return TEXT("boolean");
+		case EJson::Array:
+			return TEXT("array");
+		case EJson::Object:
+			return TEXT("object");
+		default:
+			return TEXT("unknown");
+		}
+	}
+
+	FString DescribeJsonValue(const TSharedPtr<FJsonValue>& Value)
+	{
+		if (!Value.IsValid())
+		{
+			return TEXT("<missing>");
+		}
+		if (Value->Type == EJson::String)
+		{
+			return Value->AsString();
+		}
+		if (Value->Type == EJson::Number)
+		{
+			return FString::SanitizeFloat(Value->AsNumber());
+		}
+		if (Value->Type == EJson::Boolean)
+		{
+			return Value->AsBool() ? TEXT("true") : TEXT("false");
+		}
+		if (Value->Type == EJson::Null)
+		{
+			return TEXT("null");
+		}
+		return FString::Printf(TEXT("<%s>"), *GetJsonValueTypeName(Value->Type));
+	}
+
+	bool TryGetNestedJsonValue(const TSharedPtr<FJsonObject>& RootObject, const FString& FieldPath, TSharedPtr<FJsonValue>& OutValue)
+	{
+		if (!RootObject.IsValid())
+		{
+			return false;
+		}
+
+		TArray<FString> Segments;
+		FieldPath.ParseIntoArray(Segments, TEXT("."), true);
+		if (Segments.Num() == 0)
+		{
+			return false;
+		}
+
+		TSharedPtr<FJsonObject> CurrentObject = RootObject;
+		for (int32 Index = 0; Index < Segments.Num(); ++Index)
+		{
+			const FString& Segment = Segments[Index];
+			TSharedPtr<FJsonValue> FieldValue = CurrentObject->TryGetField(Segment);
+			if (!FieldValue.IsValid())
+			{
+				return false;
+			}
+			if (Index == Segments.Num() - 1)
+			{
+				OutValue = FieldValue;
+				return true;
+			}
+			if (FieldValue->Type != EJson::Object || !FieldValue->AsObject().IsValid())
+			{
+				return false;
+			}
+			CurrentObject = FieldValue->AsObject();
+		}
+
+		return false;
+	}
+
+	bool JsonScalarValuesMatch(const TSharedPtr<FJsonValue>& ActualValue, const TSharedPtr<FJsonValue>& ExpectedValue)
+	{
+		if (!ActualValue.IsValid() || !ExpectedValue.IsValid() || ActualValue->Type != ExpectedValue->Type)
+		{
+			return false;
+		}
+		if (ExpectedValue->Type == EJson::String)
+		{
+			return ActualValue->AsString() == ExpectedValue->AsString();
+		}
+		if (ExpectedValue->Type == EJson::Number)
+		{
+			return FMath::IsNearlyEqual(ActualValue->AsNumber(), ExpectedValue->AsNumber());
+		}
+		if (ExpectedValue->Type == EJson::Boolean)
+		{
+			return ActualValue->AsBool() == ExpectedValue->AsBool();
+		}
+		return ExpectedValue->Type == EJson::Null;
+	}
+
+	bool EvaluateExpectedStructuredFields(
+		const TSharedPtr<FJsonObject>& ActualStructuredContent,
+		const TSharedPtr<FJsonObject>& ExpectedFieldsObject,
+		TArray<TSharedPtr<FJsonValue>>& OutChecks)
+	{
+		bool bAllMatched = true;
+		if (!ExpectedFieldsObject.IsValid())
+		{
+			return true;
+		}
+
+		TArray<FString> ExpectedPaths;
+		ExpectedFieldsObject->Values.GetKeys(ExpectedPaths);
+		ExpectedPaths.Sort();
+		for (const FString& ExpectedPath : ExpectedPaths)
+		{
+			const TSharedPtr<FJsonValue> ExpectedValue = ExpectedFieldsObject->TryGetField(ExpectedPath);
+			TSharedPtr<FJsonValue> ActualValue;
+			const bool bFound = TryGetNestedJsonValue(ActualStructuredContent, ExpectedPath, ActualValue);
+			const bool bMatched = bFound && JsonScalarValuesMatch(ActualValue, ExpectedValue);
+			bAllMatched = bAllMatched && bMatched;
+
+			TSharedPtr<FJsonObject> CheckObject = MakeShared<FJsonObject>();
+			CheckObject->SetStringField(TEXT("path"), ExpectedPath);
+			CheckObject->SetBoolField(TEXT("found"), bFound);
+			CheckObject->SetBoolField(TEXT("matched"), bMatched);
+			CheckObject->SetStringField(TEXT("expectedType"), ExpectedValue.IsValid() ? GetJsonValueTypeName(ExpectedValue->Type) : TEXT("missing"));
+			CheckObject->SetStringField(TEXT("actualType"), ActualValue.IsValid() ? GetJsonValueTypeName(ActualValue->Type) : TEXT("missing"));
+			CheckObject->SetStringField(TEXT("expected"), DescribeJsonValue(ExpectedValue));
+			CheckObject->SetStringField(TEXT("actual"), DescribeJsonValue(ActualValue));
+			OutChecks.Add(MakeShared<FJsonValueObject>(CheckObject));
+		}
+		return bAllMatched;
+	}
 }
 
 FUnrealMcpExecutionResult FUnrealMcpModule::RunMcpToolTest(const FJsonObject& Arguments) const
@@ -2199,6 +2341,8 @@ FUnrealMcpExecutionResult FUnrealMcpModule::RunMcpToolTest(const FJsonObject& Ar
 	FString ExpectationNote;
 	bool bExpectToolCallError = false;
 	bool bHasExpectToolCallError = false;
+	bool bHasExpectedStructuredFields = false;
+	bool bStructuredFieldsOk = true;
 	const TSharedPtr<FJsonObject>* WrappedRequestObject = nullptr;
 	if (TestRequestObject->TryGetObjectField(TEXT("request"), WrappedRequestObject) && WrappedRequestObject && (*WrappedRequestObject).IsValid())
 	{
@@ -2325,10 +2469,31 @@ FUnrealMcpExecutionResult FUnrealMcpModule::RunMcpToolTest(const FJsonObject& Ar
 		StructuredContent->SetBoolField(TEXT("expectToolCallError"), bExpectToolCallError);
 	}
 
+	TArray<TSharedPtr<FJsonValue>> StructuredFieldChecks;
+	if (TestCaseObject.IsValid())
+	{
+		const TSharedPtr<FJsonObject>* ExpectedStructuredFields = nullptr;
+		if (TestCaseObject->TryGetObjectField(TEXT("expectToolCallStructuredFields"), ExpectedStructuredFields)
+			&& ExpectedStructuredFields
+			&& (*ExpectedStructuredFields).IsValid())
+		{
+			bHasExpectedStructuredFields = true;
+			bStructuredFieldsOk = bToolExecuted
+				&& ToolResult.StructuredContent.IsValid()
+				&& UnrealMcp::EvaluateExpectedStructuredFields(ToolResult.StructuredContent, *ExpectedStructuredFields, StructuredFieldChecks);
+		}
+	}
+	StructuredContent->SetBoolField(TEXT("hasExpectedToolCallStructuredFields"), bHasExpectedStructuredFields);
+	if (bHasExpectedStructuredFields)
+	{
+		StructuredContent->SetBoolField(TEXT("structuredFieldExpectationOk"), bStructuredFieldsOk);
+		StructuredContent->SetArrayField(TEXT("structuredFieldChecks"), StructuredFieldChecks);
+	}
+
 	const bool bListedExpectationOk = !bExpectToolListed || bToolListed;
 	const bool bToolCallExpectationOk = !bExecuteTool
 		|| (bToolExecuted && (bHasExpectToolCallError ? ToolResult.bIsError == bExpectToolCallError : !ToolResult.bIsError));
-	const bool bSucceeded = bListedExpectationOk && bToolCallExpectationOk;
+	const bool bSucceeded = bListedExpectationOk && bToolCallExpectationOk && bStructuredFieldsOk;
 	StructuredContent->SetBoolField(TEXT("listedExpectationOk"), bListedExpectationOk);
 	StructuredContent->SetBoolField(TEXT("toolCallExpectationOk"), bToolCallExpectationOk);
 	StructuredContent->SetBoolField(TEXT("succeeded"), bSucceeded);
