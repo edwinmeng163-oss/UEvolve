@@ -43,7 +43,7 @@ Recommended split:
 - `Private/Tools/Widget`: Widget Blueprint hierarchy, layout, event binding. Widget handler tools now live in `UnrealMcpWidgetTools.cpp`; shared WidgetTree/template helpers remain in `UnrealMcpModule.cpp` while Scaffold still depends on them.
 - `Private/Tools/Scaffold`: gameplay scaffolds and MCP tool scaffolds. Scaffold handler dispatch now lives in `UnrealMcpScaffoldTools.cpp`; implementation helpers still remain in `UnrealMcpModule.cpp` until the next scaffold implementation split.
 - `Private/Tools/SelfExtension`: validate, apply, build, test, audit, rollback, pipeline.
-- `Private/Tools/Memory`: project memory CRUD.
+- `Private/Tools/Memory`: project memory CRUD. Memory handler dispatch now lives in `UnrealMcpMemoryTools.cpp`; storage helpers still remain in `UnrealMcpModule.cpp` until the implementation split.
 - `Private/Tools/Skills`: project skill discovery, application, local activity recording, and skill distillation. `unreal.skill_list`, `unreal.skill_read`, `unreal.skill_apply`, and `unreal.skill_*` distillation tools now live in `UnrealMcpSkillTools.cpp`.
 - `Private/UI`: Chat panel and future Workbench panel.
 

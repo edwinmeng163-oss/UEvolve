@@ -93,6 +93,7 @@
 #include "UnrealMcpActorTools.h"
 #include "UnrealMcpBlueprintTools.h"
 #include "UnrealMcpEditorTools.h"
+#include "UnrealMcpMemoryTools.h"
 #include "UnrealMcpScaffoldTools.h"
 #include "UnrealMcpSelfExtensionTools.h"
 #include "UnrealMcpSettings.h"
@@ -12832,6 +12833,12 @@ FUnrealMcpExecutionResult FUnrealMcpModule::ExecuteToolInternal(const FString& T
 		return ScaffoldToolResult;
 	}
 
+	FUnrealMcpExecutionResult MemoryToolResult;
+	if (UnrealMcp::TryExecuteMemoryTool(ToolName, Arguments, MemoryToolResult))
+	{
+		return MemoryToolResult;
+	}
+
 		if (ToolName == TEXT("unreal.mcp_list_scaffolds"))
 		{
 			TArray<TSharedPtr<FJsonValue>> ToolsArray;
@@ -12879,31 +12886,6 @@ FUnrealMcpExecutionResult FUnrealMcpModule::ExecuteToolInternal(const FString& T
 			TArray<TSharedPtr<FJsonValue>> ToolsArray;
 			AppendToolDefinitions(ToolsArray);
 			return UnrealMcp::WorkbenchStatus(Arguments, ToolsArray);
-		}
-
-		if (ToolName == TEXT("unreal.project_memory_write"))
-		{
-			return UnrealMcp::ProjectMemoryWrite(Arguments);
-		}
-
-		if (ToolName == TEXT("unreal.project_memory_read"))
-		{
-			return UnrealMcp::ProjectMemoryRead(Arguments);
-		}
-
-		if (ToolName == TEXT("unreal.project_memory_view"))
-		{
-			return UnrealMcp::ProjectMemoryView(Arguments);
-		}
-
-		if (ToolName == TEXT("unreal.project_memory_edit"))
-		{
-			return UnrealMcp::ProjectMemoryEdit(Arguments);
-		}
-
-		if (ToolName == TEXT("unreal.project_memory_delete"))
-		{
-			return UnrealMcp::ProjectMemoryDelete(Arguments);
 		}
 
 		if (ToolName == TEXT("unreal.skill_list"))

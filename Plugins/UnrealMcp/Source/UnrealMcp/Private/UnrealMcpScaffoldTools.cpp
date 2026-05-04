@@ -20,7 +20,7 @@ namespace UnrealMcp
 
 	namespace
 	{
-		UEditorAssetSubsystem* GetEditorAssetSubsystem()
+		UEditorAssetSubsystem* GetScaffoldEditorAssetSubsystem()
 		{
 			return GEditor ? GEditor->GetEditorSubsystem<UEditorAssetSubsystem>() : nullptr;
 		}
@@ -41,7 +41,7 @@ namespace UnrealMcp
 				return MakePieBlockedResult(ToolName);
 			}
 
-			UEditorAssetSubsystem* EditorAssetSubsystem = GetEditorAssetSubsystem();
+			UEditorAssetSubsystem* EditorAssetSubsystem = GetScaffoldEditorAssetSubsystem();
 			if (!EditorAssetSubsystem)
 			{
 				return MakeExecutionResult(TEXT("EditorAssetSubsystem is unavailable."), nullptr, true);
