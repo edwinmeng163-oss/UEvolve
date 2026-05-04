@@ -150,8 +150,8 @@ namespace UnrealMcp
 
 	FUnrealMcpExecutionResult MakeExecutionResult(
 		const FString& Text,
-		const TSharedPtr<FJsonObject>& StructuredContent = nullptr,
-		bool bIsError = false)
+		const TSharedPtr<FJsonObject>& StructuredContent,
+		bool bIsError)
 	{
 		FUnrealMcpExecutionResult Result;
 		Result.Text = Text;
