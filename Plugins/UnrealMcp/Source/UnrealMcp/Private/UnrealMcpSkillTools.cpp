@@ -22,6 +22,60 @@ namespace UnrealMcp
 	TArray<TSharedPtr<FJsonValue>> MakeJsonStringArray(const TArray<FString>& Values);
 	FUnrealMcpExecutionResult ProjectMemoryWrite(const FJsonObject& Arguments);
 
+	bool TryExecuteSkillTool(const FString& ToolName, const FJsonObject& Arguments, FUnrealMcpExecutionResult& OutResult)
+	{
+		if (ToolName == TEXT("unreal.skill_list"))
+		{
+			OutResult = SkillList(Arguments);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.skill_read"))
+		{
+			OutResult = SkillRead(Arguments);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.skill_apply"))
+		{
+			OutResult = SkillApply(Arguments);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.skill_recording_start"))
+		{
+			OutResult = SkillRecordingStart(Arguments);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.skill_recording_stop"))
+		{
+			OutResult = SkillRecordingStop(Arguments);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.skill_activity_status"))
+		{
+			OutResult = SkillActivityStatus(Arguments);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.skill_distill_from_activity"))
+		{
+			OutResult = SkillDistillFromActivity(Arguments);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.skill_save_draft"))
+		{
+			OutResult = SkillSaveDraft(Arguments);
+			return true;
+		}
+
+		// skill_promote_draft remains in the module dispatch for now because it owns the extension-session lock.
+		return false;
+	}
+
 	namespace
 	{
 		FCriticalSection GSkillActivityMutex;

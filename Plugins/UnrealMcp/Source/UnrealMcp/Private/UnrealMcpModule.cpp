@@ -12839,6 +12839,12 @@ FUnrealMcpExecutionResult FUnrealMcpModule::ExecuteToolInternal(const FString& T
 		return MemoryToolResult;
 	}
 
+	FUnrealMcpExecutionResult SkillToolResult;
+	if (UnrealMcp::TryExecuteSkillTool(ToolName, Arguments, SkillToolResult))
+	{
+		return SkillToolResult;
+	}
+
 		if (ToolName == TEXT("unreal.mcp_list_scaffolds"))
 		{
 			TArray<TSharedPtr<FJsonValue>> ToolsArray;
@@ -12887,46 +12893,6 @@ FUnrealMcpExecutionResult FUnrealMcpModule::ExecuteToolInternal(const FString& T
 			AppendToolDefinitions(ToolsArray);
 			return UnrealMcp::WorkbenchStatus(Arguments, ToolsArray);
 		}
-
-		if (ToolName == TEXT("unreal.skill_list"))
-		{
-			return UnrealMcp::SkillList(Arguments);
-		}
-
-		if (ToolName == TEXT("unreal.skill_read"))
-		{
-			return UnrealMcp::SkillRead(Arguments);
-		}
-
-			if (ToolName == TEXT("unreal.skill_apply"))
-			{
-				return UnrealMcp::SkillApply(Arguments);
-			}
-
-			if (ToolName == TEXT("unreal.skill_recording_start"))
-			{
-				return UnrealMcp::SkillRecordingStart(Arguments);
-			}
-
-			if (ToolName == TEXT("unreal.skill_recording_stop"))
-			{
-				return UnrealMcp::SkillRecordingStop(Arguments);
-			}
-
-			if (ToolName == TEXT("unreal.skill_activity_status"))
-			{
-				return UnrealMcp::SkillActivityStatus(Arguments);
-			}
-
-			if (ToolName == TEXT("unreal.skill_distill_from_activity"))
-			{
-				return UnrealMcp::SkillDistillFromActivity(Arguments);
-			}
-
-			if (ToolName == TEXT("unreal.skill_save_draft"))
-			{
-				return UnrealMcp::SkillSaveDraft(Arguments);
-			}
 
 			if (ToolName == TEXT("unreal.skill_promote_draft"))
 			{

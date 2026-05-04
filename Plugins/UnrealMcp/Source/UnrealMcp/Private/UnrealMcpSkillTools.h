@@ -16,6 +16,7 @@ namespace UnrealMcp
 	FUnrealMcpExecutionResult SkillDistillFromActivity(const FJsonObject& Arguments);
 	FUnrealMcpExecutionResult SkillSaveDraft(const FJsonObject& Arguments);
 	FUnrealMcpExecutionResult SkillPromoteDraft(const FJsonObject& Arguments);
+	bool TryExecuteSkillTool(const FString& ToolName, const FJsonObject& Arguments, FUnrealMcpExecutionResult& OutResult);
 	void RecordSkillActivityEvent(const FString& EventType, const FString& Summary, const TSharedPtr<FJsonObject>& Details = nullptr);
 	void TickSkillActivityRecorder();
 }

@@ -44,7 +44,7 @@ Recommended split:
 - `Private/Tools/Scaffold`: gameplay scaffolds and MCP tool scaffolds. Scaffold handler dispatch now lives in `UnrealMcpScaffoldTools.cpp`; implementation helpers still remain in `UnrealMcpModule.cpp` until the next scaffold implementation split.
 - `Private/Tools/SelfExtension`: validate, apply, build, test, audit, rollback, pipeline.
 - `Private/Tools/Memory`: project memory CRUD. Memory handler dispatch now lives in `UnrealMcpMemoryTools.cpp`; storage helpers still remain in `UnrealMcpModule.cpp` until the implementation split.
-- `Private/Tools/Skills`: project skill discovery, application, local activity recording, and skill distillation. `unreal.skill_list`, `unreal.skill_read`, `unreal.skill_apply`, and `unreal.skill_*` distillation tools now live in `UnrealMcpSkillTools.cpp`.
+- `Private/Tools/Skills`: project skill discovery, application, local activity recording, and skill distillation. Skill read/apply/record/distill/save dispatch now lives in `UnrealMcpSkillTools.cpp`; `skill_promote_draft` still routes through the module for extension-lock ownership.
 - `Private/UI`: Chat panel and future Workbench panel.
 
 ## ToolRegistry Role
