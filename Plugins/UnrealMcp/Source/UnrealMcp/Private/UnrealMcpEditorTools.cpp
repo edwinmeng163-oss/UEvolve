@@ -8,11 +8,16 @@
 #include "Editor.h"
 #include "Engine/World.h"
 #include "GenericPlatform/GenericPlatformOutputDevices.h"
+#include "IPythonScriptPlugin.h"
+#include "Logging/MessageLog.h"
 #include "Modules/ModuleManager.h"
 #include "Misc/App.h"
 #include "Misc/EngineVersion.h"
 #include "Misc/FileHelper.h"
+#include "Misc/OutputDevice.h"
 #include "Misc/Paths.h"
+#include "Misc/StringOutputDevice.h"
+#include "PlayInEditorDataTypes.h"
 #include "Subsystems/EditorActorSubsystem.h"
 #include "UnrealMcpModule.h"
 #include "UnrealMcpSettings.h"
@@ -134,6 +139,551 @@ namespace UnrealMcp
 			}
 
 			return MakeExecutionResult(TailText, StructuredContent, false);
+		}
+
+		bool EditorToolIsEditorPlaying()
+		{
+			return GEditor
+				&& (GEditor->PlayWorld != nullptr
+					|| GEditor->bIsSimulatingInEditor
+					|| GEditor->GetPlaySessionRequest().IsSet());
+		}
+
+		FUnrealMcpExecutionResult EditorToolMakePieBlockedResult(const FString& ToolName)
+		{
+			return MakeExecutionResult(
+				FString::Printf(TEXT("Tool '%s' is blocked while Play In Editor is active or starting."), *ToolName),
+				nullptr,
+				true);
+		}
+
+		bool EditorToolTryGetStringArrayField(const FJsonObject& Arguments, const FString& FieldName, TArray<FString>& OutValues)
+		{
+			const TArray<TSharedPtr<FJsonValue>>* JsonArray = nullptr;
+			if (!Arguments.TryGetArrayField(FieldName, JsonArray) || !JsonArray)
+			{
+				return false;
+			}
+
+			for (const TSharedPtr<FJsonValue>& Value : *JsonArray)
+			{
+				FString StringValue;
+				if (Value.IsValid() && Value->TryGetString(StringValue))
+				{
+					OutValues.Add(StringValue);
+				}
+			}
+
+			return true;
+		}
+
+		UWorld* EditorToolResolveConsoleWorld(const FString& RequestedTarget, FString& OutResolvedTarget, FString& OutFailureReason)
+		{
+			OutResolvedTarget = TEXT("editor");
+			OutFailureReason.Reset();
+
+			if (!GEditor)
+			{
+				OutFailureReason = TEXT("GEditor is unavailable.");
+				return nullptr;
+			}
+
+			const FString NormalizedTarget = RequestedTarget.TrimStartAndEnd().ToLower();
+			const bool bIsAuto = NormalizedTarget.IsEmpty() || NormalizedTarget == TEXT("auto");
+			const bool bWantsPie = NormalizedTarget == TEXT("pie");
+			const bool bWantsEditor = NormalizedTarget == TEXT("editor");
+
+			if (!bIsAuto && !bWantsPie && !bWantsEditor)
+			{
+				OutFailureReason = FString::Printf(TEXT("Unknown console target '%s'. Use auto, editor, or pie."), *RequestedTarget);
+				return nullptr;
+			}
+
+			if ((bIsAuto || bWantsPie) && GEditor->PlayWorld != nullptr)
+			{
+				OutResolvedTarget = TEXT("pie");
+				return GEditor->PlayWorld;
+			}
+
+			if (bWantsPie)
+			{
+				OutFailureReason = TEXT("No Play In Editor world is currently active.");
+				return nullptr;
+			}
+
+			UWorld* EditorWorld = GEditor->GetEditorWorldContext().World();
+			if (!EditorWorld)
+			{
+				OutFailureReason = TEXT("The editor world is unavailable.");
+				return nullptr;
+			}
+
+			OutResolvedTarget = TEXT("editor");
+			return EditorWorld;
+		}
+
+		IPythonScriptPlugin* EditorToolLoadPythonScriptPlugin()
+		{
+			static const FName PythonScriptPluginModuleName(TEXT("PythonScriptPlugin"));
+			if (IPythonScriptPlugin* PythonPlugin = FModuleManager::GetModulePtr<IPythonScriptPlugin>(PythonScriptPluginModuleName))
+			{
+				return PythonPlugin;
+			}
+
+			return FModuleManager::LoadModulePtr<IPythonScriptPlugin>(PythonScriptPluginModuleName);
+		}
+
+		bool EditorToolTryParsePythonFileExecutionScope(const FString& ScopeString, EPythonFileExecutionScope& OutScope)
+		{
+			if (ScopeString.Equals(TEXT("private"), ESearchCase::IgnoreCase))
+			{
+				OutScope = EPythonFileExecutionScope::Private;
+				return true;
+			}
+
+			if (ScopeString.Equals(TEXT("public"), ESearchCase::IgnoreCase))
+			{
+				OutScope = EPythonFileExecutionScope::Public;
+				return true;
+			}
+
+			return false;
+		}
+
+		FString EditorToolQuoteShellArgument(const FString& Value)
+		{
+			FString Escaped = Value;
+			Escaped.ReplaceInline(TEXT("\""), TEXT("\\\""));
+
+			const bool bNeedsQuotes = Escaped.Contains(TEXT(" "))
+				|| Escaped.Contains(TEXT("\t"))
+				|| Escaped.Contains(TEXT("\""));
+
+			return bNeedsQuotes
+				? FString::Printf(TEXT("\"%s\""), *Escaped)
+				: Escaped;
+		}
+
+		bool EditorToolResolvePythonScriptPath(
+			const FString& RequestedPath,
+			bool bAllowOutsideProject,
+			FString& OutResolvedPath,
+			FString& OutFailureReason)
+		{
+			OutResolvedPath.Reset();
+			OutFailureReason.Reset();
+
+			const FString TrimmedPath = RequestedPath.TrimStartAndEnd();
+			if (TrimmedPath.IsEmpty())
+			{
+				OutFailureReason = TEXT("The scriptPath argument is required.");
+				return false;
+			}
+
+			FString ProjectDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+			FPaths::NormalizeDirectoryName(ProjectDir);
+			FPaths::CollapseRelativeDirectories(ProjectDir);
+
+			FString ResolvedPath = FPaths::IsRelative(TrimmedPath)
+				? FPaths::Combine(ProjectDir, TrimmedPath)
+				: TrimmedPath;
+			ResolvedPath = FPaths::ConvertRelativePathToFull(ResolvedPath);
+			FPaths::NormalizeFilename(ResolvedPath);
+			FPaths::CollapseRelativeDirectories(ResolvedPath);
+
+			if (!ResolvedPath.EndsWith(TEXT(".py"), ESearchCase::IgnoreCase))
+			{
+				OutFailureReason = FString::Printf(TEXT("Python script path must end with .py: %s"), *ResolvedPath);
+				return false;
+			}
+
+			if (!FPaths::FileExists(ResolvedPath))
+			{
+				OutFailureReason = FString::Printf(TEXT("Python script file does not exist: %s"), *ResolvedPath);
+				return false;
+			}
+
+			if (!bAllowOutsideProject && !ResolvedPath.StartsWith(ProjectDir, ESearchCase::IgnoreCase))
+			{
+				OutFailureReason = FString::Printf(TEXT("Python script must be inside the project directory unless allowOutsideProject=true. path=%s project=%s"), *ResolvedPath, *ProjectDir);
+				return false;
+			}
+
+			OutResolvedPath = ResolvedPath;
+			return true;
+		}
+
+		FUnrealMcpExecutionResult ExecuteStartPie(const FJsonObject& Arguments)
+		{
+			if (!GEditor)
+			{
+				return MakeExecutionResult(TEXT("GEditor is unavailable."), nullptr, true);
+			}
+
+			if (EditorToolIsEditorPlaying())
+			{
+				return MakeExecutionResult(TEXT("A Play In Editor session is already active or queued."), nullptr, true);
+			}
+
+			bool bSimulate = false;
+			Arguments.TryGetBoolField(TEXT("simulate"), bSimulate);
+
+			FRequestPlaySessionParams SessionParams;
+			if (bSimulate)
+			{
+				SessionParams.WorldType = EPlaySessionWorldType::SimulateInEditor;
+			}
+
+			GEditor->RequestPlaySession(SessionParams);
+
+			const bool bQueued = GEditor->GetPlaySessionRequest().IsSet();
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetBoolField(TEXT("requested"), true);
+			StructuredContent->SetBoolField(TEXT("simulate"), bSimulate);
+			StructuredContent->SetBoolField(TEXT("playRequestPending"), bQueued);
+
+			return MakeExecutionResult(
+				FString::Printf(
+					TEXT("Requested %s session. queued=%s"),
+					bSimulate ? TEXT("Simulate In Editor") : TEXT("Play In Editor"),
+					bQueued ? TEXT("true") : TEXT("false")),
+				StructuredContent,
+				false);
+		}
+
+		FUnrealMcpExecutionResult ExecuteStopPie()
+		{
+			if (!GEditor)
+			{
+				return MakeExecutionResult(TEXT("GEditor is unavailable."), nullptr, true);
+			}
+
+			const bool bWasPIE = GEditor->PlayWorld != nullptr;
+			const bool bWasSimulating = GEditor->bIsSimulatingInEditor;
+			const bool bHadQueuedRequest = GEditor->GetPlaySessionRequest().IsSet();
+			if (!bWasPIE && !bWasSimulating && !bHadQueuedRequest)
+			{
+				return MakeExecutionResult(TEXT("No Play In Editor session is running or queued."), nullptr, true);
+			}
+
+			GEditor->RequestEndPlayMap();
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetBoolField(TEXT("requested"), true);
+			StructuredContent->SetBoolField(TEXT("wasPlayInEditor"), bWasPIE);
+			StructuredContent->SetBoolField(TEXT("wasSimulatingInEditor"), bWasSimulating);
+			StructuredContent->SetBoolField(TEXT("hadQueuedPlayRequest"), bHadQueuedRequest);
+
+			return MakeExecutionResult(TEXT("Requested Play In Editor shutdown."), StructuredContent, false);
+		}
+
+		FUnrealMcpExecutionResult ExecuteConsoleCommand(const FJsonObject& Arguments)
+		{
+			FString Command;
+			if (!Arguments.TryGetStringField(TEXT("command"), Command) || Command.TrimStartAndEnd().IsEmpty())
+			{
+				return MakeExecutionResult(TEXT("Missing required field 'command'."), nullptr, true);
+			}
+
+			FString RequestedTarget = TEXT("auto");
+			Arguments.TryGetStringField(TEXT("target"), RequestedTarget);
+
+			FString ResolvedTarget;
+			FString FailureReason;
+			UWorld* TargetWorld = EditorToolResolveConsoleWorld(RequestedTarget, ResolvedTarget, FailureReason);
+			if (!TargetWorld)
+			{
+				return MakeExecutionResult(FailureReason, nullptr, true);
+			}
+
+			FStringOutputDevice OutputDevice;
+			const bool bExecuted = GEditor && GEditor->Exec(TargetWorld, *Command, OutputDevice);
+			const FString CapturedOutput = FString(OutputDevice).TrimStartAndEnd();
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("command"), Command);
+			StructuredContent->SetStringField(TEXT("target"), ResolvedTarget);
+			StructuredContent->SetStringField(TEXT("worldPath"), TargetWorld->GetPathName());
+			StructuredContent->SetBoolField(TEXT("success"), bExecuted);
+			StructuredContent->SetStringField(TEXT("output"), CapturedOutput);
+
+			FString Text = FString::Printf(
+				TEXT("Console command '%s' executed on %s world. success=%s"),
+				*Command,
+				*ResolvedTarget,
+				bExecuted ? TEXT("true") : TEXT("false"));
+			if (!CapturedOutput.IsEmpty())
+			{
+				Text += FString::Printf(TEXT("\n%s"), *CapturedOutput);
+			}
+
+			return MakeExecutionResult(Text, StructuredContent, !bExecuted);
+		}
+
+		FUnrealMcpExecutionResult ExecutePythonCommand(const FJsonObject& Arguments)
+		{
+			FString Command;
+			if (!Arguments.TryGetStringField(TEXT("command"), Command) || Command.TrimStartAndEnd().IsEmpty())
+			{
+				return MakeExecutionResult(TEXT("Missing required field 'command'."), nullptr, true);
+			}
+
+			FString ModeString = TEXT("Auto");
+			FString ScopeString = TEXT("Private");
+			bool bAutoMode = true;
+			bool bForceEnable = true;
+			bool bUnattended = true;
+			Arguments.TryGetStringField(TEXT("mode"), ModeString);
+			Arguments.TryGetStringField(TEXT("scope"), ScopeString);
+			Arguments.TryGetBoolField(TEXT("autoMode"), bAutoMode);
+			Arguments.TryGetBoolField(TEXT("forceEnable"), bForceEnable);
+			Arguments.TryGetBoolField(TEXT("unattended"), bUnattended);
+
+			const FString RequestedModeString = ModeString.TrimStartAndEnd().IsEmpty() ? TEXT("Auto") : ModeString.TrimStartAndEnd();
+			const FString TrimmedCommand = Command.TrimStartAndEnd();
+			const bool bLooksLikeMultiStatementPython = Command.Contains(TEXT("\n"))
+				|| Command.Contains(TEXT("\r"))
+				|| Command.Contains(TEXT(";"));
+			const bool bContainsAssignmentLike = TrimmedCommand.Contains(TEXT("="))
+				&& !TrimmedCommand.Contains(TEXT("=="))
+				&& !TrimmedCommand.Contains(TEXT("!="))
+				&& !TrimmedCommand.Contains(TEXT("<="))
+				&& !TrimmedCommand.Contains(TEXT(">="));
+			const bool bLooksLikePythonStatement = TrimmedCommand.StartsWith(TEXT("import "), ESearchCase::IgnoreCase)
+				|| TrimmedCommand.StartsWith(TEXT("from "), ESearchCase::IgnoreCase)
+				|| TrimmedCommand.StartsWith(TEXT("for "), ESearchCase::IgnoreCase)
+				|| TrimmedCommand.StartsWith(TEXT("while "), ESearchCase::IgnoreCase)
+				|| TrimmedCommand.StartsWith(TEXT("if "), ESearchCase::IgnoreCase)
+				|| TrimmedCommand.StartsWith(TEXT("with "), ESearchCase::IgnoreCase)
+				|| TrimmedCommand.StartsWith(TEXT("def "), ESearchCase::IgnoreCase)
+				|| TrimmedCommand.StartsWith(TEXT("class "), ESearchCase::IgnoreCase)
+				|| TrimmedCommand.StartsWith(TEXT("try:"), ESearchCase::IgnoreCase)
+				|| TrimmedCommand.StartsWith(TEXT("pass"), ESearchCase::IgnoreCase)
+				|| TrimmedCommand.StartsWith(TEXT("return "), ESearchCase::IgnoreCase)
+				|| bContainsAssignmentLike;
+			bool bAutoModeChanged = false;
+			if (RequestedModeString.Equals(TEXT("Auto"), ESearchCase::IgnoreCase))
+			{
+				ModeString = (bLooksLikeMultiStatementPython || bLooksLikePythonStatement) ? TEXT("ExecuteFile") : TEXT("EvaluateStatement");
+				bAutoModeChanged = true;
+			}
+			else if (bAutoMode
+				&& !RequestedModeString.Equals(TEXT("ExecuteFile"), ESearchCase::IgnoreCase)
+				&& bLooksLikeMultiStatementPython)
+			{
+				ModeString = TEXT("ExecuteFile");
+				bAutoModeChanged = true;
+			}
+			else
+			{
+				ModeString = RequestedModeString;
+			}
+
+			EPythonCommandExecutionMode ExecutionMode = EPythonCommandExecutionMode::ExecuteFile;
+			if (!LexTryParseString(ExecutionMode, *ModeString))
+			{
+				return MakeExecutionResult(
+					FString::Printf(TEXT("Unknown Python execution mode '%s'. Use Auto, ExecuteFile, ExecuteStatement, or EvaluateStatement."), *ModeString),
+					nullptr,
+					true);
+			}
+
+			EPythonFileExecutionScope FileExecutionScope = EPythonFileExecutionScope::Private;
+			if (!EditorToolTryParsePythonFileExecutionScope(ScopeString, FileExecutionScope))
+			{
+				return MakeExecutionResult(
+					FString::Printf(TEXT("Unknown Python scope '%s'. Use Private or Public."), *ScopeString),
+					nullptr,
+					true);
+			}
+
+			IPythonScriptPlugin* PythonPlugin = EditorToolLoadPythonScriptPlugin();
+			if (!PythonPlugin)
+			{
+				return MakeExecutionResult(
+					TEXT("PythonScriptPlugin is not loaded. Enable the Python Script Plugin for the editor and restart Unreal Editor."),
+					nullptr,
+					true);
+			}
+
+			if (bForceEnable && !PythonPlugin->IsPythonInitialized())
+			{
+				PythonPlugin->ForceEnablePythonAtRuntime();
+			}
+
+			if (!PythonPlugin->IsPythonAvailable())
+			{
+				return MakeExecutionResult(TEXT("Python support is not available in the current editor session."), nullptr, true);
+			}
+
+			if (!PythonPlugin->IsPythonInitialized())
+			{
+				return MakeExecutionResult(
+					TEXT("Python is not initialized. Re-open the editor after enabling the Python Script Plugin, or retry with forceEnable=true."),
+					nullptr,
+					true);
+			}
+
+			FPythonCommandEx PythonCommand;
+			PythonCommand.Command = Command;
+			PythonCommand.ExecutionMode = ExecutionMode;
+			PythonCommand.FileExecutionScope = FileExecutionScope;
+			PythonCommand.Flags = bUnattended ? EPythonCommandFlags::Unattended : EPythonCommandFlags::None;
+
+			const bool bSucceeded = PythonPlugin->ExecPythonCommandEx(PythonCommand);
+
+			TArray<TSharedPtr<FJsonValue>> LogOutputArray;
+			TArray<FString> LogLines;
+			LogLines.Reserve(PythonCommand.LogOutput.Num());
+
+			for (const FPythonLogOutputEntry& LogEntry : PythonCommand.LogOutput)
+			{
+				TSharedPtr<FJsonObject> LogObject = MakeShared<FJsonObject>();
+				LogObject->SetStringField(TEXT("type"), LexToString(LogEntry.Type));
+				LogObject->SetStringField(TEXT("output"), LogEntry.Output);
+				LogOutputArray.Add(MakeShared<FJsonValueObject>(LogObject));
+				LogLines.Add(FString::Printf(TEXT("[%s] %s"), LexToString(LogEntry.Type), *LogEntry.Output));
+			}
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("command"), Command);
+			StructuredContent->SetStringField(TEXT("requestedMode"), RequestedModeString);
+			StructuredContent->SetStringField(TEXT("mode"), LexToString(ExecutionMode));
+			StructuredContent->SetStringField(TEXT("scope"), FileExecutionScope == EPythonFileExecutionScope::Public ? TEXT("Public") : TEXT("Private"));
+			StructuredContent->SetBoolField(TEXT("autoMode"), bAutoMode);
+			StructuredContent->SetBoolField(TEXT("autoModeChanged"), bAutoModeChanged);
+			StructuredContent->SetBoolField(TEXT("forceEnable"), bForceEnable);
+			StructuredContent->SetBoolField(TEXT("unattended"), bUnattended);
+			StructuredContent->SetBoolField(TEXT("success"), bSucceeded);
+			StructuredContent->SetStringField(TEXT("commandResult"), PythonCommand.CommandResult);
+			StructuredContent->SetNumberField(TEXT("logCount"), PythonCommand.LogOutput.Num());
+			StructuredContent->SetArrayField(TEXT("logOutput"), LogOutputArray);
+
+			FString Text = FString::Printf(
+				TEXT("Executed Python command. success=%s mode=%s scope=%s"),
+				bSucceeded ? TEXT("true") : TEXT("false"),
+				LexToString(ExecutionMode),
+				FileExecutionScope == EPythonFileExecutionScope::Public ? TEXT("Public") : TEXT("Private"));
+			if (bAutoModeChanged)
+			{
+				Text += FString::Printf(TEXT(" (requested %s, auto-adjusted)"), *RequestedModeString);
+			}
+
+			if (!PythonCommand.CommandResult.IsEmpty())
+			{
+				Text += FString::Printf(TEXT("\nResult:\n%s"), *PythonCommand.CommandResult);
+			}
+
+			if (LogLines.Num() > 0)
+			{
+				Text += TEXT("\nLog:\n") + FString::Join(LogLines, TEXT("\n"));
+			}
+
+			return MakeExecutionResult(Text, StructuredContent, !bSucceeded);
+		}
+
+		FUnrealMcpExecutionResult ExecutePythonFile(const FJsonObject& Arguments)
+		{
+			FString ScriptPath;
+			if (!Arguments.TryGetStringField(TEXT("scriptPath"), ScriptPath) || ScriptPath.TrimStartAndEnd().IsEmpty())
+			{
+				return MakeExecutionResult(TEXT("Missing required field 'scriptPath'."), nullptr, true);
+			}
+
+			TArray<FString> ScriptArgs;
+			EditorToolTryGetStringArrayField(Arguments, TEXT("args"), ScriptArgs);
+
+			bool bAllowOutsideProject = false;
+			Arguments.TryGetBoolField(TEXT("allowOutsideProject"), bAllowOutsideProject);
+
+			FString ResolvedScriptPath;
+			FString ResolveFailureReason;
+			if (!EditorToolResolvePythonScriptPath(ScriptPath, bAllowOutsideProject, ResolvedScriptPath, ResolveFailureReason))
+			{
+				return MakeExecutionResult(ResolveFailureReason, nullptr, true);
+			}
+
+			FString Command = EditorToolQuoteShellArgument(ResolvedScriptPath);
+			for (const FString& ScriptArg : ScriptArgs)
+			{
+				Command += TEXT(" ");
+				Command += EditorToolQuoteShellArgument(ScriptArg);
+			}
+
+			FString ScopeString = TEXT("Private");
+			bool bForceEnable = true;
+			bool bUnattended = true;
+			Arguments.TryGetStringField(TEXT("scope"), ScopeString);
+			Arguments.TryGetBoolField(TEXT("forceEnable"), bForceEnable);
+			Arguments.TryGetBoolField(TEXT("unattended"), bUnattended);
+
+			TSharedPtr<FJsonObject> ForwardArguments = MakeShared<FJsonObject>();
+			ForwardArguments->SetStringField(TEXT("command"), Command);
+			ForwardArguments->SetStringField(TEXT("mode"), TEXT("ExecuteFile"));
+			ForwardArguments->SetStringField(TEXT("scope"), ScopeString);
+			ForwardArguments->SetBoolField(TEXT("forceEnable"), bForceEnable);
+			ForwardArguments->SetBoolField(TEXT("unattended"), bUnattended);
+
+			FUnrealMcpExecutionResult ExecutionResult = ExecutePythonCommand(*ForwardArguments);
+			if (ExecutionResult.StructuredContent.IsValid())
+			{
+				ExecutionResult.StructuredContent->SetStringField(TEXT("scriptPath"), ResolvedScriptPath);
+
+				TArray<TSharedPtr<FJsonValue>> ArgsArray;
+				for (const FString& ScriptArg : ScriptArgs)
+				{
+					ArgsArray.Add(MakeShared<FJsonValueString>(ScriptArg));
+				}
+				ExecutionResult.StructuredContent->SetArrayField(TEXT("args"), ArgsArray);
+				ExecutionResult.StructuredContent->SetBoolField(TEXT("allowOutsideProject"), bAllowOutsideProject);
+			}
+
+			ExecutionResult.Text = FString::Printf(TEXT("Executed Python script file %s.\n%s"), *ResolvedScriptPath, *ExecutionResult.Text);
+			return ExecutionResult;
+		}
+
+		FUnrealMcpExecutionResult ExecuteMapCheck(const FString& ToolName)
+		{
+			if (EditorToolIsEditorPlaying())
+			{
+				return EditorToolMakePieBlockedResult(ToolName);
+			}
+
+			UWorld* EditorWorld = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+			if (!EditorWorld)
+			{
+				return MakeExecutionResult(TEXT("The editor world is unavailable."), nullptr, true);
+			}
+
+			FStringOutputDevice OutputDevice;
+			const bool bExecuted = GEditor && GEditor->Exec(EditorWorld, TEXT("MAP CHECK DONTDISPLAYDIALOG"), OutputDevice);
+
+			FMessageLog MapCheckLog(TEXT("MapCheck"));
+			const int32 ErrorCount = MapCheckLog.NumMessages(EMessageSeverity::Error);
+			const int32 WarningOrHigherCount = MapCheckLog.NumMessages(EMessageSeverity::Warning);
+			const int32 WarningCount = FMath::Max(0, WarningOrHigherCount - ErrorCount);
+			const FString CapturedOutput = FString(OutputDevice).TrimStartAndEnd();
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("map"), EditorWorld->GetOutermost()->GetName());
+			StructuredContent->SetBoolField(TEXT("success"), bExecuted);
+			StructuredContent->SetNumberField(TEXT("errorCount"), ErrorCount);
+			StructuredContent->SetNumberField(TEXT("warningCount"), WarningCount);
+			StructuredContent->SetStringField(TEXT("output"), CapturedOutput);
+
+			FString Text = FString::Printf(
+				TEXT("Map Check completed for %s. success=%s errors=%d warnings=%d"),
+				*EditorWorld->GetOutermost()->GetName(),
+				bExecuted ? TEXT("true") : TEXT("false"),
+				ErrorCount,
+				WarningCount);
+			if (!CapturedOutput.IsEmpty())
+			{
+				Text += FString::Printf(TEXT("\n%s"), *CapturedOutput);
+			}
+
+			return MakeExecutionResult(Text, StructuredContent, !bExecuted || ErrorCount > 0);
 		}
 
 		FUnrealMcpExecutionResult ExecuteListMaps()
@@ -298,6 +848,42 @@ namespace UnrealMcp
 		if (ToolName == TEXT("unreal.tail_log"))
 		{
 			OutResult = ExecuteTailLog(Arguments);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.start_pie"))
+		{
+			OutResult = ExecuteStartPie(Arguments);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.stop_pie"))
+		{
+			OutResult = ExecuteStopPie();
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.execute_console_command"))
+		{
+			OutResult = ExecuteConsoleCommand(Arguments);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.execute_python_file"))
+		{
+			OutResult = ExecutePythonFile(Arguments);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.execute_python"))
+		{
+			OutResult = ExecutePythonCommand(Arguments);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.map_check"))
+		{
+			OutResult = ExecuteMapCheck(ToolName);
 			return true;
 		}
 

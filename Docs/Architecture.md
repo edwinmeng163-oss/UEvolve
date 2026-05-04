@@ -37,7 +37,7 @@ Recommended split:
 - `Private/ToolHandlers`: first-class handler registration metadata.
 - `Private/Execution`: shared execution guard plus category-specific preflight/postcheck verifiers.
 - `Private/Tools/SelfExtension`: self-extension workbench, pipeline status, MCP test execution, and extension pipeline helpers. The first split moved `unreal.mcp_workbench_status`, `unreal.mcp_pipeline_status`, `unreal.mcp_run_tool_test`, `unreal.mcp_run_test_suite`, and `unreal.mcp_extension_pipeline` into `UnrealMcpSelfExtensionTools.cpp`.
-- `Private/Tools/Editor`: status, logs, maps, assets, PIE, console, Python. The first editor split moved `unreal.editor_status`, `unreal.tail_log`, `unreal.list_maps`, `unreal.list_assets`, and `unreal.list_selected_assets` into `UnrealMcpEditorTools.cpp`.
+- `Private/Tools/Editor`: status, logs, maps, assets, PIE, console, Python. The editor split currently owns `unreal.editor_status`, `unreal.tail_log`, `unreal.list_maps`, `unreal.list_assets`, `unreal.list_selected_assets`, `unreal.start_pie`, `unreal.stop_pie`, `unreal.execute_console_command`, `unreal.execute_python`, `unreal.execute_python_file`, and `unreal.map_check` in `UnrealMcpEditorTools.cpp`.
 - `Private/Tools/Actors`: actor selection, transforms, spawning, layout, batch edits.
 - `Private/Tools/Blueprint`: Blueprint class and graph editing.
 - `Private/Tools/Widget`: Widget Blueprint hierarchy, layout, event binding.
