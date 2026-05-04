@@ -15,8 +15,10 @@ namespace UnrealMcp
 	FUnrealMcpExecutionResult MakeExecutionResult(const FString& Text, const TSharedPtr<FJsonObject>& StructuredContent, bool bIsError);
 	FString GetMcpBuildLogRoot();
 	FString TailLines(const FString& Text, int32 MaxLines);
+	bool LoadJsonObject(const FString& JsonText, TSharedPtr<FJsonObject>& OutObject);
 	bool FindNewestFile(const FString& Directory, const FString& Pattern, FString& OutPath);
 	bool ResolveProjectPathInsideProject(const FString& RequestedPath, FString& OutPath, FString& OutFailureReason);
+	FString SanitizeMcpToolIdForPath(const FString& ToolName);
 	FString JsonObjectToString(const TSharedPtr<FJsonObject>& Object);
 	TArray<TSharedPtr<FJsonValue>> MakeJsonStringArray(const TArray<FString>& Strings);
 	FUnrealMcpExecutionResult ProjectMemoryWrite(const FJsonObject& Arguments);
@@ -444,5 +446,335 @@ namespace UnrealMcp
 			}
 			return StepObject;
 		}
+
+			FUnrealMcpExecutionResult BuildEditor(const FJsonObject& Arguments)
+			{
+			FString Target = FString::Printf(TEXT("%sEditor"), FApp::GetProjectName());
+			FString Platform = GetHostBuildPlatformName();
+			FString Configuration = TEXT("Development");
+			FString ExtraArgs;
+			FString ToolName;
+			FString TestRequestPath;
+			FString TestsDir;
+			FString ScaffoldDir;
+			FString MemoryKey = TEXT("mcp.extension.build_test");
+			bool bWriteProjectMemory = true;
+
+			Arguments.TryGetStringField(TEXT("target"), Target);
+			Arguments.TryGetStringField(TEXT("platform"), Platform);
+			Arguments.TryGetStringField(TEXT("configuration"), Configuration);
+			Arguments.TryGetStringField(TEXT("extraArgs"), ExtraArgs);
+			Arguments.TryGetStringField(TEXT("toolName"), ToolName);
+			Arguments.TryGetStringField(TEXT("testRequestPath"), TestRequestPath);
+			Arguments.TryGetStringField(TEXT("testsDir"), TestsDir);
+			Arguments.TryGetStringField(TEXT("scaffoldDir"), ScaffoldDir);
+			Arguments.TryGetStringField(TEXT("memoryKey"), MemoryKey);
+			Arguments.TryGetBoolField(TEXT("writeProjectMemory"), bWriteProjectMemory);
+
+			Target = Target.TrimStartAndEnd();
+			Platform = Platform.TrimStartAndEnd();
+			Configuration = Configuration.TrimStartAndEnd();
+			MemoryKey = MemoryKey.TrimStartAndEnd();
+			if (Target.IsEmpty() || Platform.IsEmpty() || Configuration.IsEmpty())
+			{
+				return MakeExecutionResult(TEXT("target, platform, and configuration must not be empty."), nullptr, true);
+			}
+			if (MemoryKey.IsEmpty())
+			{
+				MemoryKey = TEXT("mcp.extension.build_test");
+			}
+
+			const FString BuildScriptPath = GetUnrealBuildScriptPath();
+			if (!FPaths::FileExists(BuildScriptPath))
+			{
+				return MakeExecutionResult(FString::Printf(TEXT("Unreal Build script was not found: %s"), *BuildScriptPath), nullptr, true);
+			}
+
+			FString ProjectFilePath = FPaths::GetProjectFilePath();
+			if (ProjectFilePath.IsEmpty())
+			{
+				ProjectFilePath = FPaths::Combine(FPaths::ProjectDir(), FString::Printf(TEXT("%s.uproject"), FApp::GetProjectName()));
+			}
+			ProjectFilePath = FPaths::ConvertRelativePathToFull(ProjectFilePath);
+
+			const FString Timestamp = FDateTime::UtcNow().ToString(TEXT("%Y%m%d-%H%M%S"));
+			const FString BuildLogDirectory = FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UnrealMcp/BuildLogs")));
+			IFileManager::Get().MakeDirectory(*BuildLogDirectory, true);
+			const FString BuildLogPath = FPaths::Combine(BuildLogDirectory, FString::Printf(TEXT("Build_%s_%s_%s.log"), *Target, *Configuration, *Timestamp));
+
+			if (TestRequestPath.TrimStartAndEnd().IsEmpty() && !ScaffoldDir.TrimStartAndEnd().IsEmpty())
+			{
+				FString ResolvedScaffoldDir;
+				FString ResolveFailure;
+				if (ResolveProjectPathInsideProject(ScaffoldDir, ResolvedScaffoldDir, ResolveFailure))
+				{
+					TestRequestPath = FPaths::Combine(ResolvedScaffoldDir, TEXT("TestRequest.json"));
+					if (TestsDir.TrimStartAndEnd().IsEmpty())
+					{
+						TestsDir = FPaths::Combine(ResolvedScaffoldDir, TEXT("Tests"));
+					}
+				}
+			}
+
+			TSharedPtr<FJsonObject> MemoryContent = MakeShared<FJsonObject>();
+			MemoryContent->SetStringField(TEXT("target"), Target);
+			MemoryContent->SetStringField(TEXT("platform"), Platform);
+			MemoryContent->SetStringField(TEXT("configuration"), Configuration);
+			MemoryContent->SetStringField(TEXT("toolName"), ToolName);
+			MemoryContent->SetStringField(TEXT("testRequestPath"), TestRequestPath);
+			MemoryContent->SetStringField(TEXT("testsDir"), TestsDir);
+			MemoryContent->SetStringField(TEXT("scaffoldDir"), ScaffoldDir);
+			MemoryContent->SetStringField(TEXT("buildLogPath"), BuildLogPath);
+			MemoryContent->SetBoolField(TEXT("editorWasRunningDuringBuild"), true);
+			MemoryContent->SetBoolField(TEXT("editorRestartRequiredBeforeTestingNewTools"), true);
+			MemoryContent->SetStringField(TEXT("recommendation"), TEXT("Restart Unreal Editor after a successful plugin build before running unreal.mcp_run_tool_test for newly added tools."));
+
+			if (bWriteProjectMemory)
+			{
+				WriteBuildTestMemory(
+					MemoryKey,
+					TEXT("Waiting for Unreal Editor restart before MCP tool testing."),
+					TEXT("waiting_for_editor_restart_after_build"),
+					TEXT("If build succeeds, restart Unreal Editor, then run unreal.mcp_run_tool_test with this memoryKey."),
+					MemoryContent);
+			}
+
+			const FString Params = FString::Printf(
+				TEXT("%s %s %s -Project=%s -WaitMutex%s%s"),
+				*Target,
+				*Platform,
+				*Configuration,
+				*QuoteCommandLineArgument(ProjectFilePath),
+				ExtraArgs.TrimStartAndEnd().IsEmpty() ? TEXT("") : TEXT(" "),
+				*ExtraArgs.TrimStartAndEnd());
+
+			int32 ReturnCode = -1;
+			FString StdOut;
+			FString StdErr;
+			const bool bLaunched = FPlatformProcess::ExecProcess(
+				*BuildScriptPath,
+				*Params,
+				&ReturnCode,
+				&StdOut,
+				&StdErr,
+				*FPaths::ConvertRelativePathToFull(FPaths::EngineDir()));
+
+			const FString CombinedLog = StdOut + (StdErr.IsEmpty() ? FString() : FString::Printf(TEXT("\n\n[stderr]\n%s"), *StdErr));
+			FFileHelper::SaveStringToFile(CombinedLog, *BuildLogPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("action"), TEXT("mcp_build_editor"));
+			StructuredContent->SetStringField(TEXT("target"), Target);
+			StructuredContent->SetStringField(TEXT("platform"), Platform);
+			StructuredContent->SetStringField(TEXT("configuration"), Configuration);
+			StructuredContent->SetStringField(TEXT("extraArgs"), ExtraArgs);
+			StructuredContent->SetStringField(TEXT("projectFile"), ProjectFilePath);
+			StructuredContent->SetStringField(TEXT("buildScript"), BuildScriptPath);
+			StructuredContent->SetStringField(TEXT("buildLogPath"), BuildLogPath);
+			StructuredContent->SetBoolField(TEXT("launched"), bLaunched);
+			StructuredContent->SetBoolField(TEXT("editorRunningDuringBuild"), true);
+			StructuredContent->SetBoolField(TEXT("editorRestartRequiredBeforeTestingNewTools"), true);
+			StructuredContent->SetStringField(TEXT("restartAdvice"), TEXT("The editor is running because this tool is invoked from Chat. A successful plugin build still requires restarting Unreal Editor before new tool definitions are loaded."));
+
+			ParseBuildLog(CombinedLog, bLaunched ? ReturnCode : -1, StructuredContent);
+			const bool bSucceeded = StructuredContent->GetBoolField(TEXT("succeeded"));
+
+			MemoryContent->SetBoolField(TEXT("buildSucceeded"), bSucceeded);
+			MemoryContent->SetNumberField(TEXT("returnCode"), bLaunched ? ReturnCode : -1);
+			if (bWriteProjectMemory)
+			{
+				WriteBuildTestMemory(
+					MemoryKey,
+					bSucceeded ? TEXT("Editor build succeeded; restart before MCP tool test.") : TEXT("Editor build failed; inspect parsed errors and build log."),
+					bSucceeded ? TEXT("build_succeeded_restart_required") : TEXT("build_failed"),
+					bSucceeded ? TEXT("Restart Unreal Editor, then run unreal.mcp_run_tool_test.") : TEXT("Fix compile errors, then rerun unreal.mcp_build_editor."),
+					MemoryContent);
+			}
+
+			const FString Text = bSucceeded
+				? FString::Printf(TEXT("Build succeeded for %s %s %s. Restart Unreal Editor before testing newly compiled MCP tools."), *Target, *Platform, *Configuration)
+				: FString::Printf(TEXT("Build failed for %s %s %s. See parsed errors and log: %s"), *Target, *Platform, *Configuration, *BuildLogPath);
+			return MakeExecutionResult(Text, StructuredContent, !bSucceeded);
+		}
+
+		FString GetMcpSupervisorScriptPath()
+		{
+			return FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectDir(), TEXT("Tools/unreal_mcp_supervisor.py")));
+		}
+
+		FString MakeSupervisorDefaultArgsJson(const FString& MemoryKey)
+		{
+			FString EscapedMemoryKey = MemoryKey;
+			EscapedMemoryKey.ReplaceInline(TEXT("\\"), TEXT("\\\\"));
+			EscapedMemoryKey.ReplaceInline(TEXT("\""), TEXT("\\\""));
+			return FString::Printf(TEXT("{\"memoryKey\":\"%s\"}"), *EscapedMemoryKey);
+		}
+
+		FUnrealMcpExecutionResult SupervisorInstall(const FJsonObject& Arguments)
+		{
+			FString Platform = TEXT("all");
+			FString OutputDir = TEXT("Tools/UnrealMcpSupervisor");
+			FString Label = FString::Printf(TEXT("com.unrealmcp.%s"), *SanitizeMcpToolIdForPath(FApp::GetProjectName()).ToLower());
+			FString MemoryKey = TEXT("mcp.extension.pipeline");
+			FString ArgsJson;
+			FString EndpointUrl = TEXT("http://127.0.0.1:8765/mcp");
+			FString SupervisorLogDir = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UnrealMcp/SupervisorLogs"));
+			FString EditorCmd;
+			bool bInstallLaunchAgent = false;
+			bool bLaunchAtLoad = false;
+			bool bAutoRestart = true;
+			bool bOverwrite = true;
+			bool bDryRun = false;
+
+			Arguments.TryGetStringField(TEXT("platform"), Platform);
+			Arguments.TryGetStringField(TEXT("outputDir"), OutputDir);
+			Arguments.TryGetStringField(TEXT("label"), Label);
+			Arguments.TryGetStringField(TEXT("memoryKey"), MemoryKey);
+			Arguments.TryGetStringField(TEXT("argsJson"), ArgsJson);
+			Arguments.TryGetStringField(TEXT("endpointUrl"), EndpointUrl);
+			Arguments.TryGetStringField(TEXT("supervisorLogDir"), SupervisorLogDir);
+			Arguments.TryGetStringField(TEXT("editorCmd"), EditorCmd);
+			Arguments.TryGetBoolField(TEXT("installLaunchAgent"), bInstallLaunchAgent);
+			Arguments.TryGetBoolField(TEXT("launchAtLoad"), bLaunchAtLoad);
+			Arguments.TryGetBoolField(TEXT("autoRestart"), bAutoRestart);
+			Arguments.TryGetBoolField(TEXT("overwrite"), bOverwrite);
+			Arguments.TryGetBoolField(TEXT("dryRun"), bDryRun);
+
+			Platform = Platform.TrimStartAndEnd().ToLower();
+			if (Platform.IsEmpty())
+			{
+				Platform = TEXT("all");
+			}
+			if (MemoryKey.TrimStartAndEnd().IsEmpty())
+			{
+				MemoryKey = TEXT("mcp.extension.pipeline");
+			}
+			if (ArgsJson.TrimStartAndEnd().IsEmpty())
+			{
+				ArgsJson = MakeSupervisorDefaultArgsJson(MemoryKey);
+			}
+
+			const FString SupervisorScriptPath = GetMcpSupervisorScriptPath();
+			if (!FPaths::FileExists(SupervisorScriptPath))
+			{
+				return MakeExecutionResult(FString::Printf(TEXT("Supervisor script was not found: %s"), *SupervisorScriptPath), nullptr, true);
+			}
+
+			FString ResolvedOutputDir;
+			FString FailureReason;
+			if (!ResolveProjectPathInsideProject(OutputDir, ResolvedOutputDir, FailureReason))
+			{
+				return MakeExecutionResult(FailureReason, nullptr, true);
+			}
+
+			FString ProjectFilePath = FPaths::GetProjectFilePath();
+			if (ProjectFilePath.IsEmpty())
+			{
+				ProjectFilePath = FPaths::Combine(FPaths::ProjectDir(), FString::Printf(TEXT("%s.uproject"), FApp::GetProjectName()));
+			}
+			ProjectFilePath = FPaths::ConvertRelativePathToFull(ProjectFilePath);
+
+			TArray<FString> ParamParts;
+			ParamParts.Add(QuoteCommandLineArgument(SupervisorScriptPath));
+			ParamParts.Add(TEXT("--url"));
+			ParamParts.Add(QuoteCommandLineArgument(EndpointUrl));
+			ParamParts.Add(TEXT("--uproject"));
+			ParamParts.Add(QuoteCommandLineArgument(ProjectFilePath));
+			if (!EditorCmd.TrimStartAndEnd().IsEmpty())
+			{
+				ParamParts.Add(TEXT("--editor-cmd"));
+				ParamParts.Add(QuoteCommandLineArgument(EditorCmd.TrimStartAndEnd()));
+			}
+			ParamParts.Add(TEXT("install"));
+			ParamParts.Add(TEXT("--output-dir"));
+			ParamParts.Add(QuoteCommandLineArgument(ResolvedOutputDir));
+			ParamParts.Add(TEXT("--platform"));
+			ParamParts.Add(QuoteCommandLineArgument(Platform));
+			ParamParts.Add(TEXT("--label"));
+			ParamParts.Add(QuoteCommandLineArgument(Label));
+			ParamParts.Add(TEXT("--memory-key"));
+			ParamParts.Add(QuoteCommandLineArgument(MemoryKey));
+			ParamParts.Add(TEXT("--args-json"));
+			ParamParts.Add(QuoteCommandLineArgument(ArgsJson));
+			ParamParts.Add(TEXT("--supervisor-log-dir"));
+			ParamParts.Add(QuoteCommandLineArgument(FPaths::ConvertRelativePathToFull(SupervisorLogDir)));
+			if (bInstallLaunchAgent)
+			{
+				ParamParts.Add(TEXT("--install-launch-agent"));
+			}
+			if (bLaunchAtLoad)
+			{
+				ParamParts.Add(TEXT("--launch-at-load"));
+			}
+			if (!bAutoRestart)
+			{
+				ParamParts.Add(TEXT("--no-auto-restart"));
+			}
+			if (bOverwrite)
+			{
+				ParamParts.Add(TEXT("--overwrite"));
+			}
+
+#if PLATFORM_WINDOWS
+			const FString PythonExecutable = TEXT("py");
+			const FString Params = TEXT("-3 ") + FString::Join(ParamParts, TEXT(" "));
+#else
+			const FString PythonExecutable = TEXT("/usr/bin/env");
+			const FString Params = TEXT("python3 ") + FString::Join(ParamParts, TEXT(" "));
+#endif
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("action"), TEXT("mcp_supervisor_install"));
+			StructuredContent->SetStringField(TEXT("platform"), Platform);
+			StructuredContent->SetStringField(TEXT("outputDir"), ResolvedOutputDir);
+			StructuredContent->SetStringField(TEXT("label"), Label);
+			StructuredContent->SetStringField(TEXT("memoryKey"), MemoryKey);
+			StructuredContent->SetStringField(TEXT("argsJson"), ArgsJson);
+			StructuredContent->SetStringField(TEXT("endpointUrl"), EndpointUrl);
+			StructuredContent->SetStringField(TEXT("supervisorLogDir"), FPaths::ConvertRelativePathToFull(SupervisorLogDir));
+			StructuredContent->SetStringField(TEXT("supervisorScriptPath"), SupervisorScriptPath);
+			StructuredContent->SetStringField(TEXT("executable"), PythonExecutable);
+			StructuredContent->SetStringField(TEXT("params"), Params);
+			StructuredContent->SetBoolField(TEXT("dryRun"), bDryRun);
+			StructuredContent->SetBoolField(TEXT("autoRestart"), bAutoRestart);
+			StructuredContent->SetBoolField(TEXT("installLaunchAgent"), bInstallLaunchAgent);
+
+			if (bDryRun)
+			{
+				return MakeExecutionResult(TEXT("Dry run supervisor install prepared the generator command."), StructuredContent, false);
+			}
+
+			int32 ReturnCode = -1;
+			FString StdOut;
+			FString StdErr;
+			const bool bLaunched = FPlatformProcess::ExecProcess(
+				*PythonExecutable,
+				*Params,
+				&ReturnCode,
+				&StdOut,
+				&StdErr,
+				*FPaths::ProjectDir());
+
+			StructuredContent->SetBoolField(TEXT("launched"), bLaunched);
+			StructuredContent->SetNumberField(TEXT("returnCode"), ReturnCode);
+			StructuredContent->SetStringField(TEXT("stdout"), StdOut);
+			StructuredContent->SetStringField(TEXT("stderr"), StdErr);
+
+			TSharedPtr<FJsonObject> InstallResult;
+			if (LoadJsonObject(StdOut, InstallResult) && InstallResult.IsValid())
+			{
+				StructuredContent->SetObjectField(TEXT("installResult"), InstallResult);
+			}
+
+			const bool bSucceeded = bLaunched && ReturnCode == 0;
+			return MakeExecutionResult(
+				bSucceeded
+					? FString::Printf(TEXT("Supervisor launcher files generated under %s."), *ResolvedOutputDir)
+					: FString::Printf(TEXT("Supervisor install failed with returnCode=%d. stderr: %s"), ReturnCode, *StdErr),
+				StructuredContent,
+				!bSucceeded);
+		}
+
+
 
 }
