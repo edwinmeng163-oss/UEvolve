@@ -17,6 +17,18 @@ namespace UnrealMcp
 	{
 		static constexpr int32 ActorToolDefaultListLimit = 200;
 
+		struct FActorToolQueryResult
+		{
+			TArray<AActor*> Actors;
+			TArray<FString> RequestedPaths;
+			FString FilterText;
+			FString ClassPathFilter;
+			int32 MatchCount = 0;
+			int32 Limit = ActorToolDefaultListLimit;
+			bool bSelectedOnly = false;
+			bool bTruncated = false;
+		};
+
 		FUnrealMcpExecutionResult ActorToolMakeExecutionResult(
 			const FString& Text,
 			const TSharedPtr<FJsonObject>& StructuredContent = nullptr,
@@ -218,6 +230,101 @@ namespace UnrealMcp
 				? TEXT("Multiple actors are selected. Provide actorPath or actorLabel.")
 				: TEXT("No actor reference was provided, and there is no single selected actor.");
 			return nullptr;
+		}
+
+		bool ActorToolResolveActorsFromArguments(
+			UEditorActorSubsystem* EditorActorSubsystem,
+			const FJsonObject& Arguments,
+			FActorToolQueryResult& OutQuery,
+			FString& OutFailureReason)
+		{
+			OutQuery = FActorToolQueryResult();
+			OutFailureReason.Reset();
+
+			if (!EditorActorSubsystem)
+			{
+				OutFailureReason = TEXT("EditorActorSubsystem is unavailable.");
+				return false;
+			}
+
+			Arguments.TryGetStringField(TEXT("filter"), OutQuery.FilterText);
+			Arguments.TryGetStringField(TEXT("classPath"), OutQuery.ClassPathFilter);
+			Arguments.TryGetBoolField(TEXT("selectedOnly"), OutQuery.bSelectedOnly);
+			ActorToolTryGetStringArrayField(Arguments, TEXT("paths"), OutQuery.RequestedPaths);
+			OutQuery.Limit = FMath::Min(ActorToolGetPositiveIntArgument(Arguments, TEXT("limit"), ActorToolDefaultListLimit), 1000);
+
+			TSet<FString> ExplicitPaths;
+			for (const FString& RequestedPath : OutQuery.RequestedPaths)
+			{
+				const FString TrimmedPath = RequestedPath.TrimStartAndEnd();
+				if (!TrimmedPath.IsEmpty())
+				{
+					ExplicitPaths.Add(TrimmedPath);
+				}
+			}
+
+			const bool bHasSelectors = !OutQuery.FilterText.TrimStartAndEnd().IsEmpty()
+				|| !OutQuery.ClassPathFilter.TrimStartAndEnd().IsEmpty()
+				|| ExplicitPaths.Num() > 0;
+
+			if (OutQuery.bSelectedOnly || !bHasSelectors)
+			{
+				OutQuery.Actors = EditorActorSubsystem->GetSelectedLevelActors();
+				OutQuery.Actors.RemoveAll([](AActor* Actor) { return Actor == nullptr; });
+				OutQuery.MatchCount = OutQuery.Actors.Num();
+
+				if (OutQuery.Actors.Num() == 0)
+				{
+					OutFailureReason = OutQuery.bSelectedOnly
+						? TEXT("No actors are currently selected.")
+						: TEXT("No actor selectors were provided, and there are no selected actors to act on.");
+					return false;
+				}
+
+				OutQuery.Actors.Sort([](const AActor& A, const AActor& B)
+				{
+					return A.GetActorLabel() < B.GetActorLabel();
+				});
+
+				if (OutQuery.Actors.Num() > OutQuery.Limit)
+				{
+					OutQuery.Actors.SetNum(OutQuery.Limit);
+					OutQuery.bTruncated = true;
+				}
+
+				return true;
+			}
+
+			TArray<AActor*> AllActors = EditorActorSubsystem->GetAllLevelActors();
+			AllActors.Sort([](const AActor& A, const AActor& B)
+			{
+				return A.GetActorLabel() < B.GetActorLabel();
+			});
+
+			for (AActor* Actor : AllActors)
+			{
+				if (!Actor || !ActorToolMatchesActorFilters(Actor, OutQuery.FilterText, OutQuery.ClassPathFilter, ExplicitPaths))
+				{
+					continue;
+				}
+
+				++OutQuery.MatchCount;
+				if (OutQuery.Actors.Num() >= OutQuery.Limit)
+				{
+					OutQuery.bTruncated = true;
+					continue;
+				}
+
+				OutQuery.Actors.Add(Actor);
+			}
+
+			if (OutQuery.MatchCount == 0)
+			{
+				OutFailureReason = TEXT("No actors matched the provided criteria.");
+				return false;
+			}
+
+			return true;
 		}
 
 		FUnrealMcpExecutionResult ExecuteListLevelActors(const FJsonObject& Arguments)
@@ -798,6 +905,203 @@ namespace UnrealMcp
 
 			return ActorToolMakeExecutionResult(Text, StructuredContent, bIsError);
 		}
+
+		FUnrealMcpExecutionResult ExecuteBatchSetActorScale(const FString& ToolName, const FJsonObject& Arguments)
+		{
+			if (IsEditorPlaying())
+			{
+				return MakePieBlockedResult(ToolName);
+			}
+
+			UEditorActorSubsystem* EditorActorSubsystem = ActorToolGetEditorActorSubsystem();
+			if (!EditorActorSubsystem)
+			{
+				return ActorToolMakeExecutionResult(TEXT("EditorActorSubsystem is unavailable."), nullptr, true);
+			}
+
+			double ScaleX = 1.0;
+			double ScaleY = 1.0;
+			double ScaleZ = 1.0;
+			const bool bHasScaleX = Arguments.TryGetNumberField(TEXT("scaleX"), ScaleX);
+			const bool bHasScaleY = Arguments.TryGetNumberField(TEXT("scaleY"), ScaleY);
+			const bool bHasScaleZ = Arguments.TryGetNumberField(TEXT("scaleZ"), ScaleZ);
+			if (!bHasScaleX && !bHasScaleY && !bHasScaleZ)
+			{
+				return ActorToolMakeExecutionResult(TEXT("Provide at least one of scaleX, scaleY, or scaleZ."), nullptr, true);
+			}
+
+			FActorToolQueryResult Query;
+			FString FailureReason;
+			if (!ActorToolResolveActorsFromArguments(EditorActorSubsystem, Arguments, Query, FailureReason))
+			{
+				return ActorToolMakeExecutionResult(FailureReason, nullptr, true);
+			}
+
+			FScopedTransaction Transaction(NSLOCTEXT("UnrealMcp", "BatchSetActorScale", "Unreal MCP Batch Set Actor Scale"));
+
+			int32 SuccessCount = 0;
+			TArray<TSharedPtr<FJsonValue>> ActorResults;
+			TArray<FString> TextLines;
+
+			for (AActor* Actor : Query.Actors)
+			{
+				const FVector BeforeScale = Actor->GetActorScale3D();
+				const FVector RequestedScale(
+					bHasScaleX ? ScaleX : BeforeScale.X,
+					bHasScaleY ? ScaleY : BeforeScale.Y,
+					bHasScaleZ ? ScaleZ : BeforeScale.Z);
+
+				Actor->Modify();
+				Actor->SetActorScale3D(RequestedScale);
+				Actor->MarkPackageDirty();
+
+				const FVector AfterScale = Actor->GetActorScale3D();
+				const bool bSucceeded = AfterScale.Equals(RequestedScale, KINDA_SMALL_NUMBER);
+				if (bSucceeded)
+				{
+					++SuccessCount;
+				}
+
+				TSharedPtr<FJsonObject> ActorObject = ActorToolMakeActorObject(Actor);
+				ActorObject->SetObjectField(TEXT("beforeScale"), ActorToolMakeVectorObject(BeforeScale));
+				ActorObject->SetObjectField(TEXT("afterScale"), ActorToolMakeVectorObject(AfterScale));
+				ActorObject->SetBoolField(TEXT("success"), bSucceeded);
+				ActorResults.Add(MakeShared<FJsonValueObject>(ActorObject));
+
+				TextLines.Add(FString::Printf(
+					TEXT("%s -> scale [%.2f, %.2f, %.2f] success=%s"),
+					*Actor->GetActorLabel(),
+					AfterScale.X,
+					AfterScale.Y,
+					AfterScale.Z,
+					bSucceeded ? TEXT("true") : TEXT("false")));
+			}
+
+			const int32 FailureCount = Query.Actors.Num() - SuccessCount;
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetNumberField(TEXT("matchCount"), Query.MatchCount);
+			StructuredContent->SetNumberField(TEXT("returnedCount"), Query.Actors.Num());
+			StructuredContent->SetBoolField(TEXT("truncated"), Query.bTruncated);
+			StructuredContent->SetNumberField(TEXT("successCount"), SuccessCount);
+			StructuredContent->SetNumberField(TEXT("failureCount"), FailureCount);
+			StructuredContent->SetArrayField(TEXT("actors"), ActorResults);
+
+			FString Text = FString::Printf(
+				TEXT("Updated scale on %d actors. success=%d failure=%d"),
+				Query.Actors.Num(),
+				SuccessCount,
+				FailureCount);
+			if (TextLines.Num() > 0)
+			{
+				Text += TEXT("\n") + FString::Join(TextLines, TEXT("\n"));
+			}
+
+			return ActorToolMakeExecutionResult(Text, StructuredContent, FailureCount > 0);
+		}
+
+		FUnrealMcpExecutionResult ExecuteBatchSetActorTags(const FString& ToolName, const FJsonObject& Arguments)
+		{
+			if (IsEditorPlaying())
+			{
+				return MakePieBlockedResult(ToolName);
+			}
+
+			UEditorActorSubsystem* EditorActorSubsystem = ActorToolGetEditorActorSubsystem();
+			if (!EditorActorSubsystem)
+			{
+				return ActorToolMakeExecutionResult(TEXT("EditorActorSubsystem is unavailable."), nullptr, true);
+			}
+
+			TArray<FString> TagStrings;
+			ActorToolTryGetStringArrayField(Arguments, TEXT("tags"), TagStrings);
+			TArray<FName> Tags;
+			for (const FString& TagString : TagStrings)
+			{
+				const FString TrimmedTag = TagString.TrimStartAndEnd();
+				if (!TrimmedTag.IsEmpty())
+				{
+					Tags.Add(FName(*TrimmedTag));
+				}
+			}
+
+			if (Tags.Num() == 0)
+			{
+				return ActorToolMakeExecutionResult(TEXT("The tags argument must contain at least one non-empty tag."), nullptr, true);
+			}
+
+			bool bReplaceExisting = false;
+			Arguments.TryGetBoolField(TEXT("replaceExisting"), bReplaceExisting);
+
+			FActorToolQueryResult Query;
+			FString FailureReason;
+			if (!ActorToolResolveActorsFromArguments(EditorActorSubsystem, Arguments, Query, FailureReason))
+			{
+				return ActorToolMakeExecutionResult(FailureReason, nullptr, true);
+			}
+
+			FScopedTransaction Transaction(NSLOCTEXT("UnrealMcp", "BatchSetActorTags", "Unreal MCP Batch Set Actor Tags"));
+
+			TArray<TSharedPtr<FJsonValue>> ActorResults;
+			TArray<FString> TextLines;
+
+			for (AActor* Actor : Query.Actors)
+			{
+				TArray<TSharedPtr<FJsonValue>> BeforeTags;
+				for (const FName& ExistingTag : Actor->Tags)
+				{
+					BeforeTags.Add(MakeShared<FJsonValueString>(ExistingTag.ToString()));
+				}
+
+				Actor->Modify();
+				if (bReplaceExisting)
+				{
+					Actor->Tags.Reset();
+				}
+
+				for (const FName& Tag : Tags)
+				{
+					Actor->Tags.AddUnique(Tag);
+				}
+				Actor->MarkPackageDirty();
+
+				TArray<TSharedPtr<FJsonValue>> AfterTags;
+				for (const FName& ExistingTag : Actor->Tags)
+				{
+					AfterTags.Add(MakeShared<FJsonValueString>(ExistingTag.ToString()));
+				}
+
+				TSharedPtr<FJsonObject> ActorObject = ActorToolMakeActorObject(Actor);
+				ActorObject->SetArrayField(TEXT("beforeTags"), BeforeTags);
+				ActorObject->SetArrayField(TEXT("afterTags"), AfterTags);
+				ActorResults.Add(MakeShared<FJsonValueObject>(ActorObject));
+
+				TArray<FString> TagLineParts;
+				for (const FName& ExistingTag : Actor->Tags)
+				{
+					TagLineParts.Add(ExistingTag.ToString());
+				}
+				TextLines.Add(FString::Printf(TEXT("%s -> [%s]"), *Actor->GetActorLabel(), *FString::Join(TagLineParts, TEXT(", "))));
+			}
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetNumberField(TEXT("matchCount"), Query.MatchCount);
+			StructuredContent->SetNumberField(TEXT("returnedCount"), Query.Actors.Num());
+			StructuredContent->SetBoolField(TEXT("truncated"), Query.bTruncated);
+			StructuredContent->SetBoolField(TEXT("replaceExisting"), bReplaceExisting);
+			StructuredContent->SetArrayField(TEXT("actors"), ActorResults);
+
+			FString Text = FString::Printf(
+				TEXT("%s tags on %d actors."),
+				bReplaceExisting ? TEXT("Replaced") : TEXT("Updated"),
+				Query.Actors.Num());
+			if (TextLines.Num() > 0)
+			{
+				Text += TEXT("\n") + FString::Join(TextLines, TEXT("\n"));
+			}
+
+			return ActorToolMakeExecutionResult(Text, StructuredContent, false);
+		}
 	}
 
 	bool TryExecuteActorTool(const FString& ToolName, const FJsonObject& Arguments, FUnrealMcpExecutionResult& OutResult)
@@ -835,6 +1139,18 @@ namespace UnrealMcp
 		if (ToolName == TEXT("unreal.clear_level_environment"))
 		{
 			OutResult = ExecuteClearLevelEnvironment(ToolName, Arguments);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.batch_set_actor_scale"))
+		{
+			OutResult = ExecuteBatchSetActorScale(ToolName, Arguments);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.batch_set_actor_tags"))
+		{
+			OutResult = ExecuteBatchSetActorTags(ToolName, Arguments);
 			return true;
 		}
 
