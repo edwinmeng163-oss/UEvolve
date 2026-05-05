@@ -421,14 +421,14 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 
 UEvolve is an Unreal Editor plugin workflow rather than a packaged game/server deployment. The repository root is the canonical local development checkout: `UEvolve.uproject` loads the workbench plugin, `Plugins/UnrealMcp` is the reusable plugin, and `Examples/UEvolveExample` is only a sample project for validation.
 
-There are three supported deployment paths:
+There are four common entry points:
 
 - Root local development host: open `UEvolve.uproject` from the repository root, or run `./open_uevolve.command` on macOS.
 - Windows root local development host: run `.\open_uevolve.ps1` from PowerShell, or double-click `UEvolve.uproject`.
 - Existing project install: copy or symlink `Plugins/UnrealMcp` into `<YourProject>/Plugins/UnrealMcp`, optionally copy `Tools/` and `Schemas/` for self-extension workflows, then compile that project.
 - Example project install: open `Examples/UEvolveExample/UEvolveExample.uproject` only when you want to test the plugin with bundled sample content.
 
-The root `Config/` folder is committed as a safe template. It disables Android File Server by default and intentionally does not include any machine-local `SecurityToken`. If Unreal generates local tokens or user-specific editor settings after launch, keep them local and do not commit them.
+The root `Config/` folder is committed as a safe template. It disables Android File Server by default and keeps `SecurityToken=` empty so repository checkouts do not carry machine-local credentials. If Unreal generates local tokens or user-specific editor settings after launch, keep them local and do not commit them.
 
 ### 1. Prepare The Machine
 
@@ -573,7 +573,7 @@ Windows-specific issues to expect:
 - Missing C++ compiler: install Visual Studio 2022 and the C++ desktop workload.
 - Missing Windows SDK: add it through Visual Studio Installer.
 - Plugin binary mismatch: macOS binaries do not run on Windows; rebuild to generate `Binaries/Win64`.
-- Source warning treated as error: if you are on an older checkout and see identifier shadowing errors such as `WeakThis` or `LogPath`, pull the latest `main`; these UE 5.7 / VS 2022 compatibility fixes are included after `v0.10.4`.
+- Source warning treated as error: if you are on an older checkout and see identifier shadowing errors such as `WeakThis` or `LogPath`, pull the latest `main`; these UE 5.7 / VS 2022 compatibility fixes are already included there.
 - Git LFS pointer files: if assets fail to load or are tiny text files, run `git lfs pull`.
 - Path length errors: move the project closer to a drive root or enable long paths in Windows.
 - OneDrive file locks: move the checkout out of OneDrive/Documents/Desktop if Unreal reports save/load issues.
@@ -679,6 +679,17 @@ curl -s \
   http://127.0.0.1:8765/mcp
 ```
 
+### Quick Verification Checklist
+
+Use this checklist after a fresh clone, a clean build, or a supervisor restart:
+
+- `python3 Tools/validate_tool_registry.py` reports `issueCount: 0`.
+- `UEvolve.uproject` opens without a rebuild loop.
+- `http://127.0.0.1:8765/mcp` responds after Unreal Editor has loaded the project.
+- `tools/list` includes `unreal.editor_status`, `unreal.mcp_workbench_status`, and `unreal.preview_change_plan`.
+- `/tool unreal.editor_status {}` returns the active project, engine version, map, PIE state, and endpoint.
+- `/tool unreal.mcp_workbench_status {"includeBuildLogTail":false}` reports registry, audit, memory, build/test, and supervisor status without critical errors.
+
 ### 8. Use The In-Editor Chat
 
 Open:
@@ -750,7 +761,7 @@ Generated Unreal folders are intentionally ignored:
 - `Examples/*/DerivedDataCache/`
 - plugin build caches
 
-Do not commit local API keys, editor user settings, logs, or generated local test assets.
+Do not commit local API keys, Android File Server security tokens, editor user settings, logs, or generated local test assets. The committed `Config/DefaultEngine.ini` files are templates only; keep `SecurityToken=` empty in version control.
 
 ## AI / API Key Safety
 
