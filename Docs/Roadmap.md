@@ -8,7 +8,7 @@ The goal is not only to let AI call existing editor tools. The goal is to let AI
 
 1. Scaffold a new tool.
 2. Validate schema compatibility.
-3. Validate generated C++ snippets.
+3. Validate generated descriptor-first C++ patch fragments.
 4. Preview source diffs with dry run.
 5. Apply with backups and a lock.
 6. Build the editor target.
@@ -40,7 +40,7 @@ The goal is not only to let AI call existing editor tools. The goal is to let AI
 
 ## Medium-Term Priorities
 
-1. Convert scaffold snippets into category-owned extension points.
+1. Convert scaffold patches into category-owned extension points.
 2. Add CI smoke checks for schema compatibility and documentation coverage.
 3. Add Windows build/restart/supervisor verification.
 4. Add team-shared memory and skill packs.

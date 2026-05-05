@@ -16,7 +16,7 @@ Recommended policy categories:
 
 - Read-only: status, list assets, map check, audit.
 - Editor write: actor transforms, Blueprint edits, widget edits, save packages.
-- Code write: scaffold patch/apply, snippet edits, rollback.
+- Code write: scaffold patch/apply, patch-fragment edits, rollback.
 - Build/process: build editor, supervisor launch/restart.
 - Dynamic execution: Python and console command execution.
 
@@ -47,7 +47,7 @@ Use fixed-schema wrappers instead.
 Self-extension tools should preserve these rules:
 
 - Dry run before apply.
-- Static snippet validation before source insertion.
+- Static patch-fragment validation before source insertion.
 - Lock during apply/build/test/rollback.
 - Backup before source mutation.
 - Manifest after source mutation.

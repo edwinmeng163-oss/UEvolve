@@ -994,6 +994,302 @@ namespace UnrealMcp
 			*EscapeForCppTextLiteral(ToolName));
 	}
 
+	FString NormalizeMcpToolCategory(const FString& RequestedCategory)
+	{
+		const FString Category = RequestedCategory.TrimStartAndEnd().ToLower();
+		if (Category == TEXT("actors")
+			|| Category == TEXT("blueprint")
+			|| Category == TEXT("editor")
+			|| Category == TEXT("memory")
+			|| Category == TEXT("scaffold")
+			|| Category == TEXT("self-extension")
+			|| Category == TEXT("skills")
+			|| Category == TEXT("widget"))
+		{
+			return Category;
+		}
+		return TEXT("self-extension");
+	}
+
+	FString NormalizeMcpToolRiskLevel(const FString& RequestedRiskLevel)
+	{
+		const FString RiskLevel = RequestedRiskLevel.TrimStartAndEnd().ToLower();
+		if (RiskLevel == TEXT("read_only")
+			|| RiskLevel == TEXT("low")
+			|| RiskLevel == TEXT("medium")
+			|| RiskLevel == TEXT("high")
+			|| RiskLevel == TEXT("critical"))
+		{
+			return RiskLevel;
+		}
+		return TEXT("low");
+	}
+
+	FString GetMcpToolCategorySourceFile(const FString& Category)
+	{
+		if (Category == TEXT("actors"))
+		{
+			return TEXT("UnrealMcpActorTools.cpp");
+		}
+		if (Category == TEXT("blueprint"))
+		{
+			return TEXT("UnrealMcpBlueprintTools.cpp");
+		}
+		if (Category == TEXT("editor"))
+		{
+			return TEXT("UnrealMcpEditorTools.cpp");
+		}
+		if (Category == TEXT("memory"))
+		{
+			return TEXT("UnrealMcpMemoryTools.cpp");
+		}
+		if (Category == TEXT("scaffold"))
+		{
+			return TEXT("UnrealMcpScaffoldTools.cpp");
+		}
+		if (Category == TEXT("skills"))
+		{
+			return TEXT("UnrealMcpSkillTools.cpp");
+		}
+		if (Category == TEXT("widget"))
+		{
+			return TEXT("UnrealMcpWidgetTools.cpp");
+		}
+		return TEXT("UnrealMcpSelfExtensionTools.cpp");
+	}
+
+	FString GetMcpToolCategoryTryExecuteName(const FString& Category)
+	{
+		if (Category == TEXT("actors"))
+		{
+			return TEXT("TryExecuteActorTool");
+		}
+		if (Category == TEXT("blueprint"))
+		{
+			return TEXT("TryExecuteBlueprintTool");
+		}
+		if (Category == TEXT("editor"))
+		{
+			return TEXT("TryExecuteEditorTool");
+		}
+		if (Category == TEXT("memory"))
+		{
+			return TEXT("TryExecuteMemoryTool");
+		}
+		if (Category == TEXT("scaffold"))
+		{
+			return TEXT("TryExecuteScaffoldTool");
+		}
+		if (Category == TEXT("skills"))
+		{
+			return TEXT("TryExecuteSkillTool");
+		}
+		if (Category == TEXT("widget"))
+		{
+			return TEXT("TryExecuteWidgetTool");
+		}
+		return TEXT("TryExecuteSelfExtensionTool");
+	}
+
+	FString MakeMcpGeneratedFunctionSuffix(const FString& ToolName)
+	{
+		FString Suffix = SanitizeMcpToolIdForPath(ToolName);
+		Suffix.RemoveFromStart(TEXT("unreal_"));
+		TArray<FString> Parts;
+		Suffix.ParseIntoArray(Parts, TEXT("_"), true);
+		FString Result;
+		for (const FString& Part : Parts)
+		{
+			if (Part.IsEmpty())
+			{
+				continue;
+			}
+			FString CleanPart = Part.ToLower();
+			CleanPart[0] = FChar::ToUpper(CleanPart[0]);
+			Result += CleanPart;
+		}
+		return Result.IsEmpty() ? TEXT("GeneratedTool") : Result;
+	}
+
+	FString MakeCppBoolLiteral(bool bValue)
+	{
+		return bValue ? TEXT("true") : TEXT("false");
+	}
+
+	FString MakeMcpToolRiskEnumLiteral(const FString& RiskLevel)
+	{
+		if (RiskLevel == TEXT("read_only"))
+		{
+			return TEXT("EUnrealMcpToolRisk::ReadOnly");
+		}
+		if (RiskLevel == TEXT("medium"))
+		{
+			return TEXT("EUnrealMcpToolRisk::Medium");
+		}
+		if (RiskLevel == TEXT("high"))
+		{
+			return TEXT("EUnrealMcpToolRisk::High");
+		}
+		if (RiskLevel == TEXT("critical"))
+		{
+			return TEXT("EUnrealMcpToolRisk::Critical");
+		}
+		return TEXT("EUnrealMcpToolRisk::Low");
+	}
+
+	FString BuildMcpToolRegistrarFunctionSnippet(
+		const FString& ToolName,
+		const FString& Title,
+		const FString& Description,
+		const FString& Category,
+		const FString& SourceFile,
+		const FString& RiskLevel,
+		bool bRequiresWrite,
+		bool bRequiresBuild,
+		bool bRequiresExternalProcess,
+		bool bRequiresRestart,
+		bool bRequiresProjectMemory,
+		bool bRequiresLock,
+		bool bDryRunSupport)
+	{
+		const FString FunctionSuffix = MakeMcpGeneratedFunctionSuffix(ToolName);
+		return FString::Printf(
+			TEXT("// Apply to UnrealMcpToolRegistrar.cpp before RegisterAllMcpToolDescriptors.\n")
+			TEXT("void RegisterGenerated%sDescriptor(FUnrealMcpToolRegistrar& Registrar)\n")
+			TEXT("{\n")
+			TEXT("\tTSharedPtr<FJsonObject> Properties = MakeShared<FJsonObject>();\n")
+			TEXT("\tProperties->SetObjectField(TEXT(\"message\"), MakeStringProperty(TEXT(\"Message or payload for the tool.\"), FString()));\n")
+			TEXT("\tTSharedPtr<FJsonObject> Schema = MakeObjectSchema();\n")
+			TEXT("\tSchema->SetObjectField(TEXT(\"properties\"), Properties);\n\n")
+			TEXT("\tFUnrealMcpToolDescriptor Descriptor = MakeDescriptor(\n")
+			TEXT("\t\tTEXT(\"%s\"),\n")
+			TEXT("\t\tTEXT(\"%s\"),\n")
+			TEXT("\t\tTEXT(\"%s\"),\n")
+			TEXT("\t\tTEXT(\"%s\"),\n")
+			TEXT("\t\tTEXT(\"%s\"),\n")
+			TEXT("\t\t%s);\n")
+			TEXT("\tDescriptor.bRequiresWrite = %s;\n")
+			TEXT("\tDescriptor.bRequiresBuild = %s;\n")
+			TEXT("\tDescriptor.bRequiresExternalProcess = %s;\n")
+			TEXT("\tDescriptor.bRequiresRestart = %s;\n")
+			TEXT("\tDescriptor.bRequiresProjectMemory = %s;\n")
+			TEXT("\tDescriptor.bRequiresLock = %s;\n")
+			TEXT("\tDescriptor.bDryRunSupport = %s;\n")
+			TEXT("\tDescriptor.bPreflightSupport = Descriptor.bRequiresWrite || Descriptor.bRequiresBuild || Descriptor.bRequiresExternalProcess || Descriptor.bRequiresRestart || Descriptor.bRequiresProjectMemory || Descriptor.bRequiresLock;\n")
+			TEXT("\tDescriptor.bPostcheckSupport = Descriptor.bPreflightSupport;\n")
+			TEXT("\tRegistrar.Add(Descriptor, Schema);\n")
+			TEXT("}\n"),
+			*FunctionSuffix,
+			*EscapeForCppTextLiteral(ToolName),
+			*EscapeForCppTextLiteral(Title),
+			*EscapeForCppTextLiteral(Description),
+			*EscapeForCppTextLiteral(Category),
+			*EscapeForCppTextLiteral(SourceFile),
+			*MakeMcpToolRiskEnumLiteral(RiskLevel),
+			*MakeCppBoolLiteral(bRequiresWrite),
+			*MakeCppBoolLiteral(bRequiresBuild),
+			*MakeCppBoolLiteral(bRequiresExternalProcess),
+			*MakeCppBoolLiteral(bRequiresRestart),
+			*MakeCppBoolLiteral(bRequiresProjectMemory),
+			*MakeCppBoolLiteral(bRequiresLock),
+			*MakeCppBoolLiteral(bDryRunSupport));
+	}
+
+	FString BuildMcpToolRegistrarCallSnippet(const FString& ToolName)
+	{
+		return FString::Printf(
+			TEXT("// Apply inside RegisterAllMcpToolDescriptors after the relevant category registrar call.\n")
+			TEXT("RegisterGenerated%sDescriptor(Registrar);\n"),
+			*MakeMcpGeneratedFunctionSuffix(ToolName));
+	}
+
+	FString BuildMcpToolCategoryHandlerFunctionSnippet(const FString& ToolName, const FString& Title)
+	{
+		const FString FunctionSuffix = MakeMcpGeneratedFunctionSuffix(ToolName);
+		return FString::Printf(
+			TEXT("// Apply in the selected category source file before its TryExecute*Tool dispatcher.\n")
+			TEXT("FUnrealMcpExecutionResult ExecuteGenerated%sTool(const FString& ToolName, const FJsonObject& Arguments)\n")
+			TEXT("{\n")
+			TEXT("\tFString Message;\n")
+			TEXT("\tArguments.TryGetStringField(TEXT(\"message\"), Message);\n\n")
+			TEXT("\tTSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();\n")
+			TEXT("\tStructuredContent->SetStringField(TEXT(\"action\"), TEXT(\"%s\"));\n")
+			TEXT("\tStructuredContent->SetStringField(TEXT(\"toolName\"), ToolName);\n")
+			TEXT("\tStructuredContent->SetStringField(TEXT(\"message\"), Message);\n\n")
+			TEXT("\tFUnrealMcpExecutionResult Result;\n")
+			TEXT("\tResult.Text = FString::Printf(TEXT(\"%s completed. message=%%s\"), *Message);\n")
+			TEXT("\tResult.StructuredContent = StructuredContent;\n")
+			TEXT("\tResult.bIsError = false;\n")
+			TEXT("\treturn Result;\n")
+			TEXT("}\n"),
+			*FunctionSuffix,
+			*EscapeForCppTextLiteral(SanitizeMcpToolIdForPath(ToolName)),
+			*EscapeForCppTextLiteral(Title));
+	}
+
+	FString BuildMcpToolCategoryDispatcherBranchSnippet(const FString& ToolName)
+	{
+		return FString::Printf(
+			TEXT("// Apply near the top of the selected category TryExecute*Tool dispatcher.\n")
+			TEXT("if (ToolName == TEXT(\"%s\"))\n")
+			TEXT("{\n")
+			TEXT("\tOutResult = ExecuteGenerated%sTool(ToolName, Arguments);\n")
+			TEXT("\treturn true;\n")
+			TEXT("}\n"),
+			*EscapeForCppTextLiteral(ToolName),
+			*MakeMcpGeneratedFunctionSuffix(ToolName));
+	}
+
+	FString BuildMcpToolRegistryPatchJson(
+		const FString& ToolName,
+		const FString& Category,
+		const FString& RiskLevel,
+		bool bRequiresWrite,
+		bool bRequiresBuild,
+		bool bRequiresExternalProcess,
+		bool bRequiresRestart,
+		bool bRequiresProjectMemory,
+		bool bRequiresLock,
+		bool bDryRunSupport)
+	{
+		const bool bNeedsChecks = bRequiresWrite || bRequiresBuild || bRequiresExternalProcess || bRequiresRestart || bRequiresProjectMemory || bRequiresLock;
+		return FString::Printf(
+			TEXT("{\n")
+			TEXT("  \"name\": \"%s\",\n")
+			TEXT("  \"category\": \"%s\",\n")
+			TEXT("  \"handlerName\": \"%s\",\n")
+			TEXT("  \"exposure\": \"visible\",\n")
+			TEXT("  \"riskLevel\": \"%s\",\n")
+			TEXT("  \"requiresWrite\": %s,\n")
+			TEXT("  \"requiresBuild\": %s,\n")
+			TEXT("  \"requiresExternalProcess\": %s,\n")
+			TEXT("  \"requiresRestart\": %s,\n")
+			TEXT("  \"requiresProjectMemory\": %s,\n")
+			TEXT("  \"requiresLock\": %s,\n")
+			TEXT("  \"dryRunSupport\": %s,\n")
+			TEXT("  \"preflightSupport\": %s,\n")
+			TEXT("  \"postcheckSupport\": %s,\n")
+			TEXT("  \"testCoverage\": \"missing\",\n")
+			TEXT("  \"owner\": \"UEvolve Core\",\n")
+			TEXT("  \"docsPath\": \"README.md#tool-coverage\",\n")
+			TEXT("  \"reason\": \"Generated descriptor-first scaffold. Review before merging.\",\n")
+			TEXT("  \"notes\": \"Generated by unreal.scaffold_mcp_tool.\"\n")
+			TEXT("}\n"),
+			*ToolName,
+			*Category,
+			*ToolName,
+			*RiskLevel,
+			*MakeCppBoolLiteral(bRequiresWrite),
+			*MakeCppBoolLiteral(bRequiresBuild),
+			*MakeCppBoolLiteral(bRequiresExternalProcess),
+			*MakeCppBoolLiteral(bRequiresRestart),
+			*MakeCppBoolLiteral(bRequiresProjectMemory),
+			*MakeCppBoolLiteral(bRequiresLock),
+			*MakeCppBoolLiteral(bDryRunSupport),
+			*MakeCppBoolLiteral(bNeedsChecks),
+			*MakeCppBoolLiteral(bNeedsChecks));
+	}
+
 		FUnrealMcpExecutionResult ScaffoldMcpTool(const FJsonObject& Arguments)
 		{
 			FString ToolName;
@@ -1013,16 +1309,36 @@ namespace UnrealMcp
 		FString ArgumentSchemaJson;
 		FString ExampleArgumentsJson;
 		FString ImplementationNotes;
+		FString Category;
+		FString RiskLevel;
 		bool bOverwrite = false;
 		bool bIncludeChatCommandSnippet = true;
+		bool bIncludeLegacyCompatibility = false;
+		bool bRequiresWrite = false;
+		bool bRequiresBuild = false;
+		bool bRequiresExternalProcess = false;
+		bool bRequiresRestart = false;
+		bool bRequiresProjectMemory = false;
+		bool bRequiresLock = false;
+		bool bDryRunSupport = false;
 		Arguments.TryGetStringField(TEXT("title"), Title);
 		Arguments.TryGetStringField(TEXT("description"), Description);
 		Arguments.TryGetStringField(TEXT("outputRoot"), OutputRoot);
 		Arguments.TryGetStringField(TEXT("argumentSchemaJson"), ArgumentSchemaJson);
 		Arguments.TryGetStringField(TEXT("exampleArgumentsJson"), ExampleArgumentsJson);
 		Arguments.TryGetStringField(TEXT("implementationNotes"), ImplementationNotes);
+		Arguments.TryGetStringField(TEXT("category"), Category);
+		Arguments.TryGetStringField(TEXT("riskLevel"), RiskLevel);
 		Arguments.TryGetBoolField(TEXT("overwrite"), bOverwrite);
 		Arguments.TryGetBoolField(TEXT("includeChatCommandSnippet"), bIncludeChatCommandSnippet);
+		Arguments.TryGetBoolField(TEXT("includeLegacyCompatibility"), bIncludeLegacyCompatibility);
+		Arguments.TryGetBoolField(TEXT("requiresWrite"), bRequiresWrite);
+		Arguments.TryGetBoolField(TEXT("requiresBuild"), bRequiresBuild);
+		Arguments.TryGetBoolField(TEXT("requiresExternalProcess"), bRequiresExternalProcess);
+		Arguments.TryGetBoolField(TEXT("requiresRestart"), bRequiresRestart);
+		Arguments.TryGetBoolField(TEXT("requiresProjectMemory"), bRequiresProjectMemory);
+		Arguments.TryGetBoolField(TEXT("requiresLock"), bRequiresLock);
+		Arguments.TryGetBoolField(TEXT("dryRunSupport"), bDryRunSupport);
 
 		if (Title.TrimStartAndEnd().IsEmpty())
 		{
@@ -1040,6 +1356,12 @@ namespace UnrealMcp
 		{
 			ExampleArgumentsJson = TEXT("{\"message\":\"hello\"}");
 		}
+		Category = NormalizeMcpToolCategory(Category);
+		RiskLevel = NormalizeMcpToolRiskLevel(RiskLevel);
+		if (bRequiresWrite && RiskLevel == TEXT("read_only"))
+		{
+			RiskLevel = TEXT("medium");
+		}
 
 		FString ResolvedOutputRoot;
 		FString FailureReason;
@@ -1050,10 +1372,71 @@ namespace UnrealMcp
 
 		const FString ToolId = SanitizeMcpToolIdForPath(ToolName);
 		const FString ToolDirectory = FPaths::Combine(ResolvedOutputRoot, ToolId);
+		const FString CategorySourceFile = GetMcpToolCategorySourceFile(Category);
+		const FString TryExecuteName = GetMcpToolCategoryTryExecuteName(Category);
 
 		const FString DefinitionSnippet = BuildMcpToolDefinitionSnippet(ToolName, Title, Description);
 		const FString HandlerSnippet = BuildMcpToolHandlerSnippet(ToolName, Title);
 		const FString ChatCommandSnippet = BuildMcpToolChatCommandSnippet(ToolName);
+		const FString RegistrarFunctionSnippet = BuildMcpToolRegistrarFunctionSnippet(
+			ToolName,
+			Title,
+			Description,
+			Category,
+			CategorySourceFile,
+			RiskLevel,
+			bRequiresWrite,
+			bRequiresBuild,
+			bRequiresExternalProcess,
+			bRequiresRestart,
+			bRequiresProjectMemory,
+			bRequiresLock,
+			bDryRunSupport);
+		const FString RegistrarCallSnippet = BuildMcpToolRegistrarCallSnippet(ToolName);
+		const FString CategoryHandlerFunctionSnippet = BuildMcpToolCategoryHandlerFunctionSnippet(ToolName, Title);
+		const FString CategoryDispatcherBranchSnippet = BuildMcpToolCategoryDispatcherBranchSnippet(ToolName);
+		const FString ToolRegistryPatchJson = BuildMcpToolRegistryPatchJson(
+			ToolName,
+			Category,
+			RiskLevel,
+			bRequiresWrite,
+			bRequiresBuild,
+			bRequiresExternalProcess,
+			bRequiresRestart,
+			bRequiresProjectMemory,
+			bRequiresLock,
+			bDryRunSupport);
+		const FString ScaffoldMetadata = FString::Printf(
+			TEXT("{\n")
+			TEXT("  \"schemaVersion\": 1,\n")
+			TEXT("  \"toolName\": \"%s\",\n")
+			TEXT("  \"toolId\": \"%s\",\n")
+			TEXT("  \"category\": \"%s\",\n")
+			TEXT("  \"riskLevel\": \"%s\",\n")
+			TEXT("  \"categorySourceFile\": \"%s\",\n")
+			TEXT("  \"categoryTryExecute\": \"%s\",\n")
+			TEXT("  \"descriptorFirst\": true,\n")
+			TEXT("  \"requiresWrite\": %s,\n")
+			TEXT("  \"requiresBuild\": %s,\n")
+			TEXT("  \"requiresExternalProcess\": %s,\n")
+			TEXT("  \"requiresRestart\": %s,\n")
+			TEXT("  \"requiresProjectMemory\": %s,\n")
+			TEXT("  \"requiresLock\": %s,\n")
+			TEXT("  \"dryRunSupport\": %s\n")
+			TEXT("}\n"),
+			*ToolName,
+			*ToolId,
+			*Category,
+			*RiskLevel,
+			*CategorySourceFile,
+			*TryExecuteName,
+			*MakeCppBoolLiteral(bRequiresWrite),
+			*MakeCppBoolLiteral(bRequiresBuild),
+			*MakeCppBoolLiteral(bRequiresExternalProcess),
+			*MakeCppBoolLiteral(bRequiresRestart),
+			*MakeCppBoolLiteral(bRequiresProjectMemory),
+			*MakeCppBoolLiteral(bRequiresLock),
+			*MakeCppBoolLiteral(bDryRunSupport));
 		const FString TestRequest = FString::Printf(
 			TEXT("{\n")
 			TEXT("  \"jsonrpc\": \"2.0\",\n")
@@ -1072,8 +1455,17 @@ namespace UnrealMcp
 			TEXT("Tool name: `%s`\n\n")
 			TEXT("Title: `%s`\n\n")
 			TEXT("Description: %s\n\n")
+			TEXT("Category: `%s`\n\n")
+			TEXT("Risk: `%s`\n\n")
 			TEXT("## Important\n\n")
-			TEXT("This scaffold does not hot-load a C++ MCP tool into the running editor. Review the snippets, integrate them into `Plugins/UnrealMcp/Source/UnrealMcp/Private/UnrealMcpModule.cpp`, rebuild the current `<ProjectName>Editor` target, and restart Unreal Editor if needed.\n\n")
+			TEXT("This scaffold does not hot-load a C++ MCP tool into the running editor. Review the descriptor-first patch files, apply them through `unreal.mcp_apply_scaffold`, rebuild the current `<ProjectName>Editor` target, and restart Unreal Editor if needed.\n\n")
+			TEXT("Descriptor-first patch files:\n\n")
+			TEXT("- `ToolRegistrar.patch.cpp`\n")
+			TEXT("- `ToolRegistrarCall.patch.cpp`\n")
+			TEXT("- `CategoryHandlerFunction.patch.cpp`\n")
+			TEXT("- `CategoryDispatcherBranch.patch.cpp`\n")
+			TEXT("- `ToolRegistryPatch.json`\n\n")
+			TEXT("Legacy `ToolDefinition` / `ExecuteToolHandler` fragments are no longer the default path and should not be used for new tools.\n\n")
 			TEXT("## Requested Argument Schema\n\n")
 			TEXT("```json\n%s\n```\n\n")
 			TEXT("## Example Arguments\n\n")
@@ -1084,27 +1476,82 @@ namespace UnrealMcp
 			*ToolName,
 			*Title,
 			*Description,
+			*Category,
+			*RiskLevel,
 			*ArgumentSchemaJson,
 			*ExampleArgumentsJson,
 			ImplementationNotes.TrimStartAndEnd().IsEmpty() ? TEXT("- Add validation, editor safety checks, structured content, docs, and tests before shipping.") : *ImplementationNotes);
 
 		const FString Checklist = FString::Printf(
 			TEXT("# Integration Checklist\n\n")
-			TEXT("- Add `ToolDefinition.cpp.snippet` to `FUnrealMcpModule::AppendToolDefinitions`.\n")
-			TEXT("- Add `ExecuteToolHandler.cpp.snippet` to `FUnrealMcpModule::ExecuteTool`.\n")
-			TEXT("- Optionally add `ChatCommand.cpp.snippet` to `FUnrealMcpModule::ExecuteChatCommand`.\n")
+			TEXT("- Run `unreal.mcp_apply_scaffold` dryRun first; it applies descriptor, handler, dispatcher, and ToolRegistry patches together.\n")
+			TEXT("- `ToolRegistrar.patch.cpp` targets `UnrealMcpToolRegistrar.cpp` before `RegisterAllMcpToolDescriptors`.\n")
+			TEXT("- `ToolRegistrarCall.patch.cpp` targets `RegisterAllMcpToolDescriptors`.\n")
+			TEXT("- `CategoryHandlerFunction.patch.cpp` targets `%s` before `%s`.\n")
+			TEXT("- `CategoryDispatcherBranch.patch.cpp` targets `%s`.\n")
+			TEXT("- `ToolRegistryPatch.json` is merged into `Tools/UnrealMcpToolRegistry/tools.json` and mirrored to plugin resources.\n")
+			TEXT("- Optionally apply `ChatCommand.patch.cpp` to `FUnrealMcpModule::ExecuteChatCommand`.\n")
 			TEXT("- Add a short example to `Plugins/UnrealMcp/README.md`.\n")
+			TEXT("- Run `python3 Tools/validate_tool_registry.py`.\n")
 			TEXT("- Rebuild the current `<ProjectName>Editor` target.\n")
 			TEXT("- Start Unreal Editor and call `/tool %s %s` from Unreal MCP Chat.\n")
 			TEXT("- Verify `tools/list` includes `%s`.\n"),
+			*CategorySourceFile,
+			*TryExecuteName,
+			*TryExecuteName,
 			*ToolName,
 			*ExampleArgumentsJson,
 			*ToolName);
 
+		const FString ExtensionReport = FString::Printf(
+			TEXT("# Extension Report: %s\n\n")
+			TEXT("## Summary\n\n")
+			TEXT("- Tool: `%s`\n")
+			TEXT("- Category: `%s`\n")
+			TEXT("- Handler: `%s`\n")
+			TEXT("- Category source: `%s`\n")
+			TEXT("- Risk: `%s`\n")
+			TEXT("- Requires write/build/process/restart/memory/lock: `%s/%s/%s/%s/%s/%s`\n\n")
+			TEXT("## Generated Integration Files\n\n")
+			TEXT("- `ToolRegistrar.patch.cpp`\n")
+			TEXT("- `ToolRegistrarCall.patch.cpp`\n")
+			TEXT("- `CategoryHandlerFunction.patch.cpp`\n")
+			TEXT("- `CategoryDispatcherBranch.patch.cpp`\n")
+			TEXT("- `ToolRegistryPatch.json`\n")
+			TEXT("- `TestRequest.json`\n")
+			TEXT("- `IntegrationChecklist.md`\n\n")
+			TEXT("## Required Gates\n\n")
+			TEXT("- preview_change_plan\n")
+			TEXT("- mcp_validate_tool_schema\n")
+			TEXT("- mcp_apply_scaffold dryRun/apply descriptor-first patches\n")
+			TEXT("- mcp_build_editor\n")
+			TEXT("- mcp_run_test_suite\n")
+			TEXT("- verify_task_outcome\n\n")
+			TEXT("## Review Notes\n\n")
+			TEXT("%s\n"),
+			*ToolId,
+			*ToolName,
+			*Category,
+			*ToolName,
+			*CategorySourceFile,
+			*RiskLevel,
+			*MakeCppBoolLiteral(bRequiresWrite),
+			*MakeCppBoolLiteral(bRequiresBuild),
+			*MakeCppBoolLiteral(bRequiresExternalProcess),
+			*MakeCppBoolLiteral(bRequiresRestart),
+			*MakeCppBoolLiteral(bRequiresProjectMemory),
+			*MakeCppBoolLiteral(bRequiresLock),
+			ImplementationNotes.TrimStartAndEnd().IsEmpty() ? TEXT("- No custom notes provided.") : *ImplementationNotes);
+
 		TArray<TSharedPtr<FJsonValue>> Files;
 		if (!WriteMcpScaffoldFile(FPaths::Combine(ToolDirectory, TEXT("README.md")), Readme, bOverwrite, Files, FailureReason)
-			|| !WriteMcpScaffoldFile(FPaths::Combine(ToolDirectory, TEXT("ToolDefinition.cpp.snippet")), DefinitionSnippet, bOverwrite, Files, FailureReason)
-			|| !WriteMcpScaffoldFile(FPaths::Combine(ToolDirectory, TEXT("ExecuteToolHandler.cpp.snippet")), HandlerSnippet, bOverwrite, Files, FailureReason)
+			|| !WriteMcpScaffoldFile(FPaths::Combine(ToolDirectory, TEXT("ScaffoldMetadata.json")), ScaffoldMetadata, bOverwrite, Files, FailureReason)
+			|| !WriteMcpScaffoldFile(FPaths::Combine(ToolDirectory, TEXT("ToolRegistrar.patch.cpp")), RegistrarFunctionSnippet, bOverwrite, Files, FailureReason)
+			|| !WriteMcpScaffoldFile(FPaths::Combine(ToolDirectory, TEXT("ToolRegistrarCall.patch.cpp")), RegistrarCallSnippet, bOverwrite, Files, FailureReason)
+			|| !WriteMcpScaffoldFile(FPaths::Combine(ToolDirectory, TEXT("CategoryHandlerFunction.patch.cpp")), CategoryHandlerFunctionSnippet, bOverwrite, Files, FailureReason)
+			|| !WriteMcpScaffoldFile(FPaths::Combine(ToolDirectory, TEXT("CategoryDispatcherBranch.patch.cpp")), CategoryDispatcherBranchSnippet, bOverwrite, Files, FailureReason)
+			|| !WriteMcpScaffoldFile(FPaths::Combine(ToolDirectory, TEXT("ToolRegistryPatch.json")), ToolRegistryPatchJson, bOverwrite, Files, FailureReason)
+			|| !WriteMcpScaffoldFile(FPaths::Combine(ToolDirectory, TEXT("ExtensionReport.md")), ExtensionReport, bOverwrite, Files, FailureReason)
 			|| !WriteMcpScaffoldFile(FPaths::Combine(ToolDirectory, TEXT("TestRequest.json")), TestRequest, bOverwrite, Files, FailureReason)
 			|| !WriteMcpScaffoldFile(FPaths::Combine(ToolDirectory, TEXT("IntegrationChecklist.md")), Checklist, bOverwrite, Files, FailureReason))
 		{
@@ -1112,20 +1559,35 @@ namespace UnrealMcp
 		}
 
 		if (bIncludeChatCommandSnippet
-			&& !WriteMcpScaffoldFile(FPaths::Combine(ToolDirectory, TEXT("ChatCommand.cpp.snippet")), ChatCommandSnippet, bOverwrite, Files, FailureReason))
+			&& !WriteMcpScaffoldFile(FPaths::Combine(ToolDirectory, TEXT("ChatCommand.patch.cpp")), ChatCommandSnippet, bOverwrite, Files, FailureReason))
 		{
 			return MakeExecutionResult(FailureReason, nullptr, true);
 		}
 
+		if (bIncludeLegacyCompatibility)
+		{
+			if (!WriteMcpScaffoldFile(FPaths::Combine(ToolDirectory, TEXT("LegacyToolDefinition.legacy.cpp")), DefinitionSnippet, bOverwrite, Files, FailureReason)
+				|| !WriteMcpScaffoldFile(FPaths::Combine(ToolDirectory, TEXT("LegacyExecuteToolHandler.legacy.cpp")), HandlerSnippet, bOverwrite, Files, FailureReason))
+			{
+				return MakeExecutionResult(FailureReason, nullptr, true);
+			}
+		}
+
 		TArray<TSharedPtr<FJsonValue>> NextSteps;
-		AddNextStep(NextSteps, TEXT("Review generated snippets before integrating them into the plugin source."));
+		AddNextStep(NextSteps, TEXT("Review descriptor-first patch files before integrating them into the plugin source."));
+		AddNextStep(NextSteps, TEXT("Run unreal.mcp_apply_scaffold dryRun, then apply; it will merge ToolRegistryPatch.json and source patches together."));
 		AddNextStep(NextSteps, TEXT("Prefer fixed JSON schemas; avoid additionalProperties=true when the tool should be visible to OpenAI function calling."));
-		AddNextStep(NextSteps, TEXT("Rebuild the current <ProjectName>Editor target after integrating the C++ snippets."));
+		AddNextStep(NextSteps, TEXT("Rebuild the current <ProjectName>Editor target after applying the descriptor-first patches."));
 
 		TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
 		StructuredContent->SetStringField(TEXT("action"), TEXT("scaffold_mcp_tool"));
 		StructuredContent->SetStringField(TEXT("toolName"), ToolName);
 		StructuredContent->SetStringField(TEXT("toolId"), ToolId);
+		StructuredContent->SetStringField(TEXT("category"), Category);
+		StructuredContent->SetStringField(TEXT("riskLevel"), RiskLevel);
+		StructuredContent->SetStringField(TEXT("categorySourceFile"), CategorySourceFile);
+		StructuredContent->SetStringField(TEXT("categoryTryExecute"), TryExecuteName);
+		StructuredContent->SetBoolField(TEXT("descriptorFirst"), true);
 		StructuredContent->SetStringField(TEXT("directory"), ToolDirectory);
 		StructuredContent->SetArrayField(TEXT("files"), Files);
 		StructuredContent->SetArrayField(TEXT("nextSteps"), NextSteps);

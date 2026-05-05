@@ -55,6 +55,123 @@ namespace UnrealMcp
 				return MakeExecutionResult(FString::Printf(TEXT("Manifest '%s' is not valid JSON."), *ResolvedManifestPath), nullptr, true);
 			}
 
+			const TArray<TSharedPtr<FJsonValue>>* ManifestFiles = nullptr;
+			if (ManifestObject->TryGetArrayField(TEXT("files"), ManifestFiles) && ManifestFiles && ManifestFiles->Num() > 0)
+			{
+				FString ToolName;
+				ManifestObject->TryGetStringField(TEXT("toolName"), ToolName);
+
+				TArray<TSharedPtr<FJsonValue>> FileResults;
+				bool bAllHashesMatch = true;
+				FString FileFailureReason;
+				for (const TSharedPtr<FJsonValue>& FileValue : *ManifestFiles)
+				{
+					TSharedPtr<FJsonObject> FileObject = FileValue.IsValid() ? FileValue->AsObject() : nullptr;
+					if (!FileObject.IsValid())
+					{
+						continue;
+					}
+
+					FString SourcePath;
+					FString BackupPath;
+					FString ExpectedAfterHash;
+					FileObject->TryGetStringField(TEXT("sourcePath"), SourcePath);
+					FileObject->TryGetStringField(TEXT("backupPath"), BackupPath);
+					FileObject->TryGetStringField(TEXT("hashAfter"), ExpectedAfterHash);
+
+					FString ResolvedSourcePath;
+					FString ResolvedBackupPath;
+					if (!ResolveProjectPathInsideProject(SourcePath, ResolvedSourcePath, FileFailureReason)
+						|| !ResolveProjectPathInsideProject(BackupPath, ResolvedBackupPath, FileFailureReason))
+					{
+						return MakeExecutionResult(FileFailureReason, nullptr, true);
+					}
+
+					FString CurrentSourceText;
+					FString BackupSourceText;
+					if (!FFileHelper::LoadFileToString(CurrentSourceText, *ResolvedSourcePath))
+					{
+						return MakeExecutionResult(FString::Printf(TEXT("Failed to read current source '%s'."), *ResolvedSourcePath), nullptr, true);
+					}
+					if (!FFileHelper::LoadFileToString(BackupSourceText, *ResolvedBackupPath))
+					{
+						return MakeExecutionResult(FString::Printf(TEXT("Failed to read backup source '%s'."), *ResolvedBackupPath), nullptr, true);
+					}
+
+					const FString CurrentHash = HashTextForManifest(CurrentSourceText);
+					const FString BackupHash = HashTextForManifest(BackupSourceText);
+					const bool bHashMatches = ExpectedAfterHash.IsEmpty() || CurrentHash == ExpectedAfterHash;
+					bAllHashesMatch &= bHashMatches;
+
+					TSharedPtr<FJsonObject> FileResult = MakeShared<FJsonObject>();
+					FileResult->SetStringField(TEXT("sourcePath"), ResolvedSourcePath);
+					FileResult->SetStringField(TEXT("backupPath"), ResolvedBackupPath);
+					FileResult->SetStringField(TEXT("currentHash"), CurrentHash);
+					FileResult->SetStringField(TEXT("expectedAfterHash"), ExpectedAfterHash);
+					FileResult->SetStringField(TEXT("backupHash"), BackupHash);
+					FileResult->SetBoolField(TEXT("hashMatchesExpectedAfter"), bHashMatches);
+					FileResults.Add(MakeShared<FJsonValueObject>(FileResult));
+				}
+
+				TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+				StructuredContent->SetStringField(TEXT("action"), TEXT("mcp_rollback_last_extension"));
+				StructuredContent->SetStringField(TEXT("applyMode"), TEXT("descriptor_first"));
+				StructuredContent->SetStringField(TEXT("toolName"), ToolName);
+				StructuredContent->SetStringField(TEXT("manifestPath"), ResolvedManifestPath);
+				StructuredContent->SetBoolField(TEXT("dryRun"), bDryRun);
+				StructuredContent->SetBoolField(TEXT("force"), bForce);
+				StructuredContent->SetBoolField(TEXT("hashMatchesExpectedAfter"), bAllHashesMatch);
+				StructuredContent->SetArrayField(TEXT("files"), FileResults);
+
+				if (!bAllHashesMatch && !bForce)
+				{
+					return MakeExecutionResult(
+						TEXT("Rollback refused because one or more current source hashes differ from the applied manifest. Pass force=true to override."),
+						StructuredContent,
+						true);
+				}
+
+				if (bDryRun)
+				{
+					return MakeExecutionResult(
+						FString::Printf(TEXT("Dry run rollback for %s would restore %d files."), ToolName.IsEmpty() ? TEXT("<unknown>") : *ToolName, FileResults.Num()),
+						StructuredContent,
+						false);
+				}
+
+				for (const TSharedPtr<FJsonValue>& FileValue : FileResults)
+				{
+					TSharedPtr<FJsonObject> FileObject = FileValue.IsValid() ? FileValue->AsObject() : nullptr;
+					if (!FileObject.IsValid())
+					{
+						continue;
+					}
+
+					FString SourcePath;
+					FString BackupPath;
+					FileObject->TryGetStringField(TEXT("sourcePath"), SourcePath);
+					FileObject->TryGetStringField(TEXT("backupPath"), BackupPath);
+					FString BackupSourceText;
+					if (!FFileHelper::LoadFileToString(BackupSourceText, *BackupPath)
+						|| !FFileHelper::SaveStringToFile(BackupSourceText, *SourcePath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+					{
+						return MakeExecutionResult(FString::Printf(TEXT("Failed to restore source file '%s'."), *SourcePath), StructuredContent, true);
+					}
+				}
+
+				ManifestObject->SetStringField(TEXT("rolledBackAtUtc"), FDateTime::UtcNow().ToIso8601());
+				ManifestObject->SetBoolField(TEXT("rolledBack"), true);
+				FString ManifestFailure;
+				SaveJsonObjectToFile(ManifestObject, ResolvedManifestPath, ManifestFailure);
+				SaveJsonObjectToFile(ManifestObject, GetLatestMcpExtensionManifestPath(), ManifestFailure);
+
+				StructuredContent->SetBoolField(TEXT("rolledBack"), true);
+				return MakeExecutionResult(
+					FString::Printf(TEXT("Rolled back descriptor-first MCP extension for %s."), ToolName.IsEmpty() ? TEXT("<unknown>") : *ToolName),
+					StructuredContent,
+					false);
+			}
+
 			FString ToolName;
 			FString SourcePath;
 			FString BackupSourcePath;

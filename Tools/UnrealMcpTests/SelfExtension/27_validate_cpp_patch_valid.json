@@ -1,0 +1,21 @@
+{
+  "name": "validate_cpp_patch_valid",
+  "description": "Validate a descriptor-first C++ patch fixture through the primary patch tool name.",
+  "category": "happy_path",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": false,
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 327,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.mcp_validate_cpp_patch",
+      "arguments": {
+        "toolName": "unreal.registry_patch_fixture",
+        "scaffoldDir": "Tools/UnrealMcpTests/Fixtures/PatchScaffold",
+        "patchName": "CategoryHandlerFunction.patch.cpp"
+      }
+    }
+  }
+}

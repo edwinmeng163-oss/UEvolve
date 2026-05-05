@@ -228,13 +228,15 @@ namespace UnrealMcp
 			return true;
 		}
 
-		if (ToolName == TEXT("unreal.mcp_validate_cpp_snippet"))
+		if (ToolName == TEXT("unreal.mcp_validate_cpp_patch")
+			|| ToolName == TEXT("unreal.mcp_validate_cpp_snippet"))
 		{
 			OutResult = ValidateCppSnippet(Arguments);
 			return true;
 		}
 
-		if (ToolName == TEXT("unreal.mcp_patch_scaffold_snippet"))
+		if (ToolName == TEXT("unreal.mcp_patch_scaffold_patch")
+			|| ToolName == TEXT("unreal.mcp_patch_scaffold_snippet"))
 		{
 			OutResult = IsEditorPlaying() ? MakePieBlockedResult(ToolName) : PatchScaffoldSnippet(Arguments);
 			return true;

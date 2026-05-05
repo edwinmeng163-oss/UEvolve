@@ -62,7 +62,7 @@ namespace UnrealMcp
 			}
 			if (ToolName.Contains(TEXT("mcp_")) || ToolName.Contains(TEXT("scaffold")))
 			{
-				Areas.Add(TEXT("MCP source snippets, generated tests, manifests, or supervisor files"));
+				Areas.Add(TEXT("MCP source patches, generated tests, manifests, or supervisor files"));
 			}
 			if (Policy.bRequiresBuild)
 			{

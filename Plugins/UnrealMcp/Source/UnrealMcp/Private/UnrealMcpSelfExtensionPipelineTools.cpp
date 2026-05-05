@@ -45,7 +45,7 @@ FUnrealMcpExecutionResult FUnrealMcpModule::RunMcpExtensionPipeline(const FJsonO
 	bool bGenerateTests = true;
 	bool bOverwriteTests = true;
 	bool bDryRunOnly = false;
-	bool bApplyChatCommand = true;
+	bool bApplyChatCommand = false;
 	bool bCreateBackup = true;
 	bool bBackupProjectState = true;
 	bool bWriteProjectMemory = true;
@@ -527,7 +527,7 @@ FUnrealMcpExecutionResult FUnrealMcpModule::RunMcpExtensionPipeline(const FJsonO
 		Steps.Add(MakeShared<FJsonValueObject>(UnrealMcp::MakePipelineStepObject(
 			TEXT("restart"),
 			TEXT("required"),
-			TEXT("New C++ snippets were compiled while the editor was running. Restart Unreal Editor before running the test step."))));
+			TEXT("New descriptor-first C++ patches were compiled while the editor was running. Restart Unreal Editor before running the test step."))));
 		Steps.Add(MakeShared<FJsonValueObject>(UnrealMcp::MakePipelineStepObject(
 			bRunTestSuite ? TEXT("test_suite") : TEXT("test"),
 			TEXT("deferred"),

@@ -317,7 +317,7 @@ namespace UnrealMcp
 				AddAuditIssue(Issues, bRequired ? TEXT("error") : TEXT("warning"), SnippetPath, TEXT("Snippet file is missing."));
 				if (bRequired)
 				{
-					OutFailureReason = FString::Printf(TEXT("Required snippet file is missing: %s"), *SnippetPath);
+					OutFailureReason = FString::Printf(TEXT("Required patch fragment is missing: %s"), *SnippetPath);
 					return false;
 				}
 				return true;
@@ -325,17 +325,17 @@ namespace UnrealMcp
 
 			if (!FFileHelper::LoadFileToString(OutSnippet, *SnippetPath))
 			{
-				AddAuditIssue(Issues, TEXT("error"), SnippetPath, TEXT("Failed to read snippet file."));
-				OutFailureReason = FString::Printf(TEXT("Failed to read snippet file: %s"), *SnippetPath);
+				AddAuditIssue(Issues, TEXT("error"), SnippetPath, TEXT("Failed to read patch fragment."));
+				OutFailureReason = FString::Printf(TEXT("Failed to read patch fragment: %s"), *SnippetPath);
 				return false;
 			}
 
 			if (OutSnippet.TrimStartAndEnd().IsEmpty())
 			{
-				AddAuditIssue(Issues, bRequired ? TEXT("error") : TEXT("warning"), SnippetPath, TEXT("Snippet file is empty."));
+				AddAuditIssue(Issues, bRequired ? TEXT("error") : TEXT("warning"), SnippetPath, TEXT("Patch fragment is empty."));
 				if (bRequired)
 				{
-					OutFailureReason = FString::Printf(TEXT("Required snippet file is empty: %s"), *SnippetPath);
+					OutFailureReason = FString::Printf(TEXT("Required patch fragment is empty: %s"), *SnippetPath);
 					return false;
 				}
 			}
@@ -347,31 +347,69 @@ namespace UnrealMcp
 		bool CanonicalizeScaffoldSnippetName(const FString& SnippetName, FString& OutSnippetName, FString& OutFailureReason)
 		{
 			const FString CleanName = SnippetName.TrimStartAndEnd();
-			if (CleanName.Equals(TEXT("ToolDefinition.cpp.snippet"), ESearchCase::IgnoreCase)
+			if (CleanName.Equals(TEXT("LegacyToolDefinition.legacy.cpp"), ESearchCase::IgnoreCase)
+				|| CleanName.Equals(TEXT("ToolDefinition.cpp.snippet"), ESearchCase::IgnoreCase)
 				|| CleanName.Equals(TEXT("tool_definition"), ESearchCase::IgnoreCase)
 				|| CleanName.Equals(TEXT("definition"), ESearchCase::IgnoreCase))
 			{
-				OutSnippetName = TEXT("ToolDefinition.cpp.snippet");
+				OutSnippetName = TEXT("LegacyToolDefinition.legacy.cpp");
 				return true;
 			}
 
-			if (CleanName.Equals(TEXT("ExecuteToolHandler.cpp.snippet"), ESearchCase::IgnoreCase)
+			if (CleanName.Equals(TEXT("LegacyExecuteToolHandler.legacy.cpp"), ESearchCase::IgnoreCase)
+				|| CleanName.Equals(TEXT("ExecuteToolHandler.cpp.snippet"), ESearchCase::IgnoreCase)
 				|| CleanName.Equals(TEXT("handler"), ESearchCase::IgnoreCase)
 				|| CleanName.Equals(TEXT("execute"), ESearchCase::IgnoreCase))
 			{
-				OutSnippetName = TEXT("ExecuteToolHandler.cpp.snippet");
+				OutSnippetName = TEXT("LegacyExecuteToolHandler.legacy.cpp");
 				return true;
 			}
 
-			if (CleanName.Equals(TEXT("ChatCommand.cpp.snippet"), ESearchCase::IgnoreCase)
+			if (CleanName.Equals(TEXT("ToolRegistrar.patch.cpp"), ESearchCase::IgnoreCase)
+				|| CleanName.Equals(TEXT("ToolRegistrar.cpp.snippet"), ESearchCase::IgnoreCase)
+				|| CleanName.Equals(TEXT("registrar"), ESearchCase::IgnoreCase)
+				|| CleanName.Equals(TEXT("tool_registrar"), ESearchCase::IgnoreCase))
+			{
+				OutSnippetName = TEXT("ToolRegistrar.patch.cpp");
+				return true;
+			}
+
+			if (CleanName.Equals(TEXT("ToolRegistrarCall.patch.cpp"), ESearchCase::IgnoreCase)
+				|| CleanName.Equals(TEXT("ToolRegistrarCall.cpp.snippet"), ESearchCase::IgnoreCase)
+				|| CleanName.Equals(TEXT("registrar_call"), ESearchCase::IgnoreCase))
+			{
+				OutSnippetName = TEXT("ToolRegistrarCall.patch.cpp");
+				return true;
+			}
+
+			if (CleanName.Equals(TEXT("CategoryHandlerFunction.patch.cpp"), ESearchCase::IgnoreCase)
+				|| CleanName.Equals(TEXT("CategoryHandlerFunction.cpp.snippet"), ESearchCase::IgnoreCase)
+				|| CleanName.Equals(TEXT("category_handler"), ESearchCase::IgnoreCase)
+				|| CleanName.Equals(TEXT("handler_function"), ESearchCase::IgnoreCase))
+			{
+				OutSnippetName = TEXT("CategoryHandlerFunction.patch.cpp");
+				return true;
+			}
+
+			if (CleanName.Equals(TEXT("CategoryDispatcherBranch.patch.cpp"), ESearchCase::IgnoreCase)
+				|| CleanName.Equals(TEXT("CategoryDispatcherBranch.cpp.snippet"), ESearchCase::IgnoreCase)
+				|| CleanName.Equals(TEXT("category_dispatcher"), ESearchCase::IgnoreCase)
+				|| CleanName.Equals(TEXT("dispatcher_branch"), ESearchCase::IgnoreCase))
+			{
+				OutSnippetName = TEXT("CategoryDispatcherBranch.patch.cpp");
+				return true;
+			}
+
+			if (CleanName.Equals(TEXT("ChatCommand.patch.cpp"), ESearchCase::IgnoreCase)
+				|| CleanName.Equals(TEXT("ChatCommand.cpp.snippet"), ESearchCase::IgnoreCase)
 				|| CleanName.Equals(TEXT("chat"), ESearchCase::IgnoreCase)
 				|| CleanName.Equals(TEXT("chat_command"), ESearchCase::IgnoreCase))
 			{
-				OutSnippetName = TEXT("ChatCommand.cpp.snippet");
+				OutSnippetName = TEXT("ChatCommand.patch.cpp");
 				return true;
 			}
 
-			OutFailureReason = TEXT("snippetName must be one of ToolDefinition.cpp.snippet, ExecuteToolHandler.cpp.snippet, or ChatCommand.cpp.snippet.");
+			OutFailureReason = TEXT("snippetName must be one of ToolRegistrar.patch.cpp, ToolRegistrarCall.patch.cpp, CategoryHandlerFunction.patch.cpp, CategoryDispatcherBranch.patch.cpp, ChatCommand.patch.cpp, or legacy fragments LegacyToolDefinition.legacy.cpp / LegacyExecuteToolHandler.legacy.cpp.");
 			return false;
 		}
 
@@ -427,11 +465,11 @@ namespace UnrealMcp
 			const FString TrimmedSnippet = SnippetText.TrimStartAndEnd();
 			if (TrimmedSnippet.IsEmpty())
 			{
-				AddIssue(TEXT("error"), TEXT("empty_snippet"), TEXT("Snippet text is empty."));
+				AddIssue(TEXT("error"), TEXT("empty_snippet"), TEXT("Patch fragment text is empty."));
 			}
 			if (SnippetText.Len() > 50000)
 			{
-				AddIssue(TEXT("warning"), TEXT("large_snippet"), TEXT("Snippet is larger than 50k characters; review before applying."));
+				AddIssue(TEXT("warning"), TEXT("large_snippet"), TEXT("Patch fragment is larger than 50k characters; review before applying."));
 			}
 
 			FString MatchedPattern;
@@ -513,42 +551,90 @@ namespace UnrealMcp
 				AddIssue(TEXT("warning"), TEXT("schema_flexibility"), TEXT("Snippet may introduce flexible object schema fields; validate OpenAI compatibility before applying."));
 			}
 
-			if (CleanSnippetName == TEXT("ExecuteToolHandler.cpp.snippet"))
+			if (CleanSnippetName == TEXT("LegacyExecuteToolHandler.legacy.cpp"))
 			{
 				if (!SnippetText.Contains(TEXT("return UnrealMcp::MakeExecutionResult"), ESearchCase::CaseSensitive)
 					&& !SnippetText.Contains(TEXT("return MakeExecutionResult"), ESearchCase::CaseSensitive))
 				{
-					AddIssue(TEXT("error"), TEXT("missing_make_execution_result"), TEXT("ExecuteTool handler snippet must return UnrealMcp::MakeExecutionResult or MakeExecutionResult."));
+					AddIssue(TEXT("error"), TEXT("missing_make_execution_result"), TEXT("Legacy ExecuteTool handler fragment must return UnrealMcp::MakeExecutionResult or MakeExecutionResult."));
 				}
 				if (!CleanToolName.IsEmpty() && !SnippetText.Contains(FString::Printf(TEXT("TEXT(\"%s\")"), *CleanToolName), ESearchCase::CaseSensitive))
 				{
-					AddIssue(TEXT("warning"), TEXT("missing_tool_name_literal"), TEXT("ExecuteTool handler snippet does not contain the expected tool name literal."));
+					AddIssue(TEXT("warning"), TEXT("missing_tool_name_literal"), TEXT("Legacy ExecuteTool handler fragment does not contain the expected tool name literal."));
 				}
 			}
-			else if (CleanSnippetName == TEXT("ToolDefinition.cpp.snippet"))
+			else if (CleanSnippetName == TEXT("LegacyToolDefinition.legacy.cpp"))
 			{
 				if (!SnippetText.Contains(TEXT("AddToolDefinition"), ESearchCase::CaseSensitive))
 				{
-					AddIssue(TEXT("error"), TEXT("missing_add_tool_definition"), TEXT("Tool definition snippet must call UnrealMcp::AddToolDefinition."));
+					AddIssue(TEXT("error"), TEXT("missing_add_tool_definition"), TEXT("Legacy tool definition fragment must call UnrealMcp::AddToolDefinition."));
 				}
 				if (!SnippetText.Contains(TEXT("MakeObjectSchema"), ESearchCase::CaseSensitive))
 				{
-					AddIssue(TEXT("error"), TEXT("missing_object_schema"), TEXT("Tool definition snippet should build a fixed object schema with MakeObjectSchema."));
+					AddIssue(TEXT("error"), TEXT("missing_object_schema"), TEXT("Legacy tool definition fragment should build a fixed object schema with MakeObjectSchema."));
 				}
 				if (!CleanToolName.IsEmpty() && !SnippetText.Contains(FString::Printf(TEXT("TEXT(\"%s\")"), *CleanToolName), ESearchCase::CaseSensitive))
 				{
-					AddIssue(TEXT("warning"), TEXT("missing_tool_name_literal"), TEXT("Tool definition snippet does not contain the expected tool name literal."));
+					AddIssue(TEXT("warning"), TEXT("missing_tool_name_literal"), TEXT("Legacy tool definition fragment does not contain the expected tool name literal."));
 				}
 			}
-			else if (CleanSnippetName == TEXT("ChatCommand.cpp.snippet"))
+			else if (CleanSnippetName == TEXT("ToolRegistrar.patch.cpp"))
+			{
+				if (!SnippetText.Contains(TEXT("FUnrealMcpToolDescriptor"), ESearchCase::CaseSensitive)
+					|| !SnippetText.Contains(TEXT("Registrar.Add"), ESearchCase::CaseSensitive))
+				{
+					AddIssue(TEXT("error"), TEXT("missing_descriptor_registration"), TEXT("Tool registrar patch must build an FUnrealMcpToolDescriptor and call Registrar.Add."));
+				}
+				if (!SnippetText.Contains(TEXT("MakeObjectSchema"), ESearchCase::CaseSensitive))
+				{
+					AddIssue(TEXT("error"), TEXT("missing_object_schema"), TEXT("Tool registrar patch should build a fixed object schema with MakeObjectSchema."));
+				}
+				if (!CleanToolName.IsEmpty() && !SnippetText.Contains(FString::Printf(TEXT("TEXT(\"%s\")"), *CleanToolName), ESearchCase::CaseSensitive))
+				{
+					AddIssue(TEXT("warning"), TEXT("missing_tool_name_literal"), TEXT("Tool registrar patch does not contain the expected tool name literal."));
+				}
+			}
+			else if (CleanSnippetName == TEXT("ToolRegistrarCall.patch.cpp"))
+			{
+				if (!SnippetText.Contains(TEXT("RegisterGenerated"), ESearchCase::CaseSensitive)
+					|| !SnippetText.Contains(TEXT("Registrar"), ESearchCase::CaseSensitive))
+				{
+					AddIssue(TEXT("error"), TEXT("missing_registrar_call"), TEXT("Tool registrar call patch must call the generated descriptor registration helper."));
+				}
+			}
+			else if (CleanSnippetName == TEXT("CategoryHandlerFunction.patch.cpp"))
+			{
+				if (!SnippetText.Contains(TEXT("FUnrealMcpExecutionResult"), ESearchCase::CaseSensitive)
+					|| !SnippetText.Contains(TEXT("return Result"), ESearchCase::CaseSensitive))
+				{
+					AddIssue(TEXT("error"), TEXT("missing_execution_result"), TEXT("Category handler function patch must return FUnrealMcpExecutionResult."));
+				}
+				if (!CleanToolName.IsEmpty() && !SnippetText.Contains(FString::Printf(TEXT("TEXT(\"%s\")"), *SanitizeMcpToolIdForPath(CleanToolName)), ESearchCase::CaseSensitive))
+				{
+					AddIssue(TEXT("warning"), TEXT("missing_action_literal"), TEXT("Category handler function patch does not contain the expected sanitized action literal."));
+				}
+			}
+			else if (CleanSnippetName == TEXT("CategoryDispatcherBranch.patch.cpp"))
+			{
+				if (!SnippetText.Contains(TEXT("OutResult"), ESearchCase::CaseSensitive)
+					|| !SnippetText.Contains(TEXT("return true"), ESearchCase::CaseSensitive))
+				{
+					AddIssue(TEXT("error"), TEXT("missing_dispatch_result"), TEXT("Category dispatcher branch patch must assign OutResult and return true."));
+				}
+				if (!CleanToolName.IsEmpty() && !SnippetText.Contains(FString::Printf(TEXT("TEXT(\"%s\")"), *CleanToolName), ESearchCase::CaseSensitive))
+				{
+					AddIssue(TEXT("warning"), TEXT("missing_tool_name_literal"), TEXT("Category dispatcher branch patch does not contain the expected tool name literal."));
+				}
+			}
+			else if (CleanSnippetName == TEXT("ChatCommand.patch.cpp"))
 			{
 				if (!SnippetText.Contains(TEXT("ExecuteTool"), ESearchCase::CaseSensitive))
 				{
-					AddIssue(TEXT("warning"), TEXT("missing_execute_tool"), TEXT("Chat command snippet does not call ExecuteTool."));
+					AddIssue(TEXT("warning"), TEXT("missing_execute_tool"), TEXT("Chat command patch does not call ExecuteTool."));
 				}
 				if (!SnippetText.Contains(TEXT("return"), ESearchCase::CaseSensitive))
 				{
-					AddIssue(TEXT("warning"), TEXT("missing_return"), TEXT("Chat command snippet does not return a result."));
+					AddIssue(TEXT("warning"), TEXT("missing_return"), TEXT("Chat command patch does not return a result."));
 				}
 			}
 
@@ -566,11 +652,13 @@ namespace UnrealMcp
 		FUnrealMcpExecutionResult ValidateCppSnippet(const FJsonObject& Arguments)
 		{
 			FString SnippetText;
-			FString SnippetName = TEXT("ExecuteToolHandler.cpp.snippet");
+			FString SnippetName = TEXT("ToolRegistrar.patch.cpp");
 			FString ToolName;
 			FString ScaffoldDir;
 			FString OutputRoot;
+			Arguments.TryGetStringField(TEXT("patchText"), SnippetText);
 			Arguments.TryGetStringField(TEXT("snippetText"), SnippetText);
+			Arguments.TryGetStringField(TEXT("patchName"), SnippetName);
 			Arguments.TryGetStringField(TEXT("snippetName"), SnippetName);
 			Arguments.TryGetStringField(TEXT("toolName"), ToolName);
 			Arguments.TryGetStringField(TEXT("scaffoldDir"), ScaffoldDir);
@@ -605,21 +693,23 @@ namespace UnrealMcp
 				Source = TEXT("scaffoldFile");
 				if (!FFileHelper::LoadFileToString(SnippetText, *SnippetPath))
 				{
-					return MakeExecutionResult(FString::Printf(TEXT("Failed to read snippet '%s'."), *SnippetPath), nullptr, true);
+					return MakeExecutionResult(FString::Printf(TEXT("Failed to read patch fragment '%s'."), *SnippetPath), nullptr, true);
 				}
 			}
 
 			TSharedPtr<FJsonObject> StructuredContent = ValidateCppSnippetText(SnippetText, CanonicalSnippetName, ToolName);
-			StructuredContent->SetStringField(TEXT("action"), TEXT("mcp_validate_cpp_snippet"));
+			StructuredContent->SetStringField(TEXT("action"), TEXT("mcp_validate_cpp_patch"));
 			StructuredContent->SetStringField(TEXT("source"), Source);
 			if (!SnippetPath.IsEmpty())
 			{
+				StructuredContent->SetStringField(TEXT("patchPath"), SnippetPath);
 				StructuredContent->SetStringField(TEXT("snippetPath"), SnippetPath);
 			}
+			StructuredContent->SetStringField(TEXT("patchName"), CanonicalSnippetName);
 
 			const bool bSafe = StructuredContent->GetBoolField(TEXT("safe"));
 			return MakeExecutionResult(
-				FString::Printf(TEXT("C++ snippet validation for %s safe=%s errors=%d warnings=%d."),
+				FString::Printf(TEXT("C++ patch validation for %s safe=%s errors=%d warnings=%d."),
 					*CanonicalSnippetName,
 					bSafe ? TEXT("true") : TEXT("false"),
 					static_cast<int32>(StructuredContent->GetNumberField(TEXT("errorCount"))),
@@ -631,9 +721,11 @@ namespace UnrealMcp
 		FUnrealMcpExecutionResult PatchScaffoldSnippet(const FJsonObject& Arguments)
 		{
 			FString SnippetName;
-			if (!Arguments.TryGetStringField(TEXT("snippetName"), SnippetName) || SnippetName.TrimStartAndEnd().IsEmpty())
+			Arguments.TryGetStringField(TEXT("patchName"), SnippetName);
+			Arguments.TryGetStringField(TEXT("snippetName"), SnippetName);
+			if (SnippetName.TrimStartAndEnd().IsEmpty())
 			{
-				return MakeExecutionResult(TEXT("snippetName is required."), nullptr, true);
+				return MakeExecutionResult(TEXT("patchName is required."), nullptr, true);
 			}
 
 			FString CanonicalSnippetName;
@@ -669,7 +761,7 @@ namespace UnrealMcp
 			FString BeforeText;
 			if (!FFileHelper::LoadFileToString(BeforeText, *SnippetPath))
 			{
-				return MakeExecutionResult(FString::Printf(TEXT("Failed to read snippet '%s'."), *SnippetPath), nullptr, true);
+				return MakeExecutionResult(FString::Printf(TEXT("Failed to read patch fragment '%s'."), *SnippetPath), nullptr, true);
 			}
 
 			FString Mode;
@@ -735,7 +827,7 @@ namespace UnrealMcp
 					}
 					else
 					{
-						return MakeExecutionResult(TEXT("findText was not found and replaceText does not already appear in the snippet."), nullptr, true);
+						return MakeExecutionResult(TEXT("findText was not found and replaceText does not already appear in the patch fragment."), nullptr, true);
 					}
 				}
 				else if (bReplaceAll)
@@ -789,11 +881,13 @@ namespace UnrealMcp
 			TSharedPtr<FJsonObject> DiffObject = MakeTextDiffObject(BeforeText, AfterText, DiffPreviewLines);
 
 			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
-			StructuredContent->SetStringField(TEXT("action"), TEXT("mcp_patch_scaffold_snippet"));
+			StructuredContent->SetStringField(TEXT("action"), TEXT("mcp_patch_scaffold_patch"));
 			StructuredContent->SetStringField(TEXT("toolName"), ToolName);
 			StructuredContent->SetStringField(TEXT("toolId"), SanitizeMcpToolIdForPath(ToolName));
 			StructuredContent->SetStringField(TEXT("scaffoldDir"), ResolvedScaffoldDir);
+			StructuredContent->SetStringField(TEXT("patchName"), CanonicalSnippetName);
 			StructuredContent->SetStringField(TEXT("snippetName"), CanonicalSnippetName);
+			StructuredContent->SetStringField(TEXT("patchPath"), SnippetPath);
 			StructuredContent->SetStringField(TEXT("snippetPath"), SnippetPath);
 			StructuredContent->SetStringField(TEXT("mode"), Mode);
 			StructuredContent->SetBoolField(TEXT("dryRun"), bDryRun);
@@ -808,13 +902,13 @@ namespace UnrealMcp
 
 			if (!bSafe && !bAllowUnsafe)
 			{
-				return MakeExecutionResult(TEXT("Patched snippet failed static safety validation. Pass allowUnsafe=true only after manual review."), StructuredContent, true);
+				return MakeExecutionResult(TEXT("Patched fragment failed static safety validation. Pass allowUnsafe=true only after manual review."), StructuredContent, true);
 			}
 
 			if (bDryRun || !bChanged)
 			{
 				return MakeExecutionResult(
-					FString::Printf(TEXT("%s snippet patch for %s changed=%s safe=%s."),
+					FString::Printf(TEXT("%s patch-fragment edit for %s changed=%s safe=%s."),
 						bDryRun ? TEXT("Dry run") : TEXT("No-op"),
 						*CanonicalSnippetName,
 						bChanged ? TEXT("true") : TEXT("false"),
@@ -837,19 +931,19 @@ namespace UnrealMcp
 					|| !FFileHelper::SaveStringToFile(BeforeText, *BackupBeforePath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM)
 					|| !FFileHelper::SaveStringToFile(AfterText, *BackupAfterPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
 				{
-					return MakeExecutionResult(FString::Printf(TEXT("Failed to create snippet backup under '%s'."), *BackupDirectory), StructuredContent, true);
+					return MakeExecutionResult(FString::Printf(TEXT("Failed to create patch-fragment backup under '%s'."), *BackupDirectory), StructuredContent, true);
 				}
 			}
 
 			if (!FFileHelper::SaveStringToFile(AfterText, *SnippetPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
 			{
-				return MakeExecutionResult(FString::Printf(TEXT("Failed to write snippet '%s'."), *SnippetPath), StructuredContent, true);
+				return MakeExecutionResult(FString::Printf(TEXT("Failed to write patch fragment '%s'."), *SnippetPath), StructuredContent, true);
 			}
 
 			if (bCreateBackup)
 			{
 				TSharedPtr<FJsonObject> ManifestObject = MakeShared<FJsonObject>();
-				ManifestObject->SetStringField(TEXT("action"), TEXT("mcp_patch_scaffold_snippet"));
+				ManifestObject->SetStringField(TEXT("action"), TEXT("mcp_patch_scaffold_patch"));
 				ManifestObject->SetStringField(TEXT("toolName"), ToolName);
 				ManifestObject->SetStringField(TEXT("scaffoldDir"), ResolvedScaffoldDir);
 				ManifestObject->SetStringField(TEXT("snippetName"), CanonicalSnippetName);

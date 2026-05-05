@@ -297,7 +297,7 @@ namespace UnrealMcp
 			else if (Lower.Contains(TEXT("expected")))
 			{
 				SuggestedFixes.Add(MakeShared<FJsonValueString>(TEXT("Check the current and previous line for missing semicolons, braces, parentheses, or commas.")));
-				SuggestedFixes.Add(MakeShared<FJsonValueString>(TEXT("If this followed an automatic snippet insertion, diff the inserted block boundaries first.")));
+				SuggestedFixes.Add(MakeShared<FJsonValueString>(TEXT("If this followed an automatic patch-fragment insertion, diff the inserted block boundaries first.")));
 			}
 			else if (Lower.Contains(TEXT("cannot convert")) || Lower.Contains(TEXT("no viable conversion")))
 			{

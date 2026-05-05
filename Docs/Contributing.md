@@ -21,7 +21,7 @@ Prefer small, reviewable tool changes over broad source edits. The self-extensio
 1. Generate a scaffold with `unreal.scaffold_mcp_tool`.
 2. Inspect with `unreal.mcp_inspect_scaffold`.
 3. Validate schema with `unreal.mcp_validate_tool_schema`.
-4. Validate snippets with `unreal.mcp_validate_cpp_snippet`.
+4. Validate descriptor-first patch fragments with `unreal.mcp_validate_cpp_patch`.
 5. Preview with `unreal.mcp_apply_scaffold` using `dryRun=true`.
 6. Apply with backups.
 7. Build with `unreal.mcp_build_editor`.

@@ -795,7 +795,7 @@
       "dryRunSupport": true,
       "preflightSupport": true,
       "postcheckSupport": true,
-      "testCoverage": "missing",
+      "testCoverage": "category",
       "owner": "UEvolve Core",
       "docsPath": "README.md#tool-coverage",
       "reason": "Explicit registry: high-impact write/build/rollback/destructive editor operation.",
@@ -900,7 +900,7 @@
       "dryRunSupport": false,
       "preflightSupport": false,
       "postcheckSupport": false,
-      "testCoverage": "missing",
+      "testCoverage": "category",
       "owner": "UEvolve Core",
       "docsPath": "README.md#tool-coverage",
       "reason": "Explicit registry: read-only inspection, audit, status, schema validation, memory read, or skill read tool.",
@@ -1012,10 +1012,31 @@
       "notes": ""
     },
     {
+      "name": "unreal.mcp_patch_scaffold_patch",
+      "category": "self-extension",
+      "handlerName": "unreal.mcp_patch_scaffold_patch",
+      "exposure": "visible",
+      "riskLevel": "high",
+      "requiresWrite": true,
+      "requiresBuild": false,
+      "requiresExternalProcess": false,
+      "requiresRestart": false,
+      "requiresProjectMemory": false,
+      "requiresLock": true,
+      "dryRunSupport": true,
+      "preflightSupport": true,
+      "postcheckSupport": true,
+      "testCoverage": "category",
+      "owner": "UEvolve Core",
+      "docsPath": "README.md#tool-coverage",
+      "reason": "Explicit registry: high-impact write/build/rollback/destructive editor operation.",
+      "notes": "Primary descriptor-first patch-fragment editor for generated MCP tool scaffolds."
+    },
+    {
       "name": "unreal.mcp_patch_scaffold_snippet",
       "category": "self-extension",
       "handlerName": "unreal.mcp_patch_scaffold_snippet",
-      "exposure": "visible",
+      "exposure": "legacy_hidden",
       "riskLevel": "high",
       "requiresWrite": true,
       "requiresBuild": false,
@@ -1030,7 +1051,7 @@
       "owner": "UEvolve Core",
       "docsPath": "README.md#tool-coverage",
       "reason": "Explicit registry: high-impact write/build/rollback/destructive editor operation.",
-      "notes": ""
+      "notes": "Legacy alias for unreal.mcp_patch_scaffold_patch; hidden from default AI tool exposure."
     },
     {
       "name": "unreal.mcp_pipeline_status",
@@ -1201,10 +1222,31 @@
       "notes": ""
     },
     {
+      "name": "unreal.mcp_validate_cpp_patch",
+      "category": "self-extension",
+      "handlerName": "unreal.mcp_validate_cpp_patch",
+      "exposure": "visible",
+      "riskLevel": "read_only",
+      "requiresWrite": false,
+      "requiresBuild": false,
+      "requiresExternalProcess": false,
+      "requiresRestart": false,
+      "requiresProjectMemory": false,
+      "requiresLock": false,
+      "dryRunSupport": false,
+      "preflightSupport": false,
+      "postcheckSupport": false,
+      "testCoverage": "category",
+      "owner": "UEvolve Core",
+      "docsPath": "README.md#tool-coverage",
+      "reason": "Explicit registry: read-only inspection, audit, status, schema validation, memory read, or skill read tool.",
+      "notes": "Primary descriptor-first C++ patch-fragment validator."
+    },
+    {
       "name": "unreal.mcp_validate_cpp_snippet",
       "category": "self-extension",
       "handlerName": "unreal.mcp_validate_cpp_snippet",
-      "exposure": "visible",
+      "exposure": "legacy_hidden",
       "riskLevel": "read_only",
       "requiresWrite": false,
       "requiresBuild": false,
@@ -1219,7 +1261,7 @@
       "owner": "UEvolve Core",
       "docsPath": "README.md#tool-coverage",
       "reason": "Explicit registry: read-only inspection, audit, status, schema validation, memory read, or skill read tool.",
-      "notes": ""
+      "notes": "Legacy alias for unreal.mcp_validate_cpp_patch; hidden from default AI tool exposure."
     },
     {
       "name": "unreal.mcp_validate_tool_schema",

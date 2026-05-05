@@ -38,7 +38,7 @@ Recommended split:
 - `Private/ToolRegistry`: tool metadata, visibility, handler aliases, policy metadata.
 - `Private/ToolHandlers`: first-class handler registration metadata.
 - `Private/Execution`: shared execution guard plus category-specific preflight/postcheck verifiers.
-- `Private/Tools/SelfExtension`: self-extension workbench, pipeline status, audit/schema/snippet helpers, MCP test execution, and extension pipeline helpers. Self-extension dispatch now lives in `UnrealMcpSelfExtensionTools.cpp`; module-private orchestration methods are invoked through explicit callbacks.
+- `Private/Tools/SelfExtension`: self-extension workbench, pipeline status, audit/schema/patch-fragment helpers, MCP test execution, and extension pipeline helpers. Self-extension dispatch now lives in `UnrealMcpSelfExtensionTools.cpp`; module-private orchestration methods are invoked through explicit callbacks.
 - `Private/Tools/Editor`: status, logs, maps, assets, PIE, console, Python, Content Browser focus, map/asset opening, and save-dirty-packages. These editor tools now live in `UnrealMcpEditorTools.cpp`.
 - `Private/Tools/Actors`: actor selection, transforms, spawning, layout, batch edits. Actor query/selection, basic write tools, batch edits, point-light edits, static-mesh actor configuration, actor layout tools, and spawn tools now live in `UnrealMcpActorTools.cpp`.
 - `Private/Tools/Blueprint`: Blueprint class and graph editing in `UnrealMcpBlueprintTools.cpp`, with read-only graph inspection through `unreal.bp_list_graph_nodes` and `unreal.bp_trace_pin_connections`, plus outcome verification in `UnrealMcpBlueprintOutcomeVerifier.cpp`.

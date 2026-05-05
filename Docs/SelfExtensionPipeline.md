@@ -6,11 +6,11 @@ The self-extension pipeline lets Unreal MCP add new MCP tools from inside Editor
 
 ## Main Tools
 
-- `unreal.scaffold_mcp_tool`: create scaffold files.
+- `unreal.scaffold_mcp_tool`: create descriptor-first patch files, ToolRegistry patch metadata, an extension report, and optional legacy compatibility fragments.
 - `unreal.mcp_validate_tool_schema`: check OpenAI function calling compatibility.
-- `unreal.mcp_validate_cpp_snippet`: static-check generated C++ snippets.
-- `unreal.mcp_patch_scaffold_snippet`: edit scaffold snippets with dry run and backup.
-- `unreal.mcp_apply_scaffold`: insert snippets into plugin source with dry run, backup, and idempotence checks.
+- `unreal.mcp_validate_cpp_patch`: static-check generated C++ patch fragments.
+- `unreal.mcp_patch_scaffold_patch`: edit scaffold patch fragments with dry run and backup.
+- `unreal.mcp_apply_scaffold`: apply `ToolRegistryPatch.json`, registrar descriptor, category handler, and dispatcher patches with dry run, backup, and idempotence checks.
 - `unreal.mcp_build_editor`: run UBT and parse build logs.
 - `unreal.mcp_run_tool_test`: run one generated test request.
 - `unreal.mcp_run_test_suite`: run a generated test directory.
@@ -85,7 +85,7 @@ If source changes were already applied, the pipeline also attaches a dry-run rol
 If build fails:
 
 1. Run `unreal.mcp_compile_error_fix_plan`.
-2. Patch the relevant snippet/source if the fix is deterministic.
+2. Patch the relevant descriptor-first patch/source if the fix is deterministic.
 3. Rebuild.
 4. If unsafe or unclear, rollback to manifest.
 
@@ -95,6 +95,20 @@ If tests fail:
 2. Compare expected vs actual structured content.
 3. Patch handler or tests.
 4. Rebuild/restart only if C++ changed.
+
+## Descriptor-First Scaffold Output
+
+New MCP scaffolds now produce the files Chat needs for the registry-derived handler path:
+
+- `ToolRegistrar.patch.cpp`: descriptor and fixed schema helper.
+- `ToolRegistrarCall.patch.cpp`: call site for `RegisterAllMcpToolDescriptors`.
+- `CategoryHandlerFunction.patch.cpp`: implementation stub for the selected category source file.
+- `CategoryDispatcherBranch.patch.cpp`: category dispatcher branch for the selected `TryExecute*Tool`.
+- `ToolRegistryPatch.json`: reviewed policy metadata override candidate.
+- `ScaffoldMetadata.json`: machine-readable category, risk, source-file, and side-effect metadata.
+- `ExtensionReport.md`: human-reviewable summary of gates, files, and risks.
+
+Legacy ToolDefinition and ExecuteToolHandler fragments are only generated when `includeLegacyCompatibility=true`; new self-extension work must use the descriptor-first patch path and should not add tool logic to `UnrealMcpModule.cpp`.
 
 If source state is inconsistent:
 

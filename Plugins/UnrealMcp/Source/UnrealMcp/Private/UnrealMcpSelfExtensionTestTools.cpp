@@ -202,8 +202,11 @@ namespace UnrealMcp
 
 			static const TCHAR* RequiredFiles[] = {
 				TEXT("README.md"),
-				TEXT("ToolDefinition.cpp.snippet"),
-				TEXT("ExecuteToolHandler.cpp.snippet"),
+				TEXT("ToolRegistrar.patch.cpp"),
+				TEXT("ToolRegistrarCall.patch.cpp"),
+				TEXT("CategoryHandlerFunction.patch.cpp"),
+				TEXT("CategoryDispatcherBranch.patch.cpp"),
+				TEXT("ToolRegistryPatch.json"),
 				TEXT("TestRequest.json"),
 				TEXT("IntegrationChecklist.md")
 			};
@@ -219,7 +222,9 @@ namespace UnrealMcp
 				}
 				Files.Add(MakeShared<FJsonValueObject>(FileObject));
 			}
-			Files.Add(MakeShared<FJsonValueObject>(MakeScaffoldFileObject(ResolvedScaffoldDirectory, TEXT("ChatCommand.cpp.snippet"), false, bIncludeFileText, MaxPreviewChars)));
+			Files.Add(MakeShared<FJsonValueObject>(MakeScaffoldFileObject(ResolvedScaffoldDirectory, TEXT("ChatCommand.patch.cpp"), false, bIncludeFileText, MaxPreviewChars)));
+			Files.Add(MakeShared<FJsonValueObject>(MakeScaffoldFileObject(ResolvedScaffoldDirectory, TEXT("LegacyToolDefinition.legacy.cpp"), false, bIncludeFileText, MaxPreviewChars)));
+			Files.Add(MakeShared<FJsonValueObject>(MakeScaffoldFileObject(ResolvedScaffoldDirectory, TEXT("LegacyExecuteToolHandler.legacy.cpp"), false, bIncludeFileText, MaxPreviewChars)));
 
 			FString ToolName = RequestedToolName;
 			FString TestRequestFailure;

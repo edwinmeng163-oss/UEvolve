@@ -283,7 +283,9 @@ namespace UnrealMcp
 		}
 		else if (Category == TEXT("self-extension"))
 		{
-			if (ToolName == TEXT("unreal.mcp_apply_scaffold") || ToolName == TEXT("unreal.mcp_patch_scaffold_snippet"))
+			if (ToolName == TEXT("unreal.mcp_apply_scaffold")
+				|| ToolName == TEXT("unreal.mcp_patch_scaffold_patch")
+				|| ToolName == TEXT("unreal.mcp_patch_scaffold_snippet"))
 			{
 				FString ScaffoldDir;
 				Arguments.TryGetStringField(TEXT("scaffoldDir"), ScaffoldDir);

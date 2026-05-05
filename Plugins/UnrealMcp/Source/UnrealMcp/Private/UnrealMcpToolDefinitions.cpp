@@ -1016,8 +1016,18 @@ void FUnrealMcpModule::AppendToolDefinitions(TArray<TSharedPtr<FJsonValue>>& Too
 			PropertiesObject->SetObjectField(TEXT("argumentSchemaJson"), UnrealMcp::MakeStringProperty(TEXT("Reference JSON schema for the intended arguments. Keep it fixed-schema for AI compatibility.")));
 			PropertiesObject->SetObjectField(TEXT("exampleArgumentsJson"), UnrealMcp::MakeStringProperty(TEXT("Example arguments object JSON for the generated test request."), TEXT("{\"message\":\"hello\"}")));
 			PropertiesObject->SetObjectField(TEXT("implementationNotes"), UnrealMcp::MakeStringProperty(TEXT("Optional implementation notes to include in the generated README.")));
+			PropertiesObject->SetObjectField(TEXT("category"), UnrealMcp::MakeStringProperty(TEXT("Tool category/dispatcher owner: actors, blueprint, editor, memory, scaffold, self-extension, skills, or widget."), TEXT("self-extension")));
+			PropertiesObject->SetObjectField(TEXT("riskLevel"), UnrealMcp::MakeStringProperty(TEXT("Tool risk level: read_only, low, medium, high, or critical."), TEXT("low")));
+			PropertiesObject->SetObjectField(TEXT("requiresWrite"), UnrealMcp::MakeBoolProperty(TEXT("Whether the tool mutates project/editor state."), false));
+			PropertiesObject->SetObjectField(TEXT("requiresBuild"), UnrealMcp::MakeBoolProperty(TEXT("Whether the tool requires a build step."), false));
+			PropertiesObject->SetObjectField(TEXT("requiresExternalProcess"), UnrealMcp::MakeBoolProperty(TEXT("Whether the tool starts or depends on an external process."), false));
+			PropertiesObject->SetObjectField(TEXT("requiresRestart"), UnrealMcp::MakeBoolProperty(TEXT("Whether the tool requires an editor restart to fully verify."), false));
+			PropertiesObject->SetObjectField(TEXT("requiresProjectMemory"), UnrealMcp::MakeBoolProperty(TEXT("Whether the tool should read/write project memory as part of normal operation."), false));
+			PropertiesObject->SetObjectField(TEXT("requiresLock"), UnrealMcp::MakeBoolProperty(TEXT("Whether the tool must acquire the self-extension session lock."), false));
+			PropertiesObject->SetObjectField(TEXT("dryRunSupport"), UnrealMcp::MakeBoolProperty(TEXT("Whether the generated tool should expose a dryRun argument."), false));
 			PropertiesObject->SetObjectField(TEXT("overwrite"), UnrealMcp::MakeBoolProperty(TEXT("Whether to overwrite an existing scaffold folder."), false));
-			PropertiesObject->SetObjectField(TEXT("includeChatCommandSnippet"), UnrealMcp::MakeBoolProperty(TEXT("Whether to generate an optional direct slash-command snippet."), true));
+			PropertiesObject->SetObjectField(TEXT("includeChatCommandSnippet"), UnrealMcp::MakeBoolProperty(TEXT("Whether to generate an optional direct slash-command patch fragment."), true));
+			PropertiesObject->SetObjectField(TEXT("includeLegacyCompatibility"), UnrealMcp::MakeBoolProperty(TEXT("Also generate legacy ToolDefinition/ExecuteToolHandler fragments. Disabled by default; new tools should use descriptor-first patches."), false));
 
 			TSharedPtr<FJsonObject> InputSchema = UnrealMcp::MakeObjectSchema();
 			InputSchema->SetObjectField(TEXT("properties"), PropertiesObject);
@@ -1026,7 +1036,7 @@ void FUnrealMcpModule::AppendToolDefinitions(TArray<TSharedPtr<FJsonValue>>& Too
 				ToolsArray,
 				TEXT("unreal.scaffold_mcp_tool"),
 				TEXT("Scaffold MCP Tool"),
-				TEXT("Generates C++ snippet files, docs, and a test request for adding a new Unreal MCP tool after review and rebuild."),
+				TEXT("Generates descriptor-first C++ patch files, ToolRegistry patch metadata, docs, an extension report, and a test request for adding a new Unreal MCP tool after review and rebuild."),
 				InputSchema);
 		}
 
@@ -1065,14 +1075,16 @@ void FUnrealMcpModule::AppendToolDefinitions(TArray<TSharedPtr<FJsonValue>>& Too
 				ToolsArray,
 				TEXT("unreal.mcp_inspect_scaffold"),
 				TEXT("Inspect MCP Scaffold"),
-				TEXT("Inspects one generated MCP scaffold for required files, schema compatibility, test request validity, snippets, and whether the tool is already loaded."),
+				TEXT("Inspects one generated MCP scaffold for required files, schema compatibility, test request validity, patch fragments, and whether the tool is already loaded."),
 				InputSchema);
 		}
 
 		{
 			TSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
-			PropertiesObject->SetObjectField(TEXT("snippetText"), UnrealMcp::MakeStringProperty(TEXT("Raw C++ snippet text to validate. If empty, reads scaffoldDir/toolName + snippetName.")));
-			PropertiesObject->SetObjectField(TEXT("snippetName"), UnrealMcp::MakeStringProperty(TEXT("Snippet file or alias: ToolDefinition.cpp.snippet, ExecuteToolHandler.cpp.snippet, ChatCommand.cpp.snippet."), TEXT("ExecuteToolHandler.cpp.snippet")));
+			PropertiesObject->SetObjectField(TEXT("patchText"), UnrealMcp::MakeStringProperty(TEXT("Raw C++ patch/legacy fragment text to validate. If empty, reads scaffoldDir/toolName + patchName.")));
+			PropertiesObject->SetObjectField(TEXT("patchName"), UnrealMcp::MakeStringProperty(TEXT("Patch file or alias: ToolRegistrar.patch.cpp, ToolRegistrarCall.patch.cpp, CategoryHandlerFunction.patch.cpp, CategoryDispatcherBranch.patch.cpp, ChatCommand.patch.cpp, or legacy fragments LegacyToolDefinition.legacy.cpp / LegacyExecuteToolHandler.legacy.cpp."), TEXT("ToolRegistrar.patch.cpp")));
+			PropertiesObject->SetObjectField(TEXT("snippetText"), UnrealMcp::MakeStringProperty(TEXT("Legacy alias for patchText.")));
+			PropertiesObject->SetObjectField(TEXT("snippetName"), UnrealMcp::MakeStringProperty(TEXT("Legacy alias for patchName."), TEXT("ToolRegistrar.patch.cpp")));
 			PropertiesObject->SetObjectField(TEXT("toolName"), UnrealMcp::MakeStringProperty(TEXT("Expected MCP tool name for tool-name literal checks.")));
 			PropertiesObject->SetObjectField(TEXT("scaffoldDir"), UnrealMcp::MakeStringProperty(TEXT("Project-relative or absolute scaffold directory to read when snippetText is empty.")));
 			PropertiesObject->SetObjectField(TEXT("outputRoot"), UnrealMcp::MakeStringProperty(TEXT("Project-relative scaffold root used with toolName."), TEXT("Tools/UnrealMcpToolScaffolds")));
@@ -1082,18 +1094,26 @@ void FUnrealMcpModule::AppendToolDefinitions(TArray<TSharedPtr<FJsonValue>>& Too
 
 			UnrealMcp::AddToolDefinition(
 				ToolsArray,
+				TEXT("unreal.mcp_validate_cpp_patch"),
+				TEXT("Validate C++ Patch"),
+				TEXT("Runs static safety checks against MCP scaffold C++ patch fragments before applying them to the plugin source."),
+				InputSchema);
+
+			UnrealMcp::AddToolDefinition(
+				ToolsArray,
 				TEXT("unreal.mcp_validate_cpp_snippet"),
-				TEXT("Validate C++ Snippet"),
-				TEXT("Runs static safety checks against MCP scaffold C++ snippets before applying them to the plugin source."),
+				TEXT("Validate C++ Snippet Legacy"),
+				TEXT("Legacy alias for unreal.mcp_validate_cpp_patch. New workflows should use patch fragments."),
 				InputSchema);
 		}
 
 		{
 			TSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
-			PropertiesObject->SetObjectField(TEXT("toolName"), UnrealMcp::MakeStringProperty(TEXT("MCP tool name whose scaffold snippet should be patched. Used when scaffoldDir is empty.")));
-			PropertiesObject->SetObjectField(TEXT("scaffoldDir"), UnrealMcp::MakeStringProperty(TEXT("Project-relative or absolute scaffold directory containing the snippet.")));
+			PropertiesObject->SetObjectField(TEXT("toolName"), UnrealMcp::MakeStringProperty(TEXT("MCP tool name whose scaffold patch fragment should be patched. Used when scaffoldDir is empty.")));
+			PropertiesObject->SetObjectField(TEXT("scaffoldDir"), UnrealMcp::MakeStringProperty(TEXT("Project-relative or absolute scaffold directory containing the patch fragment.")));
 			PropertiesObject->SetObjectField(TEXT("outputRoot"), UnrealMcp::MakeStringProperty(TEXT("Project-relative scaffold root used with toolName."), TEXT("Tools/UnrealMcpToolScaffolds")));
-			PropertiesObject->SetObjectField(TEXT("snippetName"), UnrealMcp::MakeStringProperty(TEXT("Snippet file or alias: ToolDefinition.cpp.snippet, ExecuteToolHandler.cpp.snippet, ChatCommand.cpp.snippet.")));
+			PropertiesObject->SetObjectField(TEXT("patchName"), UnrealMcp::MakeStringProperty(TEXT("Patch file or alias: ToolRegistrar.patch.cpp, ToolRegistrarCall.patch.cpp, CategoryHandlerFunction.patch.cpp, CategoryDispatcherBranch.patch.cpp, ChatCommand.patch.cpp, or legacy fragments LegacyToolDefinition.legacy.cpp / LegacyExecuteToolHandler.legacy.cpp.")));
+			PropertiesObject->SetObjectField(TEXT("snippetName"), UnrealMcp::MakeStringProperty(TEXT("Legacy alias for patchName.")));
 			PropertiesObject->SetObjectField(TEXT("mode"), UnrealMcp::MakeStringProperty(TEXT("Patch mode: replace_all, replace_text, append, or prepend. Auto-selected when empty.")));
 			PropertiesObject->SetObjectField(TEXT("newText"), UnrealMcp::MakeStringProperty(TEXT("Replacement text for replace_all mode.")));
 			PropertiesObject->SetObjectField(TEXT("findText"), UnrealMcp::MakeStringProperty(TEXT("Exact text to find for replace_text mode.")));
@@ -1101,19 +1121,26 @@ void FUnrealMcpModule::AppendToolDefinitions(TArray<TSharedPtr<FJsonValue>>& Too
 			PropertiesObject->SetObjectField(TEXT("appendText"), UnrealMcp::MakeStringProperty(TEXT("Text to append when mode=append.")));
 			PropertiesObject->SetObjectField(TEXT("prependText"), UnrealMcp::MakeStringProperty(TEXT("Text to prepend when mode=prepend.")));
 			PropertiesObject->SetObjectField(TEXT("replaceAll"), UnrealMcp::MakeBoolProperty(TEXT("Replace all findText occurrences instead of just the first."), false));
-			PropertiesObject->SetObjectField(TEXT("dryRun"), UnrealMcp::MakeBoolProperty(TEXT("Preview snippet changes without writing the file."), true));
-			PropertiesObject->SetObjectField(TEXT("createBackup"), UnrealMcp::MakeBoolProperty(TEXT("Create a timestamped snippet backup before writing."), true));
-			PropertiesObject->SetObjectField(TEXT("allowUnsafe"), UnrealMcp::MakeBoolProperty(TEXT("Allow writing snippets that fail static validation. Use only after manual review."), false));
-			PropertiesObject->SetObjectField(TEXT("diffPreviewLines"), UnrealMcp::MakeNumberProperty(TEXT("Maximum snippet diff preview lines."), 120.0));
+			PropertiesObject->SetObjectField(TEXT("dryRun"), UnrealMcp::MakeBoolProperty(TEXT("Preview patch changes without writing the file."), true));
+			PropertiesObject->SetObjectField(TEXT("createBackup"), UnrealMcp::MakeBoolProperty(TEXT("Create a timestamped patch backup before writing."), true));
+			PropertiesObject->SetObjectField(TEXT("allowUnsafe"), UnrealMcp::MakeBoolProperty(TEXT("Allow writing patches that fail static validation. Use only after manual review."), false));
+			PropertiesObject->SetObjectField(TEXT("diffPreviewLines"), UnrealMcp::MakeNumberProperty(TEXT("Maximum patch diff preview lines."), 120.0));
 
 			TSharedPtr<FJsonObject> InputSchema = UnrealMcp::MakeObjectSchema();
 			InputSchema->SetObjectField(TEXT("properties"), PropertiesObject);
 
 			UnrealMcp::AddToolDefinition(
 				ToolsArray,
+				TEXT("unreal.mcp_patch_scaffold_patch"),
+				TEXT("Patch MCP Scaffold Patch"),
+				TEXT("Safely patches a generated MCP scaffold patch fragment with dry-run diff, static validation, idempotence checks, and backups."),
+				InputSchema);
+
+			UnrealMcp::AddToolDefinition(
+				ToolsArray,
 				TEXT("unreal.mcp_patch_scaffold_snippet"),
-				TEXT("Patch MCP Scaffold Snippet"),
-				TEXT("Safely patches a generated MCP scaffold snippet with dry-run diff, static validation, idempotence checks, and backups."),
+				TEXT("Patch MCP Scaffold Snippet Legacy"),
+				TEXT("Legacy alias for unreal.mcp_patch_scaffold_patch. New workflows should use patch fragments."),
 				InputSchema);
 		}
 
@@ -1428,13 +1455,13 @@ void FUnrealMcpModule::AppendToolDefinitions(TArray<TSharedPtr<FJsonValue>>& Too
 			{
 				TSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
 			PropertiesObject->SetObjectField(TEXT("toolName"), UnrealMcp::MakeStringProperty(TEXT("Tool name whose scaffold should be applied. Used when scaffoldDir is empty.")));
-			PropertiesObject->SetObjectField(TEXT("scaffoldDir"), UnrealMcp::MakeStringProperty(TEXT("Project-relative or absolute scaffold directory containing generated snippet files.")));
+			PropertiesObject->SetObjectField(TEXT("scaffoldDir"), UnrealMcp::MakeStringProperty(TEXT("Project-relative or absolute scaffold directory containing generated descriptor-first patch files.")));
 			PropertiesObject->SetObjectField(TEXT("outputRoot"), UnrealMcp::MakeStringProperty(TEXT("Project-relative scaffold root used with toolName."), TEXT("Tools/UnrealMcpToolScaffolds")));
 			PropertiesObject->SetObjectField(TEXT("dryRun"), UnrealMcp::MakeBoolProperty(TEXT("Preview changes without modifying source."), true));
-			PropertiesObject->SetObjectField(TEXT("applyChatCommand"), UnrealMcp::MakeBoolProperty(TEXT("Whether to apply ChatCommand.cpp.snippet."), true));
+			PropertiesObject->SetObjectField(TEXT("applyChatCommand"), UnrealMcp::MakeBoolProperty(TEXT("Whether to apply optional ChatCommand.patch.cpp."), false));
 			PropertiesObject->SetObjectField(TEXT("createBackup"), UnrealMcp::MakeBoolProperty(TEXT("Whether to create rollback backup and manifest when dryRun=false."), true));
-			PropertiesObject->SetObjectField(TEXT("validateSnippets"), UnrealMcp::MakeBoolProperty(TEXT("Whether to run C++ snippet safety validation before applying."), true));
-			PropertiesObject->SetObjectField(TEXT("allowUnsafeSnippets"), UnrealMcp::MakeBoolProperty(TEXT("Allow applying snippets that fail static validation. Use only after manual review."), false));
+			PropertiesObject->SetObjectField(TEXT("validatePatches"), UnrealMcp::MakeBoolProperty(TEXT("Whether to run C++ patch-fragment safety validation before applying."), true));
+			PropertiesObject->SetObjectField(TEXT("allowUnsafePatches"), UnrealMcp::MakeBoolProperty(TEXT("Allow applying patch fragments that fail static validation. Use only after manual review."), false));
 			PropertiesObject->SetObjectField(TEXT("targetDiffPreviewLines"), UnrealMcp::MakeNumberProperty(TEXT("Maximum target source diff preview lines returned during dry run/apply."), 120.0));
 
 			TSharedPtr<FJsonObject> InputSchema = UnrealMcp::MakeObjectSchema();
@@ -1444,7 +1471,7 @@ void FUnrealMcpModule::AppendToolDefinitions(TArray<TSharedPtr<FJsonValue>>& Too
 				ToolsArray,
 				TEXT("unreal.mcp_apply_scaffold"),
 				TEXT("Apply MCP Scaffold"),
-				TEXT("Safely previews or applies generated MCP tool scaffold snippets into the UnrealMcpModule source with idempotence checks and backups."),
+				TEXT("Safely previews or applies descriptor-first MCP scaffold patches: ToolRegistryPatch.json, registrar descriptor, category handler, and dispatcher branch with idempotence checks and backups."),
 				InputSchema);
 		}
 
@@ -1461,7 +1488,7 @@ void FUnrealMcpModule::AppendToolDefinitions(TArray<TSharedPtr<FJsonValue>>& Too
 				ToolsArray,
 				TEXT("unreal.mcp_rollback_last_extension"),
 				TEXT("Rollback Last MCP Extension"),
-				TEXT("Restores UnrealMcpModule.cpp from the last mcp_apply_scaffold backup, with hash safety checks."),
+				TEXT("Restores files changed by the last mcp_apply_scaffold backup, with hash safety checks."),
 				InputSchema);
 		}
 
@@ -1674,21 +1701,21 @@ void FUnrealMcpModule::AppendToolDefinitions(TArray<TSharedPtr<FJsonValue>>& Too
 			TSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
 			PropertiesObject->SetObjectField(TEXT("mode"), UnrealMcp::MakeStringProperty(TEXT("Pipeline mode: auto, apply_build, dry_run, resume_test, test_only."), TEXT("auto")));
 			PropertiesObject->SetObjectField(TEXT("toolName"), UnrealMcp::MakeStringProperty(TEXT("MCP tool name to integrate/test.")));
-			PropertiesObject->SetObjectField(TEXT("scaffoldDir"), UnrealMcp::MakeStringProperty(TEXT("Project-relative or absolute scaffold directory containing snippets and TestRequest.json.")));
+			PropertiesObject->SetObjectField(TEXT("scaffoldDir"), UnrealMcp::MakeStringProperty(TEXT("Project-relative or absolute scaffold directory containing descriptor-first patches and TestRequest.json.")));
 			PropertiesObject->SetObjectField(TEXT("outputRoot"), UnrealMcp::MakeStringProperty(TEXT("Project-relative scaffold root used with toolName."), TEXT("Tools/UnrealMcpToolScaffolds")));
-			PropertiesObject->SetObjectField(TEXT("schemaJson"), UnrealMcp::MakeStringProperty(TEXT("Optional schema JSON to validate before applying snippets. If omitted, the scaffold README schema is used when present.")));
+			PropertiesObject->SetObjectField(TEXT("schemaJson"), UnrealMcp::MakeStringProperty(TEXT("Optional schema JSON to validate before applying patches. If omitted, the scaffold README schema is used when present.")));
 			PropertiesObject->SetObjectField(TEXT("testRequestPath"), UnrealMcp::MakeStringProperty(TEXT("Optional TestRequest.json path. Defaults to scaffoldDir/TestRequest.json.")));
 			PropertiesObject->SetObjectField(TEXT("testsDir"), UnrealMcp::MakeStringProperty(TEXT("Optional Tests directory. Defaults to scaffoldDir/Tests.")));
 			PropertiesObject->SetObjectField(TEXT("memoryKey"), UnrealMcp::MakeStringProperty(TEXT("Project memory key for restart handoff."), TEXT("mcp.extension.pipeline")));
 			PropertiesObject->SetObjectField(TEXT("task"), UnrealMcp::MakeStringProperty(TEXT("Natural-language task goal used by preview_change_plan and verify_task_outcome gates.")));
-			PropertiesObject->SetObjectField(TEXT("apply"), UnrealMcp::MakeBoolProperty(TEXT("Whether to apply scaffold snippets after dry run."), true));
-			PropertiesObject->SetObjectField(TEXT("build"), UnrealMcp::MakeBoolProperty(TEXT("Whether to run Unreal Build Tool after applying snippets."), true));
+			PropertiesObject->SetObjectField(TEXT("apply"), UnrealMcp::MakeBoolProperty(TEXT("Whether to apply scaffold patches after dry run."), true));
+			PropertiesObject->SetObjectField(TEXT("build"), UnrealMcp::MakeBoolProperty(TEXT("Whether to run Unreal Build Tool after applying patches."), true));
 			PropertiesObject->SetObjectField(TEXT("runTest"), UnrealMcp::MakeBoolProperty(TEXT("Whether to run the generated tool test when safe in the current editor session."), true));
 			PropertiesObject->SetObjectField(TEXT("runTestSuite"), UnrealMcp::MakeBoolProperty(TEXT("Run Tests/*.json suite instead of only TestRequest.json."), true));
 			PropertiesObject->SetObjectField(TEXT("generateTests"), UnrealMcp::MakeBoolProperty(TEXT("Generate or refresh Tests/*.json before apply/build/test."), true));
 			PropertiesObject->SetObjectField(TEXT("overwriteTests"), UnrealMcp::MakeBoolProperty(TEXT("Overwrite generated test files when content changes."), true));
 			PropertiesObject->SetObjectField(TEXT("dryRunOnly"), UnrealMcp::MakeBoolProperty(TEXT("Only run validate and apply dry run; skip apply/build/test."), false));
-			PropertiesObject->SetObjectField(TEXT("applyChatCommand"), UnrealMcp::MakeBoolProperty(TEXT("Whether to apply optional ChatCommand.cpp.snippet."), true));
+			PropertiesObject->SetObjectField(TEXT("applyChatCommand"), UnrealMcp::MakeBoolProperty(TEXT("Whether to apply optional ChatCommand.patch.cpp."), false));
 			PropertiesObject->SetObjectField(TEXT("createBackup"), UnrealMcp::MakeBoolProperty(TEXT("Whether to create rollback backup during real apply."), true));
 			PropertiesObject->SetObjectField(TEXT("backupProjectState"), UnrealMcp::MakeBoolProperty(TEXT("Create a broad project-state snapshot before real apply/build/test changes."), true));
 			PropertiesObject->SetObjectField(TEXT("writeProjectMemory"), UnrealMcp::MakeBoolProperty(TEXT("Whether to write pipeline state into project memory."), true));
@@ -1704,7 +1731,7 @@ void FUnrealMcpModule::AppendToolDefinitions(TArray<TSharedPtr<FJsonValue>>& Too
 				ToolsArray,
 				TEXT("unreal.mcp_extension_pipeline"),
 				TEXT("MCP Extension Pipeline"),
-				TEXT("High-level MCP extension workflow: validate schema, dry-run apply, apply snippets, write memory, build editor, request restart, and resume tool test."),
+				TEXT("High-level MCP extension workflow: validate schema, dry-run apply, apply descriptor-first patches, write memory, build editor, request restart, and resume tool test."),
 				InputSchema);
 		}
 

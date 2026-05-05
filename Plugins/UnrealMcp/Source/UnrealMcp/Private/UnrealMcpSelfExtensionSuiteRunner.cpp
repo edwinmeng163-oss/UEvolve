@@ -729,7 +729,7 @@ FUnrealMcpExecutionResult FUnrealMcpModule::RunMcpTestSuite(const FJsonObject& A
 			MemoryKey,
 			bSucceeded ? TEXT("MCP test suite succeeded.") : TEXT("MCP test suite failed."),
 			bSucceeded ? TEXT("test_suite_succeeded") : TEXT("test_suite_failed"),
-			bSucceeded ? TEXT("Continue with tool audit or next MCP extension stage.") : TEXT("Inspect failedCases, patch snippets, rebuild, and rerun the suite."),
+			bSucceeded ? TEXT("Continue with tool audit or next MCP extension stage.") : TEXT("Inspect failedCases, patch fragments, rebuild, and rerun the suite."),
 			MemoryContent);
 	}
 
