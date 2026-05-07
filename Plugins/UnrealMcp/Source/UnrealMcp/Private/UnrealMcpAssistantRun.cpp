@@ -206,6 +206,98 @@ private:
 		return Collapsed.Len() > MaxChars ? Collapsed.Left(MaxChars) + TEXT(" ...[truncated]") : Collapsed;
 	}
 
+	static FString StripUnrealLogTailFromAiFailure(const FString& Message)
+	{
+		FString CleanMessage = Message.TrimStartAndEnd();
+		if (CleanMessage.IsEmpty())
+		{
+			return CleanMessage;
+		}
+
+		int32 BestLogStart = INDEX_NONE;
+		auto ConsiderNeedle = [&CleanMessage, &BestLogStart](const FString& Needle)
+		{
+			int32 SearchStart = 0;
+			while (true)
+			{
+				const int32 Index = CleanMessage.Find(Needle, ESearchCase::CaseSensitive, ESearchDir::FromStart, SearchStart);
+				if (Index == INDEX_NONE)
+				{
+					break;
+				}
+
+				const FString TailPreview = CleanMessage.Mid(Index, 420);
+				if (TailPreview.Contains(TEXT("Log"), ESearchCase::CaseSensitive))
+				{
+					BestLogStart = BestLogStart == INDEX_NONE ? Index : FMath::Min(BestLogStart, Index);
+					break;
+				}
+
+				SearchStart = Index + Needle.Len();
+			}
+		};
+
+		ConsiderNeedle(TEXT("\n["));
+		ConsiderNeedle(TEXT("\r\n["));
+		ConsiderNeedle(TEXT("\\n["));
+
+		if (BestLogStart == INDEX_NONE)
+		{
+			return CleanMessage;
+		}
+
+		return CleanMessage.Left(BestLogStart).TrimStartAndEnd()
+			+ TEXT("\n\nUnreal Editor log lines were omitted from this AI transport error. Use Tool Log or unreal.tail_log if you need the full editor log.");
+	}
+
+	static FString BuildAiTransportFailureMessage(const TSharedPtr<IHttpRequest, ESPMode::ThreadSafe>& HttpRequest)
+	{
+		if (!HttpRequest.IsValid())
+		{
+			return TEXT("The AI request failed before a valid HTTP response was returned. The HTTP request object was not available. Check network connectivity, API endpoint settings, and retry.");
+		}
+
+		const EHttpRequestStatus::Type RequestStatus = HttpRequest->GetStatus();
+		const EHttpFailureReason FailureReason = HttpRequest->GetFailureReason();
+		const FString RequestStatusText = EHttpRequestStatus::ToString(RequestStatus);
+		const FString FailureReasonText = LexToString(FailureReason);
+
+		if (FailureReason == EHttpFailureReason::TimedOut)
+		{
+			return FString::Printf(
+				TEXT("AI request timed out after %.0f seconds. Increase AI Request Timeout Seconds in Project Settings > Plugins > Unreal MCP > AI if you expect long planning turns, or retry with a smaller task."),
+				GetDefault<UUnrealMcpSettings>()->AiRequestTimeoutSeconds);
+		}
+
+		if (FailureReason == EHttpFailureReason::Cancelled)
+		{
+			return TEXT("The AI request was cancelled before completion.");
+		}
+
+		if (FailureReason == EHttpFailureReason::ConnectionError)
+		{
+			return TEXT("The AI request failed because the connection to the AI provider could not be completed. Check network/VPN/proxy settings, then use Test AI or retry.");
+		}
+
+		if (RequestStatus == EHttpRequestStatus::Failed && FailureReasonText.Equals(TEXT("Other"), ESearchCase::IgnoreCase))
+		{
+			return TEXT("The AI request lost its network connection before OpenAI returned a valid response. This is usually transient network/VPN/proxy/sleep or editor-load pressure, not a Blueprint or PIE error. Retry after the editor settles, or press Test AI to verify the configured endpoint/model/key. UE HTTP status: Failed, failure reason: Other.");
+		}
+
+		if (RequestStatus == EHttpRequestStatus::Failed)
+		{
+			return FString::Printf(
+				TEXT("The AI request failed before a valid HTTP response was returned. Request status: %s. Failure reason: %s. Check network/VPN/proxy settings, endpoint URL, and retry."),
+				*RequestStatusText,
+				*FailureReasonText);
+		}
+
+		return FString::Printf(
+			TEXT("The AI request ended without a valid HTTP response. Request status: %s. Failure reason: %s. Check network connectivity and retry."),
+			*RequestStatusText,
+			*FailureReasonText);
+	}
+
 	void AddRecentToolSummary(const FAssistantToolCall& ToolCall, const FUnrealMcpExecutionResult& ToolResult)
 	{
 		RecentToolSummaries.Add(FString::Printf(
@@ -931,41 +1023,16 @@ private:
 
 		if (!bSucceeded || !HttpResponse.IsValid())
 		{
-			FString TransportFailureMessage;
-			if (HttpRequest.IsValid())
-			{
-				const EHttpRequestStatus::Type RequestStatus = HttpRequest->GetStatus();
-				const EHttpFailureReason FailureReason = HttpRequest->GetFailureReason();
-				if (FailureReason == EHttpFailureReason::TimedOut)
-				{
-					TransportFailureMessage = FString::Printf(
-						TEXT("AI request timed out after %.0f seconds. Increase AI Request Timeout Seconds in Project Settings > Plugins > Unreal MCP > AI if you expect long planning turns."),
-						GetDefault<UUnrealMcpSettings>()->AiRequestTimeoutSeconds);
-				}
-				else if (FailureReason == EHttpFailureReason::Cancelled)
-				{
-					TransportFailureMessage = TEXT("The AI request was cancelled before completion.");
-				}
-				else if (FailureReason == EHttpFailureReason::ConnectionError)
-				{
-					TransportFailureMessage = TEXT("The AI request failed because the connection to the AI provider could not be completed.");
-				}
-				else if (RequestStatus == EHttpRequestStatus::Failed)
-				{
-					TransportFailureMessage = FString::Printf(
-						TEXT("The AI request failed before a valid HTTP response was returned. Request status: %s. Failure reason: %s."),
-						EHttpRequestStatus::ToString(RequestStatus),
-						LexToString(FailureReason));
-				}
-			}
+			const FString TransportFailureMessage = BuildAiTransportFailureMessage(HttpRequest);
+			const FString SanitizedStreamFailureMessage = StripUnrealLogTailFromAiFailure(StreamFailureMessageCopy);
 
-			if (!StreamFailureMessageCopy.IsEmpty())
-			{
-				Finish(StreamFailureMessageCopy, ResponseIdCopy, true, false);
-			}
-			else if (!TransportFailureMessage.IsEmpty())
+			if (!TransportFailureMessage.IsEmpty())
 			{
 				Finish(TransportFailureMessage, ResponseIdCopy, true, false);
+			}
+			else if (!SanitizedStreamFailureMessage.IsEmpty())
+			{
+				Finish(SanitizedStreamFailureMessage, ResponseIdCopy, true, false);
 			}
 			else
 			{

@@ -91,8 +91,11 @@ private:
 	TSharedPtr<FUnrealMcpChatEntry> AppendMessage(EUnrealMcpChatEntryType Type, const FString& Speaker, const FString& Message, bool bIsError = false);
 	TSharedPtr<FUnrealMcpChatEntry> AppendToolCard(const FString& ToolName, const FString& ToolCallId, const FString& ArgumentsJson);
 	void AddEntryWidget(const TSharedPtr<FUnrealMcpChatEntry>& Entry);
+	void AddEntryWidgetToPane(const TSharedPtr<FUnrealMcpChatEntry>& Entry, bool bScrollAfterAdd);
 	TSharedRef<SWidget> BuildEntryWidget(const TSharedPtr<FUnrealMcpChatEntry>& Entry) const;
+	void RebuildEntryWidgets(bool bScrollTranscript, bool bScrollToolLog);
 	void InvalidateEntryWidgets();
+	bool MoveEntryToEnd(const TSharedPtr<FUnrealMcpChatEntry>& Entry);
 	void ScrollTranscriptToEnd();
 	void ScrollToolLogToEnd();
 	EActiveTimerReturnType HandleDeferredTranscriptScroll(double InCurrentTime, float InDeltaTime);

@@ -1762,6 +1762,7 @@ void SUnrealMcpChatPanel::StartAssistantRequest(const FString& UserPrompt)
 					{
 						PinnedThis->ActiveAssistantEntry->bIsPending = false;
 						PinnedThis->ActiveAssistantEntry->Body += Event.Text;
+						PinnedThis->MoveEntryToEnd(PinnedThis->ActiveAssistantEntry);
 						PinnedThis->InvalidateEntryWidgets();
 						PinnedThis->ScrollTranscriptToEnd();
 					}
@@ -1803,7 +1804,22 @@ void SUnrealMcpChatPanel::StartAssistantRequest(const FString& UserPrompt)
 					break;
 				case EUnrealMcpAssistantEventType::Status:
 				default:
-					PinnedThis->AppendMessage(EUnrealMcpChatEntryType::System, TEXT("Unreal MCP"), Event.Text, Event.bIsError);
+					{
+						TSharedPtr<FJsonObject> Arguments = MakeShared<FJsonObject>();
+						Arguments->SetStringField(TEXT("source"), TEXT("assistant"));
+						Arguments->SetStringField(TEXT("eventType"), TEXT("status"));
+
+						FUnrealMcpExecutionResult StatusResult;
+						StatusResult.Text = Event.Text;
+						StatusResult.bIsError = Event.bIsError;
+						StatusResult.StructuredContent = MakeShared<FJsonObject>();
+						StatusResult.StructuredContent->SetStringField(TEXT("action"), TEXT("assistant_status"));
+						StatusResult.StructuredContent->SetStringField(TEXT("toolName"), Event.ToolName);
+						StatusResult.StructuredContent->SetStringField(TEXT("toolCallId"), Event.ToolCallId);
+						StatusResult.StructuredContent->SetBoolField(TEXT("isError"), Event.bIsError);
+
+						PinnedThis->AppendToolExecutionResult(TEXT("assistant.status"), *Arguments, StatusResult);
+					}
 					break;
 				}
 			}
@@ -1834,6 +1850,7 @@ void SUnrealMcpChatPanel::StartAssistantRequest(const FString& UserPrompt)
 						PinnedThis->ActiveAssistantEntry->Body = Result.Text;
 					}
 					PinnedThis->ActiveAssistantEntry->bIsError = Result.bIsError;
+					PinnedThis->MoveEntryToEnd(PinnedThis->ActiveAssistantEntry);
 				}
 
 				if (Result.bIsError && PinnedThis->ActiveAssistantEntry.IsValid() && PinnedThis->ActiveAssistantEntry->Body.IsEmpty())
@@ -1897,6 +1914,11 @@ TSharedPtr<FUnrealMcpChatEntry> SUnrealMcpChatPanel::AppendToolCard(const FStrin
 
 void SUnrealMcpChatPanel::AddEntryWidget(const TSharedPtr<FUnrealMcpChatEntry>& Entry)
 {
+	AddEntryWidgetToPane(Entry, true);
+}
+
+void SUnrealMcpChatPanel::AddEntryWidgetToPane(const TSharedPtr<FUnrealMcpChatEntry>& Entry, bool bScrollAfterAdd)
+{
 	if (!Entry.IsValid())
 	{
 		return;
@@ -1916,6 +1938,11 @@ void SUnrealMcpChatPanel::AddEntryWidget(const TSharedPtr<FUnrealMcpChatEntry>& 
 		BuildEntryWidget(Entry)
 	];
 
+	if (!bScrollAfterAdd)
+	{
+		return;
+	}
+
 	if (bIsToolEntry)
 	{
 		ScrollToolLogToEnd();
@@ -1923,6 +1950,34 @@ void SUnrealMcpChatPanel::AddEntryWidget(const TSharedPtr<FUnrealMcpChatEntry>& 
 	else
 	{
 		ScrollTranscriptToEnd();
+	}
+}
+
+void SUnrealMcpChatPanel::RebuildEntryWidgets(bool bScrollTranscript, bool bScrollToolLog)
+{
+	if (TranscriptEntriesBox.IsValid())
+	{
+		TranscriptEntriesBox->ClearChildren();
+	}
+
+	if (ToolLogEntriesBox.IsValid())
+	{
+		ToolLogEntriesBox->ClearChildren();
+	}
+
+	for (const TSharedPtr<FUnrealMcpChatEntry>& Entry : Entries)
+	{
+		AddEntryWidgetToPane(Entry, false);
+	}
+
+	InvalidateEntryWidgets();
+	if (bScrollTranscript)
+	{
+		ScrollTranscriptToEnd();
+	}
+	if (bScrollToolLog)
+	{
+		ScrollToolLogToEnd();
 	}
 }
 
@@ -2261,6 +2316,28 @@ void SUnrealMcpChatPanel::InvalidateEntryWidgets()
 	{
 		ToolLogScrollBox->Invalidate(EInvalidateWidgetReason::Prepass);
 	}
+}
+
+bool SUnrealMcpChatPanel::MoveEntryToEnd(const TSharedPtr<FUnrealMcpChatEntry>& Entry)
+{
+	if (!Entry.IsValid())
+	{
+		return false;
+	}
+
+	const int32 ExistingIndex = Entries.IndexOfByPredicate([Entry](const TSharedPtr<FUnrealMcpChatEntry>& Candidate)
+	{
+		return Candidate == Entry;
+	});
+	if (ExistingIndex == INDEX_NONE || ExistingIndex == Entries.Num() - 1)
+	{
+		return false;
+	}
+
+	Entries.RemoveAt(ExistingIndex, 1, EAllowShrinking::No);
+	Entries.Add(Entry);
+	RebuildEntryWidgets(Entry->Type != EUnrealMcpChatEntryType::Tool, Entry->Type == EUnrealMcpChatEntryType::Tool);
+	return true;
 }
 
 void SUnrealMcpChatPanel::ScrollTranscriptToEnd()
