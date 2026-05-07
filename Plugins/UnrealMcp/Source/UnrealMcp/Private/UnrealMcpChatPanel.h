@@ -56,6 +56,7 @@ private:
 	FReply HandleClearClicked();
 	FReply HandleCopyChatClicked();
 	FReply HandleCopyLastLogClicked();
+	FReply HandleToolsOverviewClicked();
 	FReply HandleOpenAiSettingsClicked();
 	FReply HandleTestAiConnectionClicked();
 	FReply HandleRefreshSkillsClicked();
@@ -99,6 +100,7 @@ private:
 	void ResetHistory(bool bAddReadyMessage);
 	FString BuildTranscriptText() const;
 	FString BuildAssistantConversationContext(const FString& CurrentUserPrompt) const;
+	FString BuildToolsOverviewText(const FUnrealMcpExecutionResult& Result) const;
 
 	FUnrealMcpModule* OwnerModule = nullptr;
 	FString LastAssistantResponseId;

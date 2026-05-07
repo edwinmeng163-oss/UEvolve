@@ -407,6 +407,210 @@ namespace UnrealMcpChat
 		Lines.Add(TEXT("- resume rule: continue from the smallest verified next step; inspect before mutating; verify after tool use."));
 		return ClampForAssistantContext(FString::Join(Lines, TEXT("\n")), AssistantActiveTaskMaxChars);
 	}
+
+	struct FToolOverviewItem
+	{
+		FString Name;
+		FString Title;
+		FString Description;
+		FString Category;
+		FString HandlerName;
+		FString HandlerSourceFile;
+		FString RiskLevel;
+		FString TestCoverage;
+		FString Exposure;
+		bool bRequiresWrite = false;
+		bool bRequiresBuild = false;
+		bool bRequiresExternalProcess = false;
+		bool bRequiresRestart = false;
+		bool bDescriptorBacked = false;
+		bool bLegacyHidden = false;
+	};
+
+	FString GetJsonStringField(const TSharedPtr<FJsonObject>& Object, const FString& FieldName, const FString& Fallback = FString())
+	{
+		FString Value;
+		if (Object.IsValid() && Object->TryGetStringField(FieldName, Value))
+		{
+			return Value;
+		}
+		return Fallback;
+	}
+
+	bool GetJsonBoolField(const TSharedPtr<FJsonObject>& Object, const FString& FieldName, bool bFallback = false)
+	{
+		bool bValue = bFallback;
+		if (Object.IsValid() && Object->TryGetBoolField(FieldName, bValue))
+		{
+			return bValue;
+		}
+		return bFallback;
+	}
+
+	int32 GetJsonIntField(const TSharedPtr<FJsonObject>& Object, const FString& FieldName)
+	{
+		double Value = 0.0;
+		if (Object.IsValid() && Object->TryGetNumberField(FieldName, Value))
+		{
+			return static_cast<int32>(Value);
+		}
+		return 0;
+	}
+
+	FString OneLineToolText(FString Text, int32 MaxChars)
+	{
+		Text.ReplaceInline(TEXT("\r"), TEXT(" "));
+		Text.ReplaceInline(TEXT("\n"), TEXT(" "));
+		Text = Text.TrimStartAndEnd();
+		while (Text.Contains(TEXT("  ")))
+		{
+			Text.ReplaceInline(TEXT("  "), TEXT(" "));
+		}
+		if (Text.Len() > MaxChars)
+		{
+			Text = Text.Left(MaxChars - 3) + TEXT("...");
+		}
+		return Text;
+	}
+
+	FToolOverviewItem ToolOverviewItemFromVisibleTool(const TSharedPtr<FJsonObject>& ToolObject)
+	{
+		FToolOverviewItem Item;
+		Item.Name = GetJsonStringField(ToolObject, TEXT("name"));
+		Item.Title = GetJsonStringField(ToolObject, TEXT("title"));
+		Item.Description = GetJsonStringField(ToolObject, TEXT("description"));
+		Item.Category = GetJsonStringField(ToolObject, TEXT("registryCategory"));
+		Item.HandlerName = GetJsonStringField(ToolObject, TEXT("handlerName"), Item.Name);
+		Item.HandlerSourceFile = GetJsonStringField(ToolObject, TEXT("handlerSourceFile"));
+		Item.Exposure = TEXT("visible");
+
+		const TSharedPtr<FJsonObject>* PolicyObject = nullptr;
+		if (ToolObject.IsValid() && ToolObject->TryGetObjectField(TEXT("policy"), PolicyObject) && PolicyObject && (*PolicyObject).IsValid())
+		{
+			Item.RiskLevel = GetJsonStringField(*PolicyObject, TEXT("riskLevel"), TEXT("unknown"));
+			Item.TestCoverage = GetJsonStringField(*PolicyObject, TEXT("testCoverage"), TEXT("missing"));
+			Item.bRequiresWrite = GetJsonBoolField(*PolicyObject, TEXT("requiresWrite"));
+			Item.bRequiresBuild = GetJsonBoolField(*PolicyObject, TEXT("requiresBuild"));
+			Item.bRequiresExternalProcess = GetJsonBoolField(*PolicyObject, TEXT("requiresExternalProcess"));
+			Item.bRequiresRestart = GetJsonBoolField(*PolicyObject, TEXT("requiresRestart"));
+			Item.bDescriptorBacked = GetJsonBoolField(*PolicyObject, TEXT("descriptorBacked"));
+		}
+
+		return Item;
+	}
+
+	FToolOverviewItem ToolOverviewItemFromRegistryEntry(const TSharedPtr<FJsonObject>& EntryObject)
+	{
+		FToolOverviewItem Item;
+		Item.Name = GetJsonStringField(EntryObject, TEXT("name"));
+		Item.Category = GetJsonStringField(EntryObject, TEXT("category"));
+		Item.HandlerName = GetJsonStringField(EntryObject, TEXT("handlerName"), Item.Name);
+		Item.Exposure = GetJsonStringField(EntryObject, TEXT("exposure"), TEXT("visible"));
+		Item.bLegacyHidden = Item.Exposure.Equals(TEXT("legacy_hidden"), ESearchCase::IgnoreCase);
+		Item.Description = GetJsonStringField(EntryObject, TEXT("notes"));
+		Item.Title = Item.Name;
+
+		const TSharedPtr<FJsonObject>* PolicyObject = nullptr;
+		if (EntryObject.IsValid() && EntryObject->TryGetObjectField(TEXT("policy"), PolicyObject) && PolicyObject && (*PolicyObject).IsValid())
+		{
+			Item.RiskLevel = GetJsonStringField(*PolicyObject, TEXT("riskLevel"), TEXT("unknown"));
+			Item.TestCoverage = GetJsonStringField(*PolicyObject, TEXT("testCoverage"), TEXT("missing"));
+			Item.bRequiresWrite = GetJsonBoolField(*PolicyObject, TEXT("requiresWrite"));
+			Item.bRequiresBuild = GetJsonBoolField(*PolicyObject, TEXT("requiresBuild"));
+			Item.bRequiresExternalProcess = GetJsonBoolField(*PolicyObject, TEXT("requiresExternalProcess"));
+			Item.bRequiresRestart = GetJsonBoolField(*PolicyObject, TEXT("requiresRestart"));
+			Item.bDescriptorBacked = GetJsonBoolField(*PolicyObject, TEXT("descriptorBacked"));
+		}
+
+		return Item;
+	}
+
+	bool IsSelfExtensionTool(const FToolOverviewItem& Item)
+	{
+		return Item.Category.Equals(TEXT("self-extension"), ESearchCase::IgnoreCase)
+			|| Item.Name.StartsWith(TEXT("unreal.mcp_"), ESearchCase::IgnoreCase)
+			|| Item.Name.StartsWith(TEXT("unreal.knowledge_"), ESearchCase::IgnoreCase)
+			|| Item.Name.Equals(TEXT("unreal.tool_recommend"), ESearchCase::IgnoreCase)
+			|| Item.Name.StartsWith(TEXT("unreal.workflow_"), ESearchCase::IgnoreCase)
+			|| Item.Name.Equals(TEXT("unreal.preview_change_plan"), ESearchCase::IgnoreCase)
+			|| Item.Name.Equals(TEXT("unreal.capture_project_snapshot"), ESearchCase::IgnoreCase)
+			|| Item.Name.Equals(TEXT("unreal.diff_project_snapshot"), ESearchCase::IgnoreCase)
+			|| Item.Name.Equals(TEXT("unreal.verify_task_outcome"), ESearchCase::IgnoreCase);
+	}
+
+	bool IsCliOrDynamicTool(const FToolOverviewItem& Item)
+	{
+		return Item.bRequiresExternalProcess
+			|| Item.bRequiresBuild
+			|| Item.Name.Contains(TEXT("execute_python"), ESearchCase::IgnoreCase)
+			|| Item.Name.Contains(TEXT("execute_console_command"), ESearchCase::IgnoreCase)
+			|| Item.Name.Equals(TEXT("unreal.mcp_build_editor"), ESearchCase::IgnoreCase)
+			|| Item.Name.Equals(TEXT("unreal.mcp_supervisor_install"), ESearchCase::IgnoreCase)
+			|| Item.Name.Equals(TEXT("unreal.mcp_extension_pipeline"), ESearchCase::IgnoreCase);
+	}
+
+	FString FormatToolOverviewLine(const FToolOverviewItem& Item)
+	{
+		TArray<FString> Tags;
+		Tags.Add(Item.RiskLevel.IsEmpty() ? TEXT("unknown") : Item.RiskLevel);
+		if (Item.bDescriptorBacked)
+		{
+			Tags.Add(TEXT("descriptor"));
+		}
+		if (Item.bRequiresWrite)
+		{
+			Tags.Add(TEXT("write"));
+		}
+		if (Item.bRequiresBuild)
+		{
+			Tags.Add(TEXT("build"));
+		}
+		if (Item.bRequiresExternalProcess)
+		{
+			Tags.Add(TEXT("external"));
+		}
+		if (Item.bRequiresRestart)
+		{
+			Tags.Add(TEXT("restart"));
+		}
+		if (!Item.TestCoverage.IsEmpty() && !Item.TestCoverage.Equals(TEXT("missing"), ESearchCase::IgnoreCase))
+		{
+			Tags.Add(Item.TestCoverage);
+		}
+		if (Item.bLegacyHidden)
+		{
+			Tags.Add(TEXT("legacy_hidden"));
+		}
+
+		const FString DisplayTitle = Item.Title.IsEmpty() || Item.Title.Equals(Item.Name, ESearchCase::CaseSensitive)
+			? FString()
+			: FString::Printf(TEXT(" - %s"), *OneLineToolText(Item.Title, 72));
+		const FString Description = OneLineToolText(Item.Description, 110);
+		const FString DescriptionSuffix = Description.IsEmpty() ? FString() : FString::Printf(TEXT(" | %s"), *Description);
+		const FString HandlerSuffix = Item.HandlerName.IsEmpty() || Item.HandlerName.Equals(Item.Name, ESearchCase::CaseSensitive)
+			? FString()
+			: FString::Printf(TEXT(" -> %s"), *Item.HandlerName);
+
+		return FString::Printf(
+			TEXT("- %s%s [%s]%s%s"),
+			*Item.Name,
+			*HandlerSuffix,
+			*FString::Join(Tags, TEXT(", ")),
+			*DisplayTitle,
+			*DescriptionSuffix);
+	}
+
+	void AppendToolGroup(TArray<FString>& Lines, const FString& Heading, TArray<FString>& GroupLines)
+	{
+		GroupLines.Sort();
+		Lines.Add(FString::Printf(TEXT("\n%s (%d)"), *Heading, GroupLines.Num()));
+		if (GroupLines.Num() == 0)
+		{
+			Lines.Add(TEXT("- none"));
+			return;
+		}
+		Lines.Append(GroupLines);
+	}
 }
 
 void SUnrealMcpChatPanel::Construct(const FArguments& InArgs, FUnrealMcpModule* InOwnerModule)
@@ -469,6 +673,13 @@ void SUnrealMcpChatPanel::Construct(const FArguments& InArgs, FUnrealMcpModule* 
 						HandlePresetClicked(TEXT("/status"));
 						return FReply::Handled();
 					})
+				]
+				+ SWrapBox::Slot()
+				[
+					SNew(SButton)
+					.Text(LOCTEXT("ToolsPreset", "Tools"))
+					.ToolTipText(LOCTEXT("ToolsPresetTooltip", "Show MCP tools grouped by self-extension, legacy, AI/CLI dynamic, and built-in tools."))
+					.OnClicked(this, &SUnrealMcpChatPanel::HandleToolsOverviewClicked)
 				]
 				+ SWrapBox::Slot()
 				[
@@ -804,6 +1015,26 @@ FReply SUnrealMcpChatPanel::HandleCopyLastLogClicked()
 	{
 		FPlatformApplicationMisc::ClipboardCopy(*LastLogText);
 	}
+	return FReply::Handled();
+}
+
+FReply SUnrealMcpChatPanel::HandleToolsOverviewClicked()
+{
+	if (!OwnerModule)
+	{
+		AppendMessage(EUnrealMcpChatEntryType::System, TEXT("Unreal MCP Error"), TEXT("The chat panel is not connected to the module."), true);
+		return FReply::Handled();
+	}
+
+	TSharedPtr<FJsonObject> Arguments = MakeShared<FJsonObject>();
+	const FUnrealMcpExecutionResult Result = OwnerModule->ExecuteToolFromEditorUI(TEXT("unreal.mcp_workbench_status"), *Arguments);
+	if (Result.bIsError || !Result.StructuredContent.IsValid())
+	{
+		AppendToolExecutionResult(TEXT("unreal.mcp_workbench_status"), *Arguments, Result);
+		return FReply::Handled();
+	}
+
+	AppendMessage(EUnrealMcpChatEntryType::System, TEXT("Unreal MCP Tools"), BuildToolsOverviewText(Result));
 	return FReply::Handled();
 }
 
@@ -1721,6 +1952,142 @@ FString SUnrealMcpChatPanel::BuildTranscriptText() const
 	}
 
 	return FString::Join(Blocks, TEXT("\n\n"));
+}
+
+FString SUnrealMcpChatPanel::BuildToolsOverviewText(const FUnrealMcpExecutionResult& Result) const
+{
+	TArray<FString> Lines;
+	TArray<FString> SelfExtensionLines;
+	TArray<FString> LegacyLines;
+	TArray<FString> CliDynamicLines;
+	TArray<FString> BuiltInLines;
+	TSet<FString> AlreadyListedLegacyNames;
+
+	const TSharedPtr<FJsonObject>& Root = Result.StructuredContent;
+	const TSharedPtr<FJsonObject>* AuditObject = nullptr;
+	const TSharedPtr<FJsonObject>* RegistryValidationObject = nullptr;
+	const TSharedPtr<FJsonObject>* HandlerRegistryObject = nullptr;
+
+	const TSharedPtr<FJsonObject> Audit = Root.IsValid() && Root->TryGetObjectField(TEXT("audit"), AuditObject) && AuditObject && (*AuditObject).IsValid()
+		? *AuditObject
+		: Root;
+
+	if (Root.IsValid())
+	{
+		Root->TryGetObjectField(TEXT("toolHandlerRegistry"), HandlerRegistryObject);
+	}
+	if (Audit.IsValid())
+	{
+		Audit->TryGetObjectField(TEXT("toolRegistryValidation"), RegistryValidationObject);
+	}
+
+	const TArray<TSharedPtr<FJsonValue>>* VisibleTools = nullptr;
+	if (Audit.IsValid() && Audit->TryGetArrayField(TEXT("tools"), VisibleTools) && VisibleTools)
+	{
+		for (const TSharedPtr<FJsonValue>& ToolValue : *VisibleTools)
+		{
+			if (!ToolValue.IsValid() || ToolValue->Type != EJson::Object || !ToolValue->AsObject().IsValid())
+			{
+				continue;
+			}
+
+			const UnrealMcpChat::FToolOverviewItem Item = UnrealMcpChat::ToolOverviewItemFromVisibleTool(ToolValue->AsObject());
+			const FString Line = UnrealMcpChat::FormatToolOverviewLine(Item);
+			if (UnrealMcpChat::IsSelfExtensionTool(Item))
+			{
+				SelfExtensionLines.Add(Line);
+			}
+			else if (UnrealMcpChat::IsCliOrDynamicTool(Item))
+			{
+				CliDynamicLines.Add(Line);
+			}
+			else
+			{
+				BuiltInLines.Add(Line);
+			}
+		}
+	}
+
+	const TArray<TSharedPtr<FJsonValue>>* LegacyTools = nullptr;
+	if (Root.IsValid() && Root->TryGetArrayField(TEXT("legacyHiddenTools"), LegacyTools) && LegacyTools)
+	{
+		for (const TSharedPtr<FJsonValue>& ToolValue : *LegacyTools)
+		{
+			if (!ToolValue.IsValid() || ToolValue->Type != EJson::Object || !ToolValue->AsObject().IsValid())
+			{
+				continue;
+			}
+
+			const UnrealMcpChat::FToolOverviewItem Item = UnrealMcpChat::ToolOverviewItemFromRegistryEntry(ToolValue->AsObject());
+			if (!Item.Name.IsEmpty() && !AlreadyListedLegacyNames.Contains(Item.Name))
+			{
+				LegacyLines.Add(UnrealMcpChat::FormatToolOverviewLine(Item));
+				AlreadyListedLegacyNames.Add(Item.Name);
+			}
+		}
+	}
+
+	const TArray<TSharedPtr<FJsonValue>>* AliasTools = nullptr;
+	if (Root.IsValid() && Root->TryGetArrayField(TEXT("handlerAliases"), AliasTools) && AliasTools)
+	{
+		for (const TSharedPtr<FJsonValue>& ToolValue : *AliasTools)
+		{
+			if (!ToolValue.IsValid() || ToolValue->Type != EJson::Object || !ToolValue->AsObject().IsValid())
+			{
+				continue;
+			}
+
+			UnrealMcpChat::FToolOverviewItem Item = UnrealMcpChat::ToolOverviewItemFromRegistryEntry(ToolValue->AsObject());
+			if (!Item.Name.IsEmpty() && !AlreadyListedLegacyNames.Contains(Item.Name))
+			{
+				Item.bLegacyHidden = true;
+				LegacyLines.Add(UnrealMcpChat::FormatToolOverviewLine(Item));
+				AlreadyListedLegacyNames.Add(Item.Name);
+			}
+		}
+	}
+
+	const int32 VisibleToolCount = UnrealMcpChat::GetJsonIntField(Audit, TEXT("toolCount"));
+	const int32 RegistryEntryCount = UnrealMcpChat::GetJsonIntField(Root, TEXT("toolRegistryEntryCount"));
+	const int32 HiddenLegacyCount = UnrealMcpChat::GetJsonIntField(Root, TEXT("legacyHiddenToolCount"));
+	const int32 AliasCount = UnrealMcpChat::GetJsonIntField(Root, TEXT("handlerAliasCount"));
+	const int32 MissingHandlerCount = UnrealMcpChat::GetJsonIntField(Audit, TEXT("missingHandlerCount"));
+	const int32 SchemaIncompatibleCount = UnrealMcpChat::GetJsonIntField(Audit, TEXT("schemaIncompatibleCount"));
+	const bool bFunctionalHealthy = UnrealMcpChat::GetJsonBoolField(Root, TEXT("functionalHealthy"), MissingHandlerCount == 0 && SchemaIncompatibleCount == 0);
+	const bool bDocumentationHealthy = UnrealMcpChat::GetJsonBoolField(Root, TEXT("documentationHealthy"), true);
+
+	int32 RegisteredHandlerCount = 0;
+	if (RegistryValidationObject && (*RegistryValidationObject).IsValid())
+	{
+		RegisteredHandlerCount = UnrealMcpChat::GetJsonIntField(*RegistryValidationObject, TEXT("registeredHandlerCount"));
+	}
+	else if (HandlerRegistryObject && (*HandlerRegistryObject).IsValid())
+	{
+		RegisteredHandlerCount = UnrealMcpChat::GetJsonIntField(*HandlerRegistryObject, TEXT("registeredHandlerCount"));
+	}
+
+	Lines.Add(TEXT("MCP Tools Overview"));
+	Lines.Add(FString::Printf(
+		TEXT("visible=%d, registryEntries=%d, handlers=%d, hiddenLegacy=%d, aliases=%d, schemaIncompatible=%d, missingHandlers=%d"),
+		VisibleToolCount,
+		RegistryEntryCount,
+		RegisteredHandlerCount,
+		HiddenLegacyCount,
+		AliasCount,
+		SchemaIncompatibleCount,
+		MissingHandlerCount));
+	Lines.Add(FString::Printf(
+		TEXT("functionalHealthy=%s, documentationHealthy=%s"),
+		bFunctionalHealthy ? TEXT("true") : TEXT("false"),
+		bDocumentationHealthy ? TEXT("true") : TEXT("false")));
+	Lines.Add(TEXT("Legend: self-extension tools mutate or protect UEvolve's own MCP capabilities; AI/CLI dynamic tools run scripts, builds, external processes, or dynamic commands; legacy tools are hidden compatibility entries or aliases; built-in tools are normal editor/project tools."));
+
+	UnrealMcpChat::AppendToolGroup(Lines, TEXT("Self Extension Tools"), SelfExtensionLines);
+	UnrealMcpChat::AppendToolGroup(Lines, TEXT("AI / CLI Dynamic Tools"), CliDynamicLines);
+	UnrealMcpChat::AppendToolGroup(Lines, TEXT("Legacy / Hidden Compatibility Tools"), LegacyLines);
+	UnrealMcpChat::AppendToolGroup(Lines, TEXT("Built-in Editor / Project Tools"), BuiltInLines);
+
+	return FString::Join(Lines, TEXT("\n"));
 }
 
 FString SUnrealMcpChatPanel::BuildAssistantConversationContext(const FString& CurrentUserPrompt) const
