@@ -55,6 +55,7 @@ class IUnrealMcpAssistantHandle
 public:
 	virtual ~IUnrealMcpAssistantHandle() = default;
 	virtual void Cancel() = 0;
+	virtual bool Steer(const FString& Instruction) = 0;
 };
 
 class FUnrealMcpModule final : public IModuleInterface

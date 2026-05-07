@@ -55,6 +55,7 @@ FUnrealMcpExecutionResult FUnrealMcpModule::ExecuteChatCommand(const FString& In
 					TEXT("/ask <prompt>  (handled by the chat panel AI)\n")
 					TEXT("/reset_ai  (handled by the chat panel AI)\n")
 					TEXT("/stop_ai  (handled by the chat panel AI)\n")
+					TEXT("/steer <guidance>  (handled by the chat panel AI while a request is running)\n")
 					TEXT("Plain text in the chat panel is also treated as an AI ask.\n")
 					TEXT("/status\n")
 					TEXT("/pie [simulate]\n")

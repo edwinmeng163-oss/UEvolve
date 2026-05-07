@@ -98,6 +98,36 @@ public:
 		Finish(TEXT("Generation stopped."), ResponseId, false, true);
 	}
 
+	virtual bool Steer(const FString& Instruction) override
+	{
+		const FString TrimmedInstruction = Instruction.TrimStartAndEnd();
+		if (TrimmedInstruction.IsEmpty())
+		{
+			return false;
+		}
+
+		{
+			const FScopeLock Lock(&StateMutex);
+			if (bCompleted || bCancellationRequested)
+			{
+				return false;
+			}
+
+			PendingSteerInstructions.Add(CollapseForActiveTaskMemory(TrimmedInstruction, MaxSteerInstructionChars));
+			while (PendingSteerInstructions.Num() > MaxPendingSteerInstructions)
+			{
+				PendingSteerInstructions.RemoveAt(0);
+			}
+		}
+
+		RememberActiveTask(
+			TEXT("in_progress_steered"),
+			TEXT("Apply queued /steer guidance at the next model continuation or tool-result turn, then verify before more changes."),
+			TEXT("chat_steer"));
+		EmitStatus(FString::Printf(TEXT("Queued steer guidance for the next AI continuation: %s"), *CollapseForActiveTaskMemory(TrimmedInstruction, 180)));
+		return true;
+	}
+
 private:
 	struct FAssistantToolCall
 	{
@@ -471,13 +501,61 @@ private:
 		return InputArray;
 	}
 
-	TArray<TSharedPtr<FJsonValue>> BuildContinuationInput() const
+	TArray<FString> DrainPendingSteerInstructions()
 	{
-		return BuildUserInput(
+		TArray<FString> Instructions;
+		{
+			const FScopeLock Lock(&StateMutex);
+			Instructions = PendingSteerInstructions;
+			PendingSteerInstructions.Reset();
+		}
+		return Instructions;
+	}
+
+	bool HasPendingSteerInstructions()
+	{
+		const FScopeLock Lock(&StateMutex);
+		return PendingSteerInstructions.Num() > 0;
+	}
+
+	bool AppendPendingSteerInput(TArray<TSharedPtr<FJsonValue>>& InputArray)
+	{
+		const TArray<FString> Instructions = DrainPendingSteerInstructions();
+		if (Instructions.IsEmpty())
+		{
+			return false;
+		}
+
+		TArray<FString> Lines;
+		Lines.Add(TEXT("User steering update for the current AI turn. Treat this as higher priority than the earlier plan, while preserving verified work and avoiding unnecessary rewrites."));
+		for (const FString& Instruction : Instructions)
+		{
+			Lines.Add(FString::Printf(TEXT("- %s"), *Instruction));
+		}
+
+		InputArray.Add(BuildInputMessage(FString::Join(Lines, TEXT("\n"))));
+		return true;
+	}
+
+	TArray<TSharedPtr<FJsonValue>> BuildContinuationInput()
+	{
+		TArray<TSharedPtr<FJsonValue>> InputArray = BuildUserInput(
 			TEXT("Continue from exactly where you left off. ")
 			TEXT("Do not repeat prior completed text unless a very short bridge is needed. ")
 			TEXT("Keep the answer concise and finish the response. ")
 			TEXT("If more tool use is required, continue using tools."));
+		AppendPendingSteerInput(InputArray);
+		return InputArray;
+	}
+
+	TArray<TSharedPtr<FJsonValue>> BuildSteeredFollowupInput()
+	{
+		TArray<TSharedPtr<FJsonValue>> InputArray = BuildUserInput(
+			TEXT("Apply the queued user steering update to the current answer. ")
+			TEXT("If the previous answer already went in the wrong direction, correct course concisely. ")
+			TEXT("Do not redo verified tool work unless the steering explicitly requires it."));
+		AppendPendingSteerInput(InputArray);
+		return InputArray;
 	}
 
 	void SendModelRequest(const TArray<TSharedPtr<FJsonValue>>& InputItems, const FString& PriorResponseId)
@@ -1061,6 +1139,14 @@ private:
 				}
 			}
 
+			if (HasPendingSteerInstructions() && SteerContinuationCount < MaxSteerContinuationCount)
+			{
+				++SteerContinuationCount;
+				EmitStatus(TEXT("AI is applying queued steer guidance."));
+				SendModelRequest(BuildSteeredFollowupInput(), ResponseId);
+				return;
+			}
+
 			if (FinalMessage.TrimStartAndEnd().IsEmpty())
 			{
 				Finish(TEXT("The AI response completed without text or tool calls."), ResponseId, true, false);
@@ -1141,7 +1227,8 @@ private:
 			ToolOutputs.Add(MakeShared<FJsonValueObject>(ToolOutputObject));
 		}
 
-		EmitStatus(TEXT("AI is incorporating the tool results."));
+		const bool bAppliedSteer = AppendPendingSteerInput(ToolOutputs);
+		EmitStatus(bAppliedSteer ? TEXT("AI is incorporating the tool results and queued steer guidance.") : TEXT("AI is incorporating the tool results."));
 		SendModelRequest(ToolOutputs, ResponseId);
 	}
 
@@ -1260,6 +1347,7 @@ private:
 	FCriticalSection StateMutex;
 	TArray<TSharedPtr<FJsonValue>> LastRequestInputItems;
 	FString LastRequestPriorResponseId;
+	TArray<FString> PendingSteerInstructions;
 	TArray<uint8> RawResponseBytes;
 	TArray<uint8> PendingStreamBytes;
 	FString PendingSseData;
@@ -1271,8 +1359,12 @@ private:
 	TArray<FString> RecentToolSummaries;
 	int32 ToolRoundCount = 0;
 	int32 AutoContinuationCount = 0;
+	int32 SteerContinuationCount = 0;
 	static constexpr int32 MaxAutoContinuationCount = 2;
+	static constexpr int32 MaxSteerContinuationCount = 2;
 	static constexpr int32 MaxActiveTaskToolSummaries = 12;
+	static constexpr int32 MaxPendingSteerInstructions = 5;
+	static constexpr int32 MaxSteerInstructionChars = 900;
 	static constexpr int32 LongTaskMemoryRoundThreshold = 4;
 	bool bResponseIncompleteDueToMaxOutputTokens = false;
 	bool bCompleted = false;

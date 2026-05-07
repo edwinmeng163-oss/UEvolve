@@ -686,7 +686,7 @@ void SUnrealMcpChatPanel::Construct(const FArguments& InArgs, FUnrealMcpModule* 
 				.Padding(0.0f, 0.0f, 8.0f, 0.0f)
 				[
 					SAssignNew(InputTextBox, SEditableTextBox)
-					.HintText(LOCTEXT("InputHint", "Try build the current map, /ask inspect the TwinStick map, /stop_ai, or /tool unreal.spawn_actor {...}"))
+					.HintText(LOCTEXT("InputHint", "Try build the current map, /ask inspect the TwinStick map, /steer keep it simple, /stop_ai, or /tool unreal.spawn_actor {...}"))
 					.OnTextCommitted(this, &SUnrealMcpChatPanel::HandleInputCommitted)
 				]
 				+ SHorizontalBox::Slot()
@@ -1320,6 +1320,34 @@ void SUnrealMcpChatPanel::SendCommand(const FString& CommandText)
 		return;
 	}
 
+	const bool bIsSteerCommand = TrimmedCommand.Equals(TEXT("/steer"), ESearchCase::IgnoreCase)
+		|| TrimmedCommand.StartsWith(TEXT("/steer "), ESearchCase::IgnoreCase);
+	if (bIsSteerCommand)
+	{
+		AppendMessage(EUnrealMcpChatEntryType::User, TEXT("You"), TrimmedCommand);
+		const FString SteeringInstruction = TrimmedCommand.Equals(TEXT("/steer"), ESearchCase::IgnoreCase)
+			? FString()
+			: TrimmedCommand.Mid(6).TrimStartAndEnd();
+
+		if (SteeringInstruction.IsEmpty())
+		{
+			AppendMessage(EUnrealMcpChatEntryType::System, TEXT("Unreal MCP Error"), TEXT("Usage: /steer <guidance while AI is running>"), true);
+			return;
+		}
+
+		if (!bAssistantRequestInFlight || !ActiveAssistantHandle.IsValid())
+		{
+			AppendMessage(EUnrealMcpChatEntryType::System, TEXT("Unreal MCP Error"), TEXT("/steer can only be used while an AI request is running. Use plain text or /ask to start a new AI turn."), true);
+			return;
+		}
+
+		if (!ActiveAssistantHandle->Steer(SteeringInstruction))
+		{
+			AppendMessage(EUnrealMcpChatEntryType::System, TEXT("Unreal MCP Error"), TEXT("Unable to queue steer guidance for the active AI request."), true);
+		}
+		return;
+	}
+
 	if (!OwnerModule)
 	{
 		AppendMessage(EUnrealMcpChatEntryType::User, TEXT("You"), TrimmedCommand);
@@ -1330,7 +1358,7 @@ void SUnrealMcpChatPanel::SendCommand(const FString& CommandText)
 	if (bAssistantRequestInFlight)
 	{
 		AppendMessage(EUnrealMcpChatEntryType::User, TEXT("You"), TrimmedCommand);
-		AppendMessage(EUnrealMcpChatEntryType::System, TEXT("Unreal MCP"), TEXT("An AI request is already in progress. Wait for it to finish or press Stop."), true);
+		AppendMessage(EUnrealMcpChatEntryType::System, TEXT("Unreal MCP"), TEXT("An AI request is already in progress. Wait for it to finish, press Stop, or use /steer <guidance> to guide the active run."), true);
 		return;
 	}
 
@@ -1911,7 +1939,7 @@ void SUnrealMcpChatPanel::ResetHistory(bool bAddReadyMessage)
 		AppendMessage(
 			EUnrealMcpChatEntryType::System,
 			TEXT("Unreal MCP"),
-			TEXT("Ready. Type plain text or /ask to use the AI assistant, press Stop to cancel a generation, and use /help for direct commands. Tool calls will appear as cards and this transcript is persisted in Saved/UnrealMcp/ChatHistory.json."));
+			TEXT("Ready. Type plain text or /ask to use the AI assistant, /steer <guidance> to guide a running generation, press Stop to cancel, and use /help for direct commands. Tool calls will appear as cards and this transcript is persisted in Saved/UnrealMcp/ChatHistory.json."));
 	}
 }
 
