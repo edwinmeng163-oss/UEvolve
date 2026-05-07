@@ -29,6 +29,7 @@
 #include "Widgets/Layout/SSpacer.h"
 #include "Widgets/Layout/SWrapBox.h"
 #include "Widgets/SBoxPanel.h"
+#include "Widgets/Text/SMultiLineEditableText.h"
 #include "Widgets/Text/STextBlock.h"
 
 #define LOCTEXT_NAMESPACE "UnrealMcpChatPanel"
@@ -169,6 +170,22 @@ namespace UnrealMcpChat
 		}
 
 		return FString::Join(Lines, TEXT("\n"));
+	}
+
+	TSharedRef<SWidget> MakeSelectableReadOnlyText(
+		TAttribute<FText> Text,
+		const FSlateFontInfo& Font,
+		const FMargin& Margin = FMargin(0.0f))
+	{
+		return SNew(SMultiLineEditableText)
+			.Text(MoveTemp(Text))
+			.IsReadOnly(true)
+			.AutoWrapText(true)
+			.AllowContextMenu(true)
+			.SelectWordOnMouseDoubleClick(true)
+			.ClearTextSelectionOnFocusLoss(false)
+			.Margin(Margin)
+			.Font(Font);
 	}
 
 	FString JsonObjectToPrettyString(const TSharedPtr<FJsonObject>& JsonObject)
@@ -1640,17 +1657,17 @@ TSharedRef<SWidget> SUnrealMcpChatPanel::BuildEntryWidget(const TSharedPtr<FUnre
 				.AutoHeight()
 				.Padding(0.0f, 6.0f, 0.0f, 0.0f)
 				[
-					SNew(STextBlock)
-					.AutoWrapText(true)
-					.Text_Lambda([Entry]()
-					{
-						if (Entry->Body.IsEmpty() && Entry->bIsPending)
+					UnrealMcpChat::MakeSelectableReadOnlyText(
+						TAttribute<FText>::Create(TAttribute<FText>::FGetter::CreateLambda([Entry]()
 						{
-							return FText::FromString(TEXT("Thinking..."));
-						}
+							if (Entry->Body.IsEmpty() && Entry->bIsPending)
+							{
+								return FText::FromString(TEXT("Thinking..."));
+							}
 
-						return FText::FromString(Entry->Body);
-					})
+							return FText::FromString(Entry->Body);
+						})),
+						FAppStyle::GetFontStyle("NormalFont"))
 				]
 				+ SVerticalBox::Slot()
 				.AutoHeight()
@@ -1675,13 +1692,12 @@ TSharedRef<SWidget> SUnrealMcpChatPanel::BuildEntryWidget(const TSharedPtr<FUnre
 						.AutoHeight()
 						.Padding(0.0f, 3.0f, 0.0f, 0.0f)
 						[
-							SNew(STextBlock)
-							.AutoWrapText(true)
-							.Font(FAppStyle::GetFontStyle("SmallFont"))
-							.Text_Lambda([Entry]()
-							{
-								return FText::FromString(Entry->Details);
-							})
+							UnrealMcpChat::MakeSelectableReadOnlyText(
+								TAttribute<FText>::Create(TAttribute<FText>::FGetter::CreateLambda([Entry]()
+								{
+									return FText::FromString(Entry->Details);
+								})),
+								FAppStyle::GetFontStyle("SmallFont"))
 						]
 					]
 				]
@@ -1784,46 +1800,63 @@ void SUnrealMcpChatPanel::InvalidateEntryWidgets()
 {
 	if (TranscriptEntriesBox.IsValid())
 	{
-		TranscriptEntriesBox->Invalidate(EInvalidateWidgetReason::Layout);
+		TranscriptEntriesBox->Invalidate(EInvalidateWidgetReason::Prepass);
+	}
+
+	if (TranscriptScrollBox.IsValid())
+	{
+		TranscriptScrollBox->Invalidate(EInvalidateWidgetReason::Prepass);
 	}
 }
 
-	void SUnrealMcpChatPanel::ScrollTranscriptToEnd()
+void SUnrealMcpChatPanel::ScrollTranscriptToEnd()
+{
+	if (TranscriptEntriesBox.IsValid())
 	{
-		if (TranscriptScrollBox.IsValid())
-		{
-			TranscriptScrollBox->ScrollToEnd();
-		}
-
-		DeferredTranscriptScrollFrames = 2;
-		if (!bDeferredTranscriptScrollActive)
-		{
-			bDeferredTranscriptScrollActive = true;
-			RegisterActiveTimer(
-				0.0f,
-				FWidgetActiveTimerDelegate::CreateSP(this, &SUnrealMcpChatPanel::HandleDeferredTranscriptScroll));
-		}
+		TranscriptEntriesBox->Invalidate(EInvalidateWidgetReason::Prepass);
 	}
 
-	EActiveTimerReturnType SUnrealMcpChatPanel::HandleDeferredTranscriptScroll(double InCurrentTime, float InDeltaTime)
+	if (TranscriptScrollBox.IsValid())
 	{
-		(void)InCurrentTime;
-		(void)InDeltaTime;
-
-		if (TranscriptScrollBox.IsValid())
-		{
-			TranscriptScrollBox->ScrollToEnd();
-		}
-
-		--DeferredTranscriptScrollFrames;
-		if (DeferredTranscriptScrollFrames > 0)
-		{
-			return EActiveTimerReturnType::Continue;
-		}
-
-		bDeferredTranscriptScrollActive = false;
-		return EActiveTimerReturnType::Stop;
+		TranscriptScrollBox->Invalidate(EInvalidateWidgetReason::Prepass);
+		TranscriptScrollBox->ScrollToEnd();
 	}
+
+	DeferredTranscriptScrollFrames = FMath::Max(DeferredTranscriptScrollFrames, 10);
+	if (!bDeferredTranscriptScrollActive)
+	{
+		bDeferredTranscriptScrollActive = true;
+		RegisterActiveTimer(
+			0.0f,
+			FWidgetActiveTimerDelegate::CreateSP(this, &SUnrealMcpChatPanel::HandleDeferredTranscriptScroll));
+	}
+}
+
+EActiveTimerReturnType SUnrealMcpChatPanel::HandleDeferredTranscriptScroll(double InCurrentTime, float InDeltaTime)
+{
+	(void)InCurrentTime;
+	(void)InDeltaTime;
+
+	if (TranscriptEntriesBox.IsValid())
+	{
+		TranscriptEntriesBox->Invalidate(EInvalidateWidgetReason::Prepass);
+	}
+
+	if (TranscriptScrollBox.IsValid())
+	{
+		TranscriptScrollBox->Invalidate(EInvalidateWidgetReason::Prepass);
+		TranscriptScrollBox->ScrollToEnd();
+	}
+
+	--DeferredTranscriptScrollFrames;
+	if (DeferredTranscriptScrollFrames > 0)
+	{
+		return EActiveTimerReturnType::Continue;
+	}
+
+	bDeferredTranscriptScrollActive = false;
+	return EActiveTimerReturnType::Stop;
+}
 
 void SUnrealMcpChatPanel::LoadHistory()
 {
