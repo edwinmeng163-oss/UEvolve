@@ -124,6 +124,25 @@ namespace UnrealMcp
 			return PolicyObject;
 		}
 
+		void AddScaffoldNextStep(
+			TArray<TSharedPtr<FJsonValue>>& NextSteps,
+			const FString& Step,
+			const FString& Tool,
+			const FString& Reason)
+		{
+			TSharedPtr<FJsonObject> StepObject = MakeShared<FJsonObject>();
+			StepObject->SetStringField(TEXT("step"), Step);
+			if (!Tool.IsEmpty())
+			{
+				StepObject->SetStringField(TEXT("tool"), Tool);
+			}
+			if (!Reason.IsEmpty())
+			{
+				StepObject->SetStringField(TEXT("reason"), Reason);
+			}
+			NextSteps.Add(MakeShared<FJsonValueObject>(StepObject));
+		}
+
 		FString MakeMcpGeneratedFunctionSuffixForApply(const FString& ToolName)
 		{
 			FString Suffix = SanitizeMcpToolIdForPath(ToolName);
@@ -750,6 +769,11 @@ namespace UnrealMcp
 
 			if (bValidatePatches && !bPatchesSafe && !bAllowUnsafePatches)
 			{
+				TSharedPtr<FJsonObject> Issue = MakeShared<FJsonObject>();
+				Issue->SetStringField(TEXT("severity"), TEXT("error"));
+				Issue->SetStringField(TEXT("code"), TEXT("patch_validation_failed"));
+				Issue->SetStringField(TEXT("message"), TEXT("One or more scaffold patch fragments failed static validation. The generated tool is still only a scaffold and will not be registered until the patches are repaired, applied, built, and the editor is restarted."));
+				Issues.Add(MakeShared<FJsonValueObject>(Issue));
 				bCanApply = false;
 			}
 
@@ -784,17 +808,83 @@ namespace UnrealMcp
 			const bool bDescriptorRegisteredNow = FindRegisteredMcpToolDescriptor(ToolName) != nullptr;
 			const bool bHandlerRegisteredNow = IsRegisteredToolHandler(ToolName);
 			const bool bToolRegistryLoadedNow = FindToolRegistryEntry(ToolName) != nullptr;
+			const FString& RegistryPlannedText = PlannedTexts.FindChecked(RegistrySourcePath);
+			const bool bRegistryPatchIntegrated =
+				bRegistryAlreadyHasTool
+				|| RegistryPlannedText.Contains(FString::Printf(TEXT("\"name\": \"%s\""), *ToolName), ESearchCase::CaseSensitive)
+				|| RegistryPlannedText.Contains(FString::Printf(TEXT("\"name\":\"%s\""), *ToolName), ESearchCase::CaseSensitive);
 
 			TSharedPtr<FJsonObject> PostcheckObject = MakeShared<FJsonObject>();
 			PostcheckObject->SetStringField(TEXT("mode"), bDryRun ? TEXT("planned") : TEXT("applied"));
 			PostcheckObject->SetBoolField(TEXT("descriptorSourceIntegrated"), RegistrarText.Contains(ToolName, ESearchCase::CaseSensitive) && RegistrarText.Contains(RegistrarCallPatch.TrimStartAndEnd(), ESearchCase::CaseSensitive));
 			PostcheckObject->SetBoolField(TEXT("handlerSourceIntegrated"), CategoryText.Contains(CategoryHandlerPatch.TrimStartAndEnd(), ESearchCase::CaseSensitive) && CategoryText.Contains(CategoryDispatcherPatch.TrimStartAndEnd(), ESearchCase::CaseSensitive));
-			PostcheckObject->SetBoolField(TEXT("registryPatchIntegrated"), bRegistryAlreadyHasTool || !RegistryPatchObject->GetStringField(TEXT("name")).IsEmpty());
+			PostcheckObject->SetBoolField(TEXT("registryPatchIntegrated"), bRegistryPatchIntegrated);
 			PostcheckObject->SetBoolField(TEXT("descriptorRegisteredInCurrentSession"), bDescriptorRegisteredNow);
 			PostcheckObject->SetBoolField(TEXT("handlerMapEntryInCurrentSession"), bHandlerRegisteredNow);
-			PostcheckObject->SetBoolField(TEXT("toolListedInCurrentSession"), bDescriptorRegisteredNow && bToolRegistryLoadedNow);
-			PostcheckObject->SetBoolField(TEXT("requiresBuildRestartForRuntimeVisibility"), !(bDescriptorRegisteredNow && bToolRegistryLoadedNow));
+			PostcheckObject->SetBoolField(TEXT("toolListedInCurrentSession"), bDescriptorRegisteredNow && bToolRegistryLoadedNow && bHandlerRegisteredNow);
+			PostcheckObject->SetBoolField(TEXT("requiresBuildRestartForRuntimeVisibility"), !(bDescriptorRegisteredNow && bToolRegistryLoadedNow && bHandlerRegisteredNow));
 			PostcheckObject->SetStringField(TEXT("verificationTarget"), TEXT("descriptor registered + handler map entry + tools/list visibility + generated test suite after build/restart"));
+
+			FString NotRegisteredReason;
+			if (bValidatePatches && !bPatchesSafe && !bAllowUnsafePatches)
+			{
+				NotRegisteredReason = TEXT("Patch validation failed, so no source integration should proceed. Repair the patch fragments first.");
+			}
+			else if (ConflictCount > 0)
+			{
+				NotRegisteredReason = TEXT("One or more patch fragments conflict with existing source. Resolve the conflict before applying.");
+			}
+			else if (MissingAnchorCount > 0)
+			{
+				NotRegisteredReason = TEXT("The target source anchor was not found. Regenerate the scaffold for the current code layout or patch the dispatcher/registrar fragment.");
+			}
+			else if (bDryRun)
+			{
+				NotRegisteredReason = TEXT("This was a dry run. Source files were not changed, so the tool is not registered yet.");
+			}
+			else if (!(bDescriptorRegisteredNow && bToolRegistryLoadedNow && bHandlerRegisteredNow))
+			{
+				NotRegisteredReason = TEXT("Source/registry changes may be on disk, but the running editor still has the old compiled module and loaded registry. Build, restart the editor, then run tools/list or the generated tests.");
+			}
+
+			TSharedPtr<FJsonObject> RegistrationStatusObject = MakeShared<FJsonObject>();
+			RegistrationStatusObject->SetBoolField(TEXT("scaffoldExists"), true);
+			RegistrationStatusObject->SetBoolField(TEXT("requiredPatchFilesPresent"), true);
+			RegistrationStatusObject->SetBoolField(TEXT("registryPatchPresent"), true);
+			RegistrationStatusObject->SetBoolField(TEXT("patchesSafe"), bPatchesSafe);
+			RegistrationStatusObject->SetBoolField(TEXT("sourcePlannedOrApplied"), bCanApply);
+			RegistrationStatusObject->SetBoolField(TEXT("descriptorSourceIntegrated"), PostcheckObject->GetBoolField(TEXT("descriptorSourceIntegrated")));
+			RegistrationStatusObject->SetBoolField(TEXT("handlerSourceIntegrated"), PostcheckObject->GetBoolField(TEXT("handlerSourceIntegrated")));
+			RegistrationStatusObject->SetBoolField(TEXT("registryPatchIntegrated"), bRegistryPatchIntegrated);
+			RegistrationStatusObject->SetBoolField(TEXT("descriptorRegisteredInCurrentSession"), bDescriptorRegisteredNow);
+			RegistrationStatusObject->SetBoolField(TEXT("handlerRegisteredInCurrentSession"), bHandlerRegisteredNow);
+			RegistrationStatusObject->SetBoolField(TEXT("toolListedInCurrentSession"), bDescriptorRegisteredNow && bToolRegistryLoadedNow && bHandlerRegisteredNow);
+			RegistrationStatusObject->SetBoolField(TEXT("registeredUsableNow"), bDescriptorRegisteredNow && bToolRegistryLoadedNow && bHandlerRegisteredNow);
+			RegistrationStatusObject->SetBoolField(TEXT("requiresBuildRestartForRuntimeVisibility"), !(bDescriptorRegisteredNow && bToolRegistryLoadedNow && bHandlerRegisteredNow));
+			RegistrationStatusObject->SetStringField(TEXT("notRegisteredReason"), NotRegisteredReason);
+
+			TArray<TSharedPtr<FJsonValue>> NextSteps;
+			if (bValidatePatches && !bPatchesSafe && !bAllowUnsafePatches)
+			{
+				AddScaffoldNextStep(NextSteps, TEXT("Validate the failing fragment to see exact static-safety issues."), TEXT("unreal.mcp_validate_cpp_patch"), TEXT("Unsafe or truncated patches are blocked before source integration."));
+				AddScaffoldNextStep(NextSteps, TEXT("Patch the failing fragment, then rerun mcp_apply_scaffold with dryRun=true."), TEXT("unreal.mcp_patch_scaffold_patch"), TEXT("Generated tools are not registered until all required fragments are safe."));
+			}
+			else if (ConflictCount > 0 || MissingAnchorCount > 0)
+			{
+				AddScaffoldNextStep(NextSteps, TEXT("Inspect scaffold integration points and target diffs."), TEXT("unreal.mcp_apply_scaffold"), TEXT("Conflicts or missing anchors must be resolved before writing source."));
+				AddScaffoldNextStep(NextSteps, TEXT("Patch the scaffold fragment that no longer matches current source layout."), TEXT("unreal.mcp_patch_scaffold_patch"), TEXT("The registrar, handler, or dispatcher patch needs to match the current module split."));
+			}
+			else if (bDryRun)
+			{
+				AddScaffoldNextStep(NextSteps, TEXT("Apply the scaffold with dryRun=false after reviewing targetDiffs."), TEXT("unreal.mcp_apply_scaffold"), TEXT("Dry run only previews source, registry, and handler changes."));
+			}
+			else
+			{
+				AddScaffoldNextStep(NextSteps, TEXT("Build the editor target so the generated descriptor and handler are compiled."), TEXT("unreal.mcp_build_editor"), TEXT("C++ self-extension changes are not visible in the running module until rebuild/restart."));
+				AddScaffoldNextStep(NextSteps, TEXT("Restart Unreal Editor and confirm tools/list exposes the new tool."), TEXT("tools/list"), TEXT("The endpoint loads compiled descriptors and handlers at plugin startup."));
+				AddScaffoldNextStep(NextSteps, TEXT("Run the generated tool test or category suite after restart."), TEXT("unreal.mcp_run_tool_test"), TEXT("Registration is only useful if the handler executes successfully."));
+			}
+			AddScaffoldNextStep(NextSteps, TEXT("Verify the final outcome with explicit evidence."), TEXT("unreal.verify_task_outcome"), TEXT("Prevents treating scaffold generation as completed tool integration."));
 
 			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
 			StructuredContent->SetStringField(TEXT("action"), TEXT("mcp_apply_scaffold"));
@@ -823,10 +913,12 @@ namespace UnrealMcp
 			StructuredContent->SetArrayField(TEXT("targetDiffs"), TargetDiffs);
 			StructuredContent->SetArrayField(TEXT("changedFiles"), ChangedFiles);
 			StructuredContent->SetObjectField(TEXT("postcheck"), PostcheckObject);
+			StructuredContent->SetObjectField(TEXT("registrationStatus"), RegistrationStatusObject);
+			StructuredContent->SetArrayField(TEXT("nextSteps"), NextSteps);
 
 			if (!bCanApply)
 			{
-				return MakeExecutionResult(TEXT("Descriptor-first scaffold cannot be applied safely. See changes, issues, patchValidations, and targetDiffs."), StructuredContent, true);
+				return MakeExecutionResult(TEXT("Descriptor-first scaffold is not registered yet and cannot be applied safely. See registrationStatus, nextSteps, issues, patchValidations, and targetDiffs."), StructuredContent, true);
 			}
 
 			if (bDryRun)

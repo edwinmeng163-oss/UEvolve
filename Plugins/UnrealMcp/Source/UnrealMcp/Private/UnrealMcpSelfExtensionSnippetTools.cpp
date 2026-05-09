@@ -439,6 +439,61 @@ namespace UnrealMcp
 			return false;
 		}
 
+		bool TryParseRawStringStart(const FString& Text, int32 Index, FString& OutTerminator, int32& OutContentStart)
+		{
+			if (Index + 2 >= Text.Len() || Text[Index] != TEXT('R') || Text[Index + 1] != TEXT('"'))
+			{
+				return false;
+			}
+
+			const int32 TagStart = Index + 2;
+			int32 ParenIndex = INDEX_NONE;
+			for (int32 SearchIndex = TagStart; SearchIndex < Text.Len(); ++SearchIndex)
+			{
+				const TCHAR Ch = Text[SearchIndex];
+				if (Ch == TEXT('('))
+				{
+					ParenIndex = SearchIndex;
+					break;
+				}
+				if (Ch == TEXT('\\') || Ch == TEXT(')') || Ch == TEXT('"') || Ch == TEXT('\r') || Ch == TEXT('\n')
+					|| FChar::IsWhitespace(Ch)
+					|| SearchIndex - TagStart > 32)
+				{
+					return false;
+				}
+			}
+
+			if (ParenIndex == INDEX_NONE)
+			{
+				return false;
+			}
+
+			const FString Tag = Text.Mid(TagStart, ParenIndex - TagStart);
+			OutTerminator = FString::Printf(TEXT(")%s\""), *Tag);
+			OutContentStart = ParenIndex + 1;
+			return true;
+		}
+
+		void AddSnippetNextStep(
+			TArray<TSharedPtr<FJsonValue>>& NextSteps,
+			const FString& Step,
+			const FString& Tool,
+			const FString& Reason)
+		{
+			TSharedPtr<FJsonObject> StepObject = MakeShared<FJsonObject>();
+			StepObject->SetStringField(TEXT("step"), Step);
+			if (!Tool.IsEmpty())
+			{
+				StepObject->SetStringField(TEXT("tool"), Tool);
+			}
+			if (!Reason.IsEmpty())
+			{
+				StepObject->SetStringField(TEXT("reason"), Reason);
+			}
+			NextSteps.Add(MakeShared<FJsonValueObject>(StepObject));
+		}
+
 		TSharedPtr<FJsonObject> ValidateCppSnippetText(
 			const FString& SnippetText,
 			const FString& SnippetName,
@@ -470,6 +525,209 @@ namespace UnrealMcp
 			if (SnippetText.Len() > 50000)
 			{
 				AddIssue(TEXT("warning"), TEXT("large_snippet"), TEXT("Patch fragment is larger than 50k characters; review before applying."));
+			}
+
+			int32 FinalBraceDepth = 0;
+			int32 FinalParenDepth = 0;
+			int32 FinalBracketDepth = 0;
+			{
+				bool bInLineComment = false;
+				bool bInBlockComment = false;
+				bool bInString = false;
+				bool bInChar = false;
+				bool bInRawString = false;
+				bool bEscape = false;
+				bool bReportedBraceUnderflow = false;
+				bool bReportedParenUnderflow = false;
+				bool bReportedBracketUnderflow = false;
+				FString RawTerminator;
+
+				for (int32 Index = 0; Index < SnippetText.Len(); ++Index)
+				{
+					const TCHAR Ch = SnippetText[Index];
+					const TCHAR Next = Index + 1 < SnippetText.Len() ? SnippetText[Index + 1] : TEXT('\0');
+
+					if (bInRawString)
+					{
+						if (!RawTerminator.IsEmpty()
+							&& Index + RawTerminator.Len() <= SnippetText.Len()
+							&& SnippetText.Mid(Index, RawTerminator.Len()) == RawTerminator)
+						{
+							bInRawString = false;
+							Index += RawTerminator.Len() - 1;
+							RawTerminator.Reset();
+						}
+						continue;
+					}
+
+					if (bInLineComment)
+					{
+						if (Ch == TEXT('\n') || Ch == TEXT('\r'))
+						{
+							bInLineComment = false;
+						}
+						continue;
+					}
+
+					if (bInBlockComment)
+					{
+						if (Ch == TEXT('*') && Next == TEXT('/'))
+						{
+							bInBlockComment = false;
+							++Index;
+						}
+						continue;
+					}
+
+					if (bInString)
+					{
+						if (bEscape)
+						{
+							bEscape = false;
+						}
+						else if (Ch == TEXT('\\'))
+						{
+							bEscape = true;
+						}
+						else if (Ch == TEXT('"'))
+						{
+							bInString = false;
+						}
+						continue;
+					}
+
+					if (bInChar)
+					{
+						if (bEscape)
+						{
+							bEscape = false;
+						}
+						else if (Ch == TEXT('\\'))
+						{
+							bEscape = true;
+						}
+						else if (Ch == TEXT('\''))
+						{
+							bInChar = false;
+						}
+						continue;
+					}
+
+					if (Ch == TEXT('/') && Next == TEXT('/'))
+					{
+						bInLineComment = true;
+						++Index;
+						continue;
+					}
+
+					if (Ch == TEXT('/') && Next == TEXT('*'))
+					{
+						bInBlockComment = true;
+						++Index;
+						continue;
+					}
+
+					int32 RawContentStart = INDEX_NONE;
+					if (TryParseRawStringStart(SnippetText, Index, RawTerminator, RawContentStart))
+					{
+						bInRawString = true;
+						Index = RawContentStart - 1;
+						continue;
+					}
+
+					if (Ch == TEXT('"'))
+					{
+						bInString = true;
+						continue;
+					}
+
+					if (Ch == TEXT('\''))
+					{
+						bInChar = true;
+						continue;
+					}
+
+					if (Ch == TEXT('{'))
+					{
+						++FinalBraceDepth;
+					}
+					else if (Ch == TEXT('}'))
+					{
+						--FinalBraceDepth;
+						if (FinalBraceDepth < 0 && !bReportedBraceUnderflow)
+						{
+							AddIssue(TEXT("error"), TEXT("unbalanced_braces"), TEXT("Patch fragment closes more braces than it opens."));
+							bReportedBraceUnderflow = true;
+						}
+					}
+					else if (Ch == TEXT('('))
+					{
+						++FinalParenDepth;
+					}
+					else if (Ch == TEXT(')'))
+					{
+						--FinalParenDepth;
+						if (FinalParenDepth < 0 && !bReportedParenUnderflow)
+						{
+							AddIssue(TEXT("error"), TEXT("unbalanced_parentheses"), TEXT("Patch fragment closes more parentheses than it opens."));
+							bReportedParenUnderflow = true;
+						}
+					}
+					else if (Ch == TEXT('['))
+					{
+						++FinalBracketDepth;
+					}
+					else if (Ch == TEXT(']'))
+					{
+						--FinalBracketDepth;
+						if (FinalBracketDepth < 0 && !bReportedBracketUnderflow)
+						{
+							AddIssue(TEXT("error"), TEXT("unbalanced_brackets"), TEXT("Patch fragment closes more brackets than it opens."));
+							bReportedBracketUnderflow = true;
+						}
+					}
+				}
+
+				if (bInRawString)
+				{
+					AddIssue(TEXT("error"), TEXT("unterminated_raw_string_literal"), TEXT("Patch fragment contains an unterminated raw string literal. This often means AI output was truncated."));
+				}
+				if (bInString)
+				{
+					AddIssue(TEXT("error"), TEXT("unterminated_string_literal"), TEXT("Patch fragment contains an unterminated string literal."));
+				}
+				if (bInChar)
+				{
+					AddIssue(TEXT("error"), TEXT("unterminated_char_literal"), TEXT("Patch fragment contains an unterminated character literal."));
+				}
+				if (bInBlockComment)
+				{
+					AddIssue(TEXT("error"), TEXT("unterminated_block_comment"), TEXT("Patch fragment contains an unterminated block comment."));
+				}
+				if (FinalBraceDepth > 0)
+				{
+					AddIssue(TEXT("error"), TEXT("unbalanced_braces"), TEXT("Patch fragment opens more braces than it closes. This usually means the generated code is incomplete."));
+				}
+				if (FinalParenDepth > 0)
+				{
+					AddIssue(TEXT("error"), TEXT("unbalanced_parentheses"), TEXT("Patch fragment opens more parentheses than it closes. This usually means the generated code is incomplete."));
+				}
+				if (FinalBracketDepth > 0)
+				{
+					AddIssue(TEXT("error"), TEXT("unbalanced_brackets"), TEXT("Patch fragment opens more brackets than it closes. This usually means the generated code is incomplete."));
+				}
+
+				if (!TrimmedSnippet.IsEmpty())
+				{
+					const TCHAR LastChar = TrimmedSnippet[TrimmedSnippet.Len() - 1];
+					if (LastChar == TEXT(',') || LastChar == TEXT('.') || LastChar == TEXT('=') || LastChar == TEXT('+')
+						|| LastChar == TEXT('-') || LastChar == TEXT('<') || LastChar == TEXT('>')
+						|| LastChar == TEXT(':') || LastChar == TEXT('|') || LastChar == TEXT('&')
+						|| LastChar == TEXT('[') || LastChar == TEXT('(') || LastChar == TEXT('{'))
+					{
+						AddIssue(TEXT("error"), TEXT("truncated_fragment"), TEXT("Patch fragment ends with a dangling token; regenerate or patch the fragment before applying."));
+					}
+				}
 			}
 
 			FString MatchedPattern;
@@ -604,8 +862,12 @@ namespace UnrealMcp
 			}
 			else if (CleanSnippetName == TEXT("CategoryHandlerFunction.patch.cpp"))
 			{
-				if (!SnippetText.Contains(TEXT("FUnrealMcpExecutionResult"), ESearchCase::CaseSensitive)
-					|| !SnippetText.Contains(TEXT("return Result"), ESearchCase::CaseSensitive))
+				const bool bHasExecutionResult = SnippetText.Contains(TEXT("FUnrealMcpExecutionResult"), ESearchCase::CaseSensitive);
+				const bool bHasExecutionReturn =
+					SnippetText.Contains(TEXT("return Result"), ESearchCase::CaseSensitive)
+					|| SnippetText.Contains(TEXT("return MakeExecutionResult"), ESearchCase::CaseSensitive)
+					|| SnippetText.Contains(TEXT("return UnrealMcp::MakeExecutionResult"), ESearchCase::CaseSensitive);
+				if (!bHasExecutionResult || !bHasExecutionReturn)
 				{
 					AddIssue(TEXT("error"), TEXT("missing_execution_result"), TEXT("Category handler function patch must return FUnrealMcpExecutionResult."));
 				}
@@ -645,6 +907,12 @@ namespace UnrealMcp
 			ResultObject->SetNumberField(TEXT("errorCount"), ErrorCount);
 			ResultObject->SetNumberField(TEXT("warningCount"), WarningCount);
 			ResultObject->SetNumberField(TEXT("characterCount"), SnippetText.Len());
+			TSharedPtr<FJsonObject> StructuralObject = MakeShared<FJsonObject>();
+			StructuralObject->SetNumberField(TEXT("braceDepth"), FinalBraceDepth);
+			StructuralObject->SetNumberField(TEXT("parenDepth"), FinalParenDepth);
+			StructuralObject->SetNumberField(TEXT("bracketDepth"), FinalBracketDepth);
+			StructuralObject->SetBoolField(TEXT("balanced"), FinalBraceDepth == 0 && FinalParenDepth == 0 && FinalBracketDepth == 0);
+			ResultObject->SetObjectField(TEXT("structuralCheck"), StructuralObject);
 			ResultObject->SetArrayField(TEXT("issues"), Issues);
 			return ResultObject;
 		}
@@ -899,6 +1167,30 @@ namespace UnrealMcp
 			StructuredContent->SetStringField(TEXT("afterHash"), HashTextForManifest(AfterText));
 			StructuredContent->SetObjectField(TEXT("validation"), ValidationObject);
 			StructuredContent->SetObjectField(TEXT("snippetDiff"), DiffObject);
+			TSharedPtr<FJsonObject> RegistrationStateObject = MakeShared<FJsonObject>();
+			RegistrationStateObject->SetStringField(TEXT("state"), TEXT("patch_fragment_only"));
+			RegistrationStateObject->SetBoolField(TEXT("registeredUsableNow"), false);
+			RegistrationStateObject->SetBoolField(TEXT("requiresApply"), true);
+			RegistrationStateObject->SetBoolField(TEXT("requiresBuildRestart"), true);
+			RegistrationStateObject->SetStringField(TEXT("reason"), TEXT("Editing a scaffold patch only changes the scaffold draft. The tool is not registered until mcp_apply_scaffold applies descriptor, handler, dispatcher, and registry changes, then the editor is rebuilt and restarted."));
+			StructuredContent->SetObjectField(TEXT("registrationState"), RegistrationStateObject);
+
+			TArray<TSharedPtr<FJsonValue>> NextSteps;
+			if (!bSafe)
+			{
+				AddSnippetNextStep(NextSteps, TEXT("Fix this patch fragment until validation safe=true."), TEXT("unreal.mcp_patch_scaffold_patch"), TEXT("Unsafe or truncated fragments are blocked from source integration."));
+				AddSnippetNextStep(NextSteps, TEXT("Re-run patch validation on the scaffold file."), TEXT("unreal.mcp_validate_cpp_patch"), TEXT("Confirms the fragment is syntactically complete enough for apply."));
+			}
+			else if (bDryRun)
+			{
+				AddSnippetNextStep(NextSteps, TEXT("Write the patch edit with dryRun=false after reviewing snippetDiff."), TEXT("unreal.mcp_patch_scaffold_patch"), TEXT("Dry run does not modify the scaffold file."));
+			}
+			else
+			{
+				AddSnippetNextStep(NextSteps, TEXT("Preview descriptor-first integration with dryRun=true."), TEXT("unreal.mcp_apply_scaffold"), TEXT("Checks registrar, handler, dispatcher, and registry insertion points."));
+				AddSnippetNextStep(NextSteps, TEXT("Apply, build, restart, then run the generated test."), TEXT("unreal.mcp_apply_scaffold"), TEXT("A scaffold patch edit alone never makes a new MCP tool visible."));
+			}
+			StructuredContent->SetArrayField(TEXT("nextSteps"), NextSteps);
 
 			if (!bSafe && !bAllowUnsafe)
 			{

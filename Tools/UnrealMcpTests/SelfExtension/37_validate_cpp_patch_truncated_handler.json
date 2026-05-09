@@ -1,0 +1,25 @@
+{
+  "name": "validate_cpp_patch_truncated_handler",
+  "description": "Validate that truncated generated handler fragments are rejected before scaffold apply.",
+  "category": "error_type",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": true,
+  "expectToolCallStructuredFields": {
+    "safe": false,
+    "structuralCheck.balanced": false
+  },
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 337,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.mcp_validate_cpp_patch",
+      "arguments": {
+        "toolName": "unreal.truncated_generated_tool",
+        "patchName": "CategoryHandlerFunction.patch.cpp",
+        "patchText": "FUnrealMcpExecutionResult ExecuteGeneratedTruncatedGeneratedTool(const FString& ToolName, const FJsonObject& Arguments)\n{\n\tFString Broken = TEXT(\"unterminated);\n\treturn MakeExecutionResult(Broken, nullptr, false);\n"
+      }
+    }
+  }
+}
