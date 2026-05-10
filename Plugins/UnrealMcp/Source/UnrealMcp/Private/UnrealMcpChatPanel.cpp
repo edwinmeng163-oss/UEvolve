@@ -1482,14 +1482,14 @@ void SUnrealMcpChatPanel::RefreshProviderOptions()
 	TArray<const FAiProviderConfig*> SortedProviders;
 	for (const FAiProviderConfig& Provider : Settings->Providers) { SortedProviders.Add(&Provider); }
 
-	SortedProviders.Sort([](const FAiProviderConfig* const& A, const FAiProviderConfig* const& B)
+	SortedProviders.Sort([](const FAiProviderConfig& A, const FAiProviderConfig& B)
 	{
-		const FString ADisplay = A ? (A->DisplayName.TrimStartAndEnd().IsEmpty() ? A->Id : A->DisplayName.TrimStartAndEnd()) : FString();
-		const FString BDisplay = B ? (B->DisplayName.TrimStartAndEnd().IsEmpty() ? B->Id : B->DisplayName.TrimStartAndEnd()) : FString();
+		const FString ADisplay = A.DisplayName.TrimStartAndEnd().IsEmpty() ? A.Id : A.DisplayName.TrimStartAndEnd();
+		const FString BDisplay = B.DisplayName.TrimStartAndEnd().IsEmpty() ? B.Id : B.DisplayName.TrimStartAndEnd();
 		const int32 DisplayCompare = ADisplay.Compare(BDisplay, ESearchCase::IgnoreCase);
 		if (DisplayCompare != 0) { return DisplayCompare < 0; }
-		const FString AId = A ? A->Id : FString();
-		const FString BId = B ? B->Id : FString();
+		const FString AId = A.Id;
+		const FString BId = B.Id;
 		return AId.Compare(BId, ESearchCase::IgnoreCase) < 0;
 	});
 
