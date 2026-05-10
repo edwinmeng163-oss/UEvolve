@@ -30,6 +30,7 @@ namespace UnrealMcp
 	namespace Providers
 	{
 		TUniquePtr<IAssistantProvider> CreateOpenAiResponsesProvider();
+		TUniquePtr<IAssistantProvider> CreateOpenAiChatCompletionsProvider();
 		// Returned pointer is owned by an internal static map; caller must NOT delete.
 		IAssistantProvider* ResolveActiveProvider(const UUnrealMcpSettings& Settings, FString& OutError);
 	}
