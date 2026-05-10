@@ -2,6 +2,11 @@
 
 **Unreal Editor MCP Self-Extension Workbench**
 
+AI agents should read [AGENT.md](AGENT.md) first. It is the canonical handoff
+for project structure, current self-extension workflow, RAG/tooling context,
+safe edit rules, and the requirement to update `AGENT.md` plus this `README.md`
+after meaningful changes.
+
 This repository is an Unreal Engine 5.7 editor-tooling workbench focused on editor automation, AI-assisted project inspection, Blueprint scaffolding, UMG setup, and local Model Context Protocol workflows.
 
 Its main deliverable is the **Unreal MCP** editor plugin under `Plugins/UnrealMcp`. The plugin exposes Unreal Editor operations through a localhost MCP endpoint and an in-editor chat panel. The repository root includes `UEvolve.uproject` as the default local development host, while `Examples/UEvolveExample` remains an optional validation/demo project.
