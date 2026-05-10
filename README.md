@@ -2,9 +2,9 @@
 
 **Unreal Editor MCP Self-Extension Workbench**
 
-AI agents should read [AGENT.md](AGENT.md) first. It is the canonical handoff
+AI agents should read [AGENTS.md](AGENTS.md) first. It is the canonical handoff
 for project structure, current self-extension workflow, RAG/tooling context,
-safe edit rules, and the requirement to update `AGENT.md` plus this `README.md`
+safe edit rules, and the requirement to update `AGENTS.md` plus this `README.md`
 after meaningful changes.
 
 This repository is an Unreal Engine 5.7 editor-tooling workbench focused on editor automation, AI-assisted project inspection, Blueprint scaffolding, UMG setup, and local Model Context Protocol workflows.
@@ -43,6 +43,7 @@ The repository currently contains:
 - Explicit ToolRegistry metadata under `Tools/UnrealMcpToolRegistry/tools.json` for category, handler alias, risk level, write/build/process/restart/memory/lock requirements, dry-run support, owner, docs path, and test coverage.
 - Registry-derived ToolHandlerRegistry metadata so audit, dispatch, and validation share the same handler/category view without source scanning.
 - Tool-specific preflight/postcheck verifiers for Blueprint graph, Widget Blueprint, level actor, project memory, skill, scaffold, and self-extension workflow tools.
+- `Tools/UnrealMcpCodexBridge`, a Bun bridge daemon that spawns Codex App Server and exposes a simple text-streaming WebSocket API for the future UE plugin integration.
 
 ## Planning Docs
 
@@ -89,6 +90,40 @@ Full plugin documentation:
 ```text
 Plugins/UnrealMcp/README.md
 ```
+
+## Codex Bridge Daemon
+
+The P7.A Codex bridge lives at:
+
+```text
+Tools/UnrealMcpCodexBridge
+```
+
+It starts a fresh `codex app-server` subprocess on a temporary Unix socket,
+connects using the Codex WebSocket-over-UDS App Server transport, initializes a
+single thread with `gpt-5.5` and reasoning effort `xhigh`, then serves the
+UE-facing endpoint:
+
+```text
+ws://127.0.0.1:8766/uevolve
+```
+
+Start it from the repository root:
+
+```bash
+bun run --cwd Tools/UnrealMcpCodexBridge src/index.ts
+```
+
+Run the smoke client:
+
+```bash
+bun run --cwd Tools/UnrealMcpCodexBridge test-client.ts
+```
+
+The default bridge approval policy is `reject`: Codex command execution, file
+changes, permission escalation, MCP elicitation, and user-input requests are not
+allowed in V1. See `Tools/UnrealMcpCodexBridge/README.md` for protocol,
+configuration, logging, and limitations.
 
 ## Tool Coverage
 

@@ -15,6 +15,7 @@ Core layers:
 - Precision tools: `unreal.preview_change_plan`, `unreal.capture_project_snapshot`, `unreal.diff_project_snapshot`, `unreal.verify_task_outcome`, `unreal.mcp_classify_error`, Blueprint graph inspectors, and Widget tree dumping give Chat a read-back loop before and after edits.
 - `Tools/unreal_mcp_supervisor.py`: external process for restart-aware pipeline automation.
 - `Tools/UnrealMcpSupervisorTemplates`: versioned macOS/Windows supervisor launcher templates with placeholders instead of machine-specific paths.
+- `Tools/UnrealMcpCodexBridge`: Bun daemon for Plan B Codex Desktop/App Server integration. It spawns `codex app-server` on a temporary Unix socket, connects through Codex's WebSocket-over-UDS App Server transport, and exposes a small UE-facing WebSocket protocol on `ws://127.0.0.1:8766/uevolve`.
 - `Saved/UnrealMcp/ActivityLog`: local JSONL activity stream used to distill repeatable workflows into skill drafts.
 - `Schemas/UnrealMcpExtensionManifest.schema.json`: versioned contract for source apply manifests.
 - `Tools/UnrealMcpToolRegistry/schema.json`: versioned contract for explicit tool metadata under `Tools/UnrealMcpToolRegistry/tools.json`.
@@ -25,6 +26,24 @@ Core layers:
 - `SUnrealMcpChatPanel`: conversational command and AI surface.
 - `SUnrealMcpWorkbenchPanel`: thin self-extension console over existing MCP tools. It should not own self-extension business logic; it delegates to `ExecuteToolFromEditorUI` so Chat, HTTP MCP, tests, and Workbench continue sharing the same backend behavior.
 - `Tools/UnrealMcpSkills`: project-local skill instructions.
+
+## External AI Bridge
+
+The Codex bridge is intentionally outside `Plugins/UnrealMcp` for P7.A. The UE
+plugin does not consume it yet; P7.B will add the UE-side client.
+
+Bridge runtime shape:
+
+- Spawned process: `codex app-server --listen unix://<temp>/codex.sock`.
+- App Server transport: HTTP WebSocket upgrade over Unix domain socket, then one
+  Codex JSON-RPC object per WebSocket text frame. The app-server protocol does
+  not use the standard `jsonrpc:"2.0"` field.
+- UE-facing transport: WebSocket on `ws://127.0.0.1:8766/uevolve`.
+- Model defaults: `gpt-5.5` with reasoning effort `xhigh`.
+- Approval default: reject file changes, command execution, permission requests,
+  MCP elicitations, and tool user-input requests so Codex remains text-only.
+- Supervision: if the spawned app-server exits, bridge health becomes `failed`;
+  V1 does not auto-restart it.
 
 ## Module Split Status
 

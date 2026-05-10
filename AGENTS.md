@@ -73,7 +73,7 @@ Core capabilities:
 
 Start here:
 
-1. `AGENT.md`
+1. `AGENTS.md`
 2. `README.md`
 3. `Plugins/UnrealMcp/README.md`
 4. `Docs/Architecture.md`
@@ -113,7 +113,7 @@ Tools/UnrealMcpKnowledge/Evals/core_rag_eval.json
 
 After every meaningful project change, update the AI-facing docs before handoff:
 
-1. Update `AGENT.md` when the project structure, tool-extension workflow,
+1. Update `AGENTS.md` when the project structure, tool-extension workflow,
    safety rules, build/test commands, RAG behavior, or current project status
    changes.
 2. Update `README.md` when user-facing install, usage, feature coverage,
@@ -133,7 +133,7 @@ Important versioned paths:
 
 ```text
 README.md
-AGENT.md
+AGENTS.md
 UEvolve.uproject
 open_uevolve.command
 
@@ -172,6 +172,7 @@ Tools/
   unreal_mcp_stdio_proxy.py
   unreal_mcp_supervisor.py
   validate_tool_registry.py
+  UnrealMcpCodexBridge/
   UnrealMcpKnowledge/
   UnrealMcpSkills/
   UnrealMcpSupervisorTemplates/
@@ -565,6 +566,43 @@ Current Workbench concepts:
 If a button is added, it should call an existing MCP tool through the same path
 used by Chat/HTTP tests whenever possible.
 
+## Codex App Server Bridge
+
+P7 Plan B adds a separate Bun daemon at:
+
+```text
+Tools/UnrealMcpCodexBridge
+```
+
+The daemon is not part of the UE plugin yet. It spawns a fresh
+`codex app-server` subprocess on a temporary Unix socket, performs App Server
+initialization and `thread/start`, then exposes a small UE-facing WebSocket API:
+
+```text
+ws://127.0.0.1:8766/uevolve
+```
+
+Start and smoke test:
+
+```bash
+bun run --cwd Tools/UnrealMcpCodexBridge src/index.ts
+bun run --cwd Tools/UnrealMcpCodexBridge test-client.ts
+```
+
+Codex socket framing is WebSocket-over-UDS, not raw newline JSON, LSP
+`Content-Length`, 4-byte length-prefixed JSON, or concatenated JSON. After the
+WebSocket upgrade, each Codex App Server message is one WebSocket text frame
+containing the lightweight Codex JSON-RPC object without `jsonrpc:"2.0"`.
+
+The bridge hard-codes `gpt-5.5` with reasoning effort `xhigh`. Default approval
+policy is `reject`: command execution, file changes, permission escalation, MCP
+elicitation, dynamic tool calls, and tool user-input requests are declined or
+left unanswered with empty results. `UEVOLVE_CODEX_APPROVAL_POLICY=auto-approve`
+exists for local bridge development only.
+
+Connecting to an already-running Codex Desktop IPC socket is deferred; V1 always
+spawns its own app-server and marks health `failed` if that child exits.
+
 ## Installation Model
 
 The plugin is normally installed into a target project as a project-level plugin.
@@ -689,7 +727,7 @@ Always do these:
 - For long tasks, write/read project memory instead of relying on one huge chat.
 - If RAG/tool recommendation changes, run `unreal.knowledge_eval_run`.
 - If ToolRegistry changes, run `python3 Tools/validate_tool_registry.py`.
-- After meaningful changes, update `AGENT.md`, `README.md`, and any focused doc
+- After meaningful changes, update `AGENTS.md`, `README.md`, and any focused doc
   that explains the changed subsystem.
 
 Avoid these:
