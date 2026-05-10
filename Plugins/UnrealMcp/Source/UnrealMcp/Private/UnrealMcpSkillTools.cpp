@@ -24,6 +24,23 @@ namespace UnrealMcp
 	TArray<TSharedPtr<FJsonValue>> MakeJsonStringArray(const TArray<FString>& Values);
 	FUnrealMcpExecutionResult ProjectMemoryWrite(const FJsonObject& Arguments);
 
+	FUnrealMcpExecutionResult ChatLabelActiveTask(const FJsonObject& Arguments)
+	{
+		FString Label;
+		Arguments.TryGetStringField(TEXT("label"), Label);
+		Label = Label.TrimStartAndEnd().Left(2000);
+		UnrealMcp::SetLaunchSessionTaskLabel(Label);
+
+		TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+		StructuredContent->SetStringField(TEXT("sessionId"), UnrealMcp::GetLaunchSessionId());
+		StructuredContent->SetStringField(TEXT("taskLabel"), Label);
+		StructuredContent->SetBoolField(TEXT("cleared"), Label.IsEmpty());
+		return MakeExecutionResult(
+			Label.IsEmpty() ? TEXT("Cleared active launch-session task label.") : FString::Printf(TEXT("Set active launch-session task label to '%s'."), *Label),
+			StructuredContent,
+			false);
+	}
+
 	bool TryExecuteSkillTool(
 		const FString& ToolName,
 		const FJsonObject& Arguments,
@@ -81,6 +98,12 @@ namespace UnrealMcp
 		if (ToolName == TEXT("unreal.skill_promote_draft"))
 		{
 			OutResult = PromoteDraft(Arguments);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.chat_label_active_task"))
+		{
+			OutResult = ChatLabelActiveTask(Arguments);
 			return true;
 		}
 

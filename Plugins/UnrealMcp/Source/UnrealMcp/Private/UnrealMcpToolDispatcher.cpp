@@ -18,7 +18,6 @@ namespace UnrealMcp
 		const FString& Text,
 		const TSharedPtr<FJsonObject>& StructuredContent = nullptr,
 		bool bIsError = false);
-	TArray<TSharedPtr<FJsonValue>> MakeJsonStringArray(const TArray<FString>& Values);
 	FString GetMcpExtensionLockPath();
 	bool TryAcquireExtensionSessionLock(
 		const FString& Owner,
@@ -110,22 +109,6 @@ FUnrealMcpExecutionResult FUnrealMcpModule::ExecuteToolFromEditorUI(const FStrin
 FUnrealMcpExecutionResult FUnrealMcpModule::ExecuteTool(const FString& ToolName, const FJsonObject& Arguments) const
 {
 	const FString RegisteredHandlerName = UnrealMcp::ResolveToolHandlerName(ToolName);
-	const UnrealMcp::FToolPolicy ActivityPolicy = UnrealMcp::GetToolPolicy(ToolName);
-	if (ActivityPolicy.RiskLevel != UnrealMcp::EToolRiskLevel::ReadOnly)
-	{
-		TArray<FString> ArgumentKeys;
-		for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Arguments.Values)
-		{
-			ArgumentKeys.Add(Pair.Key);
-		}
-		ArgumentKeys.Sort();
-		TSharedPtr<FJsonObject> ActivityDetails = MakeShared<FJsonObject>();
-		ActivityDetails->SetStringField(TEXT("toolName"), ToolName);
-		ActivityDetails->SetStringField(TEXT("handlerName"), RegisteredHandlerName);
-		ActivityDetails->SetStringField(TEXT("riskLevel"), UnrealMcp::LexToString(ActivityPolicy.RiskLevel));
-		ActivityDetails->SetArrayField(TEXT("argumentKeys"), UnrealMcp::MakeJsonStringArray(ArgumentKeys));
-		UnrealMcp::RecordSkillActivityEvent(TEXT("mcp_tool_call"), FString::Printf(TEXT("Called MCP tool %s."), *ToolName), ActivityDetails);
-	}
 
 	TSharedPtr<FJsonObject> PreflightBeforeExecution = UnrealMcp::BuildToolExecutionPreflight(ToolName, Arguments);
 	FUnrealMcpExecutionResult Result = ExecuteToolInternal(RegisteredHandlerName, Arguments);

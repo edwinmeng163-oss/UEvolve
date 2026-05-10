@@ -151,9 +151,14 @@ namespace UnrealMcp
 			Record->SetStringField(TEXT("sessionId"), SessionId);
 			Record->SetStringField(TEXT("ts"), TimestampUtc);
 			Record->SetStringField(TEXT("eventKind"), EventKind);
-			if (!Event.TaskLabel.TrimStartAndEnd().IsEmpty())
+			FString EffectiveTaskLabel = Event.TaskLabel.TrimStartAndEnd();
+			if (EffectiveTaskLabel.IsEmpty())
 			{
-				Record->SetStringField(TEXT("taskLabel"), Event.TaskLabel.TrimStartAndEnd());
+				EffectiveTaskLabel = UnrealMcp::GetLaunchSessionTaskLabel().TrimStartAndEnd();
+			}
+			if (!EffectiveTaskLabel.IsEmpty())
+			{
+				Record->SetStringField(TEXT("taskLabel"), EffectiveTaskLabel);
 			}
 			Record->SetStringField(TEXT("summary"), Event.Summary.Left(2000));
 			if (Event.Payload.IsValid())

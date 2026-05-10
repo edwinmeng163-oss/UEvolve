@@ -2396,6 +2396,27 @@
       "docsPath": "README.md#tool-coverage",
       "reason": "Explicit registry: widget tool with controlled write or workflow side effects.",
       "notes": ""
+    },
+    {
+      "name": "unreal.chat_label_active_task",
+      "category": "skills",
+      "handlerName": "unreal.chat_label_active_task",
+      "exposure": "visible",
+      "riskLevel": "low",
+      "requiresWrite": false,
+      "requiresBuild": false,
+      "requiresExternalProcess": false,
+      "requiresRestart": false,
+      "requiresProjectMemory": false,
+      "requiresLock": false,
+      "dryRunSupport": false,
+      "preflightSupport": false,
+      "postcheckSupport": false,
+      "testCoverage": "category",
+      "owner": "UEvolve Core",
+      "docsPath": "README.md#tool-coverage",
+      "reason": "Explicit registry: low-risk launch-session label setter for ActivityLog task labels.",
+      "notes": ""
     }
   ]
 }

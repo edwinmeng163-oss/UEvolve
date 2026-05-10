@@ -10,6 +10,7 @@ namespace UnrealMcp
 	{
 		FCriticalSection GLaunchSessionMutex;
 		FString GLaunchSessionId;
+		FString GLaunchSessionTaskLabel;
 
 		FString MakeLaunchSessionId()
 		{
@@ -33,8 +34,21 @@ namespace UnrealMcp
 		return GLaunchSessionId;
 	}
 
+	void SetLaunchSessionTaskLabel(const FString& Label)
+	{
+		FScopeLock Lock(&GLaunchSessionMutex);
+		GLaunchSessionTaskLabel = Label.TrimStartAndEnd().Left(2000);
+	}
+
+	FString GetLaunchSessionTaskLabel()
+	{
+		FScopeLock Lock(&GLaunchSessionMutex);
+		return GLaunchSessionTaskLabel;
+	}
+
 	void ShutdownLaunchSession()
 	{
 		FScopeLock Lock(&GLaunchSessionMutex);
+		GLaunchSessionTaskLabel.Reset();
 	}
 }

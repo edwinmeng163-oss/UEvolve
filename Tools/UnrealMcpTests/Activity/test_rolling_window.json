@@ -1,6 +1,6 @@
 {
   "name": "activity_rolling_window_contract",
-  "description": "Structural contract for ActivityLog rolling windows. TODO(T2b): exercise this through an ActivityLog emitter or dedicated internal test surface once always-on event emission is available.",
+  "description": "Structural contract for ActivityLog rolling windows. Exercising rollover requires thousands of on-disk ActivityLog writes, which the current fixture runner intentionally does not drive.",
   "category": "contract_deferred",
   "expectToolListed": false,
   "executeTool": false,

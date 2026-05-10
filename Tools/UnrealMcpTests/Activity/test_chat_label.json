@@ -1,0 +1,42 @@
+{
+  "name": "chat_label_active_task_valid",
+  "description": "Sets a launch-session task label through unreal.chat_label_active_task and documents the clear-label path.",
+  "category": "happy_path",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": false,
+  "expectToolCallStructuredFields": {
+    "taskLabel": "FPS layout pass",
+    "cleared": false
+  },
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 203,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.chat_label_active_task",
+      "arguments": {
+        "label": "FPS layout pass"
+      }
+    }
+  },
+  "clearPathContract": {
+    "request": {
+      "jsonrpc": "2.0",
+      "id": 204,
+      "method": "tools/call",
+      "params": {
+        "name": "unreal.chat_label_active_task",
+        "arguments": {
+          "label": ""
+        }
+      }
+    },
+    "expectedStructuredContent": {
+      "sessionId": "<launch session ID>",
+      "taskLabel": "",
+      "cleared": true
+    },
+    "note": "The current fixture runner executes one request per fixture, so the clear path is recorded here as a same-tool contract."
+  }
+}

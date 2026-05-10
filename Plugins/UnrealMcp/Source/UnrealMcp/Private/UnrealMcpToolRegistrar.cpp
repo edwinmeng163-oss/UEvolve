@@ -170,6 +170,31 @@ namespace UnrealMcp
 			Registrar.Add(Descriptor, Schema);
 		}
 
+		void RegisterSkillSessionMcpToolDescriptors(FUnrealMcpToolRegistrar& Registrar)
+		{
+			TSharedPtr<FJsonObject> LabelProperty = MakeStringProperty(TEXT("User-set label for the current launch session; empty clears."), FString());
+			LabelProperty->SetNumberField(TEXT("maxLength"), 2000);
+
+			TSharedPtr<FJsonObject> Properties = MakeShared<FJsonObject>();
+			Properties->SetObjectField(TEXT("label"), LabelProperty);
+
+			TArray<TSharedPtr<FJsonValue>> Required;
+			TSharedPtr<FJsonObject> Schema = MakeObjectSchema();
+			Schema->SetObjectField(TEXT("properties"), Properties);
+			Schema->SetArrayField(TEXT("required"), Required);
+
+			FUnrealMcpToolDescriptor Descriptor = MakeDescriptor(
+				TEXT("unreal.chat_label_active_task"),
+				TEXT("Label Active Chat Task"),
+				TEXT("Sets or clears a user-visible label for subsequent launch-session ActivityLog events."),
+				TEXT("skills"),
+				TEXT("UnrealMcpSkillTools.cpp"),
+				EUnrealMcpToolRisk::Low);
+			Descriptor.TestCoverage = EUnrealMcpToolTestCoverage::Category;
+			Descriptor.Reason = TEXT("Descriptor: low-risk launch-session label setter used to tag subsequent ActivityLog events.");
+			Registrar.Add(Descriptor, Schema);
+		}
+
 		void RegisterSelfExtensionMcpToolDescriptors(FUnrealMcpToolRegistrar& Registrar)
 		{
 			Registrar.Add(
@@ -509,6 +534,7 @@ namespace UnrealMcp
 			RegisterBlueprintInspectorMcpToolDescriptors(Registrar);
 			RegisterWidgetInspectorMcpToolDescriptors(Registrar);
 			RegisterScaffoldMcpToolDescriptors(Registrar);
+			RegisterSkillSessionMcpToolDescriptors(Registrar);
 			RegisterSelfExtensionMcpToolDescriptors(Registrar);
 		}
 	}

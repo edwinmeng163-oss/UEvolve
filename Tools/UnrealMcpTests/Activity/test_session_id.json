@@ -1,13 +1,17 @@
 {
-  "name": "activity_session_id_contract",
-  "description": "Structural contract for the T2a per-launch ActivityLog session ID. TODO(T2b): wire this to a surfaced tool response and assert the regex plus same-process stability.",
-  "category": "contract_deferred",
-  "expectToolListed": false,
-  "executeTool": false,
+  "name": "activity_session_id_valid",
+  "description": "Executable smoke test for the launch-session ID exposed by unreal.chat_label_active_task.",
+  "category": "happy_path",
+  "expectToolListed": true,
+  "executeTool": true,
   "expectToolCallError": false,
-  "expectationNote": "No T2a MCP tool exposes UnrealMcp::GetLaunchSessionId(). Expected format is ^\\d{8}-\\d{6}-[0-9a-f]{8}$ and repeated calls in one editor process must return the same value.",
+  "expectToolCallStructuredFields": {
+    "taskLabel": "",
+    "cleared": true
+  },
+  "expectationNote": "The current fixture runner can assert exact scalar structured fields but not regexes. This test executes the surfaced tool; expectedContract documents the required sessionId regex and same-process stability.",
   "expectedContract": {
-    "api": "UnrealMcp::GetLaunchSessionId()",
+    "structuredContentField": "sessionId",
     "formatRegex": "^\\d{8}-\\d{6}-[0-9a-f]{8}$",
     "stableWithinProcess": true,
     "resetsOnEditorLaunch": true
