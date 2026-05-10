@@ -2,11 +2,13 @@
 
 #include "CoreMinimal.h"
 #include "UnrealMcpModule.h"
+#include "UnrealMcpSettings.h"
 
 namespace UnrealMcp
 {
 	struct FUnrealMcpAssistantSettingsCache
 	{
+		FString ProviderId;
 		bool bEnableAiAssistant = false;
 		FString OpenAIResponsesUrl;
 		FString OpenAIApiKey;
@@ -20,6 +22,8 @@ namespace UnrealMcp
 	};
 
 	TSharedRef<IUnrealMcpAssistantHandle, ESPMode::ThreadSafe> CreateAssistantRun(
+		const FAiProviderConfig& ProviderConfig,
+		const UUnrealMcpSettings& Settings,
 		const FUnrealMcpModule* Module,
 		const FString& UserPrompt,
 		const FString& ConversationContext,

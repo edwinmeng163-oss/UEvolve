@@ -30,13 +30,17 @@ class FUnrealMcpAssistantRun final
 {
 public:
 	FUnrealMcpAssistantRun(
+		FAiProviderConfig InProviderConfig,
+		const UUnrealMcpSettings& InSettings,
 		const FUnrealMcpModule* InModule,
 		FString InUserPrompt,
 		FString InConversationContext,
 		FString InPreviousResponseId,
 		TFunction<void(const FUnrealMcpAssistantEvent&)> InOnEvent,
 		TFunction<void(const FUnrealMcpAssistantTurnResult&)> InOnComplete)
-		: Module(InModule)
+		: ProviderConfig(MoveTemp(InProviderConfig))
+		, Settings(&InSettings)
+		, Module(InModule)
 		, UserPrompt(MoveTemp(InUserPrompt))
 		, ConversationContext(MoveTemp(InConversationContext))
 		, PreviousResponseId(MoveTemp(InPreviousResponseId))
@@ -47,14 +51,17 @@ public:
 
 	void Start()
 	{
-		const UUnrealMcpSettings* Settings = GetDefault<UUnrealMcpSettings>();
+		check(Settings);
+		CachedSettings.ProviderId = ProviderConfig.Id;
 		CachedSettings.bEnableAiAssistant = Settings->bEnableAiAssistant;
-		CachedSettings.OpenAIResponsesUrl = Settings->OpenAIResponsesUrl;
-		CachedSettings.OpenAIApiKey = Settings->OpenAIApiKey;
-		CachedSettings.OpenAIModel = Settings->OpenAIModel;
-		CachedSettings.OpenAIReasoningEffort = Settings->OpenAIReasoningEffort;
+		CachedSettings.OpenAIResponsesUrl = ProviderConfig.BaseUrl;
+		CachedSettings.OpenAIApiKey = ProviderConfig.ApiKey;
+		CachedSettings.OpenAIModel = ProviderConfig.Model;
+		CachedSettings.OpenAIReasoningEffort = ProviderConfig.ReasoningEffort;
 		CachedSettings.AiMaxToolRounds = Settings->AiMaxToolRounds;
-		CachedSettings.AiMaxOutputTokens = Settings->AiMaxOutputTokens;
+		CachedSettings.AiMaxOutputTokens = ProviderConfig.MaxOutputTokens > 0
+			? ProviderConfig.MaxOutputTokens
+			: Settings->AiMaxOutputTokens;
 		CachedSettings.AiRequestTimeoutSeconds = Settings->AiRequestTimeoutSeconds;
 		CachedSettings.AiRequestActivityTimeoutSeconds = Settings->AiRequestActivityTimeoutSeconds;
 		CachedSettings.AssistantSystemPrompt = Settings->AssistantSystemPrompt;
@@ -67,19 +74,22 @@ public:
 
 		if (CachedSettings.OpenAIApiKey.TrimStartAndEnd().IsEmpty())
 		{
-			Finish(TEXT("OpenAI API key is empty. Set it in Project Settings > Plugins > Unreal MCP > AI."), FString(), true);
+			const FString ProviderId = GetProviderIdForError();
+			Finish(FString::Printf(TEXT("Provider '%s': API key is empty."), *ProviderId), FString(), true);
 			return;
 		}
 
 		if (CachedSettings.OpenAIModel.TrimStartAndEnd().IsEmpty())
 		{
-			Finish(TEXT("OpenAI model is empty. Set it in Project Settings > Plugins > Unreal MCP > AI."), FString(), true);
+			const FString ProviderId = GetProviderIdForError();
+			Finish(FString::Printf(TEXT("Provider '%s': model is empty."), *ProviderId), FString(), true);
 			return;
 		}
 
 		if (CachedSettings.OpenAIResponsesUrl.TrimStartAndEnd().IsEmpty())
 		{
-			Finish(TEXT("OpenAI Responses URL is empty. Set it in Project Settings > Plugins > Unreal MCP > AI."), FString(), true);
+			const FString ProviderId = GetProviderIdForError();
+			Finish(FString::Printf(TEXT("Provider '%s': Base URL is empty."), *ProviderId), FString(), true);
 			return;
 		}
 
@@ -151,6 +161,12 @@ private:
 		FString CallId;
 		FString ArgumentsJson;
 	};
+
+	FString GetProviderIdForError() const
+	{
+		const FString TrimmedId = CachedSettings.ProviderId.TrimStartAndEnd();
+		return TrimmedId.IsEmpty() ? TEXT("<unnamed>") : TrimmedId;
+	}
 
 	void EmitEvent(const FUnrealMcpAssistantEvent& Event) const
 	{
@@ -1411,6 +1427,8 @@ private:
 		return UnrealMcp::JsonObjectToString(OutputObject);
 	}
 
+	FAiProviderConfig ProviderConfig;
+	const UUnrealMcpSettings* Settings = nullptr;
 	const FUnrealMcpModule* Module = nullptr;
 	FString UserPrompt;
 	FString ConversationContext;
@@ -1455,6 +1473,8 @@ private:
 namespace UnrealMcp
 {
 	TSharedRef<IUnrealMcpAssistantHandle, ESPMode::ThreadSafe> CreateAssistantRun(
+		const FAiProviderConfig& ProviderConfig,
+		const UUnrealMcpSettings& Settings,
 		const FUnrealMcpModule* Module,
 		const FString& UserPrompt,
 		const FString& ConversationContext,
@@ -1463,6 +1483,8 @@ namespace UnrealMcp
 		TFunction<void(const FUnrealMcpAssistantTurnResult&)> OnComplete)
 	{
 		const TSharedRef<FUnrealMcpAssistantRun, ESPMode::ThreadSafe> Run = MakeShared<FUnrealMcpAssistantRun, ESPMode::ThreadSafe>(
+			ProviderConfig,
+			Settings,
 			Module,
 			UserPrompt,
 			ConversationContext,
