@@ -1,4 +1,5 @@
 #include "UnrealMcpSelfExtensionTools.h"
+#include "UnrealMcpSelfExtensionInternal.h"
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -8,25 +9,6 @@
 
 namespace UnrealMcp
 {
-	FUnrealMcpExecutionResult MakeExecutionResult(const FString& Text, const TSharedPtr<FJsonObject>& StructuredContent, bool bIsError);
-	FString HashTextForManifest(const FString& Text);
-	FString GetMcpModuleSourcePath();
-	FString GetMcpModuleHeaderPath();
-	FString GetProjectReadmePath();
-	FString GetPluginReadmePath();
-	FString GetProjectMemoryFilePath();
-	FString GetMcpExtensionBackupRoot();
-	FString GetUnrealMcpSavedRoot();
-	FString GetMcpBuildLogRoot();
-	FString GetLatestMcpExtensionManifestPath();
-	FString GetMcpExtensionLockPath();
-	FString GetMcpProjectStateBackupRoot();
-	FString SanitizeMcpToolIdForPath(const FString& ToolName);
-	bool LoadJsonObject(const FString& JsonText, TSharedPtr<FJsonObject>& OutObject);
-	bool LoadJsonObjectFromFile(const FString& FilePath, TSharedPtr<FJsonObject>& OutObject, FString& OutFailureReason);
-	bool SaveJsonObjectToFile(const TSharedPtr<FJsonObject>& Object, const FString& FilePath, FString& OutFailureReason);
-	bool ResolveProjectPathInsideProject(const FString& RequestedPath, FString& OutPath, FString& OutFailureReason);
-
 		FUnrealMcpExecutionResult RollbackLastMcpExtension(const FJsonObject& Arguments)
 		{
 			FString ManifestPath = GetLatestMcpExtensionManifestPath();

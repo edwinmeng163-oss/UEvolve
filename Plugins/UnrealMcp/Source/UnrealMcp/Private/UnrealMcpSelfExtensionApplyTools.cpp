@@ -1,4 +1,5 @@
 #include "UnrealMcpSelfExtensionTools.h"
+#include "UnrealMcpSelfExtensionInternal.h"
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -11,17 +12,6 @@
 
 namespace UnrealMcp
 {
-	int32 GetPositiveIntArgument(const FJsonObject& Arguments, const FString& FieldName, int32 DefaultValue);
-	FUnrealMcpExecutionResult MakeExecutionResult(const FString& Text, const TSharedPtr<FJsonObject>& StructuredContent, bool bIsError);
-	FString HashTextForManifest(const FString& Text);
-	FString GetMcpModuleSourcePath();
-	FString GetMcpExtensionBackupRoot();
-	FString GetLatestMcpExtensionManifestPath();
-	FString GetMcpExtensionLockPath();
-	FString SanitizeMcpToolIdForPath(const FString& ToolName);
-	bool LoadJsonObjectFromFile(const FString& FilePath, TSharedPtr<FJsonObject>& OutObject, FString& OutFailureReason);
-	bool SaveJsonObjectToFile(const TSharedPtr<FJsonObject>& Object, const FString& FilePath, FString& OutFailureReason);
-	bool ResolveMcpScaffoldDirectory(const FJsonObject& Arguments, FString& OutDirectory, FString& OutToolName, FString& OutFailureReason);
 	bool LoadScaffoldSnippet(
 		const FString& ScaffoldDirectory,
 		const FString& FileName,
@@ -29,10 +19,6 @@ namespace UnrealMcp
 		FString& OutSnippet,
 		TArray<TSharedPtr<FJsonValue>>& Issues,
 		FString& OutFailureReason);
-	TSharedPtr<FJsonObject> ValidateCppSnippetText(
-		const FString& SnippetText,
-		const FString& SnippetName,
-		const FString& ToolName);
 	TSharedPtr<FJsonObject> MakeTextDiffObject(const FString& BeforeText, const FString& AfterText, int32 MaxPreviewLines);
 
 		enum class EMcpScaffoldInsertionStatus

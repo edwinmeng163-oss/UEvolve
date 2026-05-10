@@ -1,31 +1,9 @@
 #include "UnrealMcpSelfExtensionTools.h"
+#include "UnrealMcpSelfExtensionInternal.h"
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Misc/Paths.h"
-
-namespace UnrealMcp
-{
-	void AddAuditIssue(TArray<TSharedPtr<FJsonValue>>& Issues, const FString& Severity, const FString& Location, const FString& Message);
-	FUnrealMcpExecutionResult ApplyMcpScaffold(const FJsonObject& Arguments);
-	FUnrealMcpExecutionResult BackupProjectState(const FJsonObject& Arguments);
-	FUnrealMcpExecutionResult BuildEditor(const FJsonObject& Arguments);
-	FUnrealMcpExecutionResult CaptureProjectSnapshot(const FJsonObject& Arguments);
-	FUnrealMcpExecutionResult ClassifyMcpError(const FJsonObject& Arguments);
-	FUnrealMcpExecutionResult CompileErrorFixPlan(const FJsonObject& Arguments);
-	FUnrealMcpExecutionResult DiffProjectSnapshot(const FJsonObject& Arguments);
-	bool ExtractRequestedSchemaFromScaffoldReadme(const FString& ScaffoldDirectory, FString& OutSchemaJson);
-	FUnrealMcpExecutionResult GenerateMcpTests(const FJsonObject& Arguments, const TArray<TSharedPtr<FJsonValue>>& ToolsArray);
-	TSharedPtr<FJsonObject> FindToolDefinitionByName(const TArray<TSharedPtr<FJsonValue>>& ToolsArray, const FString& ToolName);
-	FUnrealMcpExecutionResult MakeExecutionResult(const FString& Text, const TSharedPtr<FJsonObject>& StructuredContent, bool bIsError);
-	TSharedPtr<FJsonObject> MakePipelineStepObject(const FString& StepName, const FString& Status, const FString& Message, const FUnrealMcpExecutionResult* Result = nullptr);
-	FUnrealMcpExecutionResult PreviewChangePlan(const FJsonObject& Arguments, const TArray<TSharedPtr<FJsonValue>>& ToolsArray);
-	bool ResolveMcpScaffoldDirectory(const FJsonObject& Arguments, FString& OutDirectory, FString& OutToolName, FString& OutFailureReason);
-	FUnrealMcpExecutionResult RollbackToManifest(const FJsonObject& Arguments);
-	FUnrealMcpExecutionResult ValidateMcpToolSchema(const FJsonObject& Arguments, const TArray<TSharedPtr<FJsonValue>>& ToolsArray);
-	FUnrealMcpExecutionResult VerifyTaskOutcome(const FJsonObject& Arguments, const TArray<TSharedPtr<FJsonValue>>& ToolsArray);
-	void WriteBuildTestMemory(const FString& MemoryKey, const FString& Summary, const FString& Status, const FString& NextStep, const TSharedPtr<FJsonObject>& Content);
-}
 
 FUnrealMcpExecutionResult FUnrealMcpModule::RunMcpExtensionPipeline(const FJsonObject& Arguments) const
 {

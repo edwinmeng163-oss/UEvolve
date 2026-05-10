@@ -1,4 +1,5 @@
 #include "UnrealMcpSelfExtensionTools.h"
+#include "UnrealMcpSelfExtensionInternal.h"
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -8,18 +9,6 @@
 
 namespace UnrealMcp
 {
-	TSharedPtr<FJsonObject> MakeEmptyObject();
-	FUnrealMcpExecutionResult MakeExecutionResult(const FString& Text, const TSharedPtr<FJsonObject>& StructuredContent, bool bIsError);
-	bool LoadJsonObject(const FString& JsonText, TSharedPtr<FJsonObject>& OutObject);
-	bool LoadProjectMemory(TSharedPtr<FJsonObject>& OutMemory, FString& OutFailureReason);
-	bool ResolveProjectPathInsideProject(const FString& RequestedPath, FString& OutPath, FString& OutFailureReason);
-	bool ResolveProjectOutputDirectory(const FString& RequestedOutputRoot, FString& OutDirectory, FString& OutFailureReason);
-	bool ResolveMcpTestsDirectory(const FJsonObject& Arguments, FString& OutTestsDirectory, FString& OutScaffoldDirectory, FString& OutToolName, FString& OutFailureReason);
-	void FindImmediateChildren(const FString& Directory, const FString& Pattern, bool bFiles, bool bDirectories, TArray<FString>& OutChildren);
-	FString SanitizeMcpToolIdForPath(const FString& ToolName);
-	void WriteBuildTestMemory(const FString& MemoryKey, const FString& Summary, const FString& Status, const FString& NextStep, const TSharedPtr<FJsonObject>& Content);
-
-
 	FString GetJsonValueTypeName(EJson JsonType)
 	{
 		switch (JsonType)

@@ -1,4 +1,5 @@
 #include "UnrealMcpSelfExtensionTools.h"
+#include "UnrealMcpSelfExtensionInternal.h"
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -8,11 +9,6 @@
 
 namespace UnrealMcp
 {
-	FUnrealMcpExecutionResult MakeExecutionResult(const FString& Text, const TSharedPtr<FJsonObject>& StructuredContent, bool bIsError);
-	bool LoadJsonObject(const FString& JsonText, TSharedPtr<FJsonObject>& OutObject);
-	TSharedPtr<FJsonObject> NormalizeOpenAiSchemaObject(const TSharedPtr<FJsonObject>& InputObject);
-	bool IsOpenAiSchemaCompatibleObject(const TSharedPtr<FJsonObject>& InputObject, FString& OutReason);
-
 		void AddAuditIssue(
 			TArray<TSharedPtr<FJsonValue>>& Issues,
 			const FString& Severity,

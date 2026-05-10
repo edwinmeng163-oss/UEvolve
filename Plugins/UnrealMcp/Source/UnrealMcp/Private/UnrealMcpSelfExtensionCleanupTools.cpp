@@ -1,4 +1,5 @@
 #include "UnrealMcpSelfExtensionTools.h"
+#include "UnrealMcpSelfExtensionInternal.h"
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -7,17 +8,6 @@
 
 namespace UnrealMcp
 {
-	FUnrealMcpExecutionResult MakeExecutionResult(const FString& Text, const TSharedPtr<FJsonObject>& StructuredContent, bool bIsError);
-	FString GetUnrealMcpSavedRoot();
-	FString GetProjectMemoryFilePath();
-	FString GetMcpBuildLogRoot();
-	FString GetMcpExtensionBackupRoot();
-	bool IsPathInsideDirectory(const FString& Path, const FString& Directory);
-	void FindImmediateChildren(const FString& Directory, const FString& Pattern, bool bFiles, bool bDirectories, TArray<FString>& OutChildren);
-	TSharedPtr<FJsonObject> MakeFileInfoObject(const FString& Path);
-	bool IsEditorPlaying();
-	FUnrealMcpExecutionResult MakePieBlockedResult(const FString& ToolName);
-
 		bool ShouldIncludeCleanupCandidate(const FString& Path, double MaxAgeDays, const FString& NameContains, FString& OutSkipReason)
 		{
 			OutSkipReason.Reset();

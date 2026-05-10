@@ -1,4 +1,5 @@
 #include "UnrealMcpSelfExtensionTools.h"
+#include "UnrealMcpSelfExtensionInternal.h"
 
 #include "AssetRegistry/AssetData.h"
 #include "AssetRegistry/AssetRegistryModule.h"
@@ -19,20 +20,6 @@
 
 namespace UnrealMcp
 {
-	FUnrealMcpExecutionResult MakeExecutionResult(const FString& Text, const TSharedPtr<FJsonObject>& StructuredContent, bool bIsError);
-	FString GetUnrealMcpSavedRoot();
-	FString GetProjectMemoryFilePath();
-	FString FileTimeToIsoString(const FDateTime& Time);
-	FString MakePathRelativeToProject(const FString& Path);
-	bool LoadJsonObjectFromFile(const FString& FilePath, TSharedPtr<FJsonObject>& OutObject, FString& OutFailureReason);
-	bool SaveJsonObjectToFile(const TSharedPtr<FJsonObject>& Object, const FString& FilePath, FString& OutFailureReason);
-	bool ResolveProjectPathInsideProject(const FString& RequestedPath, FString& OutPath, FString& OutFailureReason);
-	void FindImmediateChildren(const FString& Directory, const FString& Pattern, bool bFiles, bool bDirectories, TArray<FString>& OutChildren);
-	TSharedPtr<FJsonObject> FindToolDefinitionByName(const TArray<TSharedPtr<FJsonValue>>& ToolsArray, const FString& ToolName);
-	TSharedPtr<FJsonObject> MakeFileInfoObject(const FString& Path);
-	FString TailLines(const FString& Text, int32 MaxLines);
-	int32 GetPositiveIntArgument(const FJsonObject& Arguments, const FString& FieldName, int32 DefaultValue);
-
 	namespace
 	{
 		TArray<TSharedPtr<FJsonValue>> MakeStringValues(const TArray<FString>& Values)

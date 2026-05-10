@@ -1,4 +1,5 @@
 #include "UnrealMcpSelfExtensionTools.h"
+#include "UnrealMcpSelfExtensionInternal.h"
 
 #include "Dom/JsonObject.h"
 #include "HAL/FileManager.h"
@@ -10,10 +11,6 @@
 
 namespace UnrealMcp
 {
-	bool LoadJsonObject(const FString& JsonText, TSharedPtr<FJsonObject>& OutObject);
-	bool ResolveProjectOutputDirectory(const FString& RequestedOutputRoot, FString& OutDirectory, FString& OutFailureReason);
-	FString SanitizeMcpToolIdForPath(const FString& ToolName);
-
 		FString HashTextForManifest(const FString& Text)
 		{
 			return FString::Printf(TEXT("%08x"), FCrc::StrCrc32(*Text));

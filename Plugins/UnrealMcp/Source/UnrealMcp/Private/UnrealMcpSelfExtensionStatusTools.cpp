@@ -1,4 +1,5 @@
 #include "UnrealMcpSelfExtensionTools.h"
+#include "UnrealMcpSelfExtensionInternal.h"
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -10,25 +11,6 @@
 
 namespace UnrealMcp
 {
-	int32 GetPositiveIntArgument(const FJsonObject& Arguments, const FString& FieldName, int32 DefaultValue);
-	FUnrealMcpExecutionResult MakeExecutionResult(const FString& Text, const TSharedPtr<FJsonObject>& StructuredContent, bool bIsError);
-	FUnrealMcpExecutionResult AuditMcpTools(const TArray<TSharedPtr<FJsonValue>>& ToolsArray);
-	bool LoadProjectMemory(TSharedPtr<FJsonObject>& OutMemory, FString& OutFailureReason);
-	bool LoadJsonObjectFromFile(const FString& FilePath, TSharedPtr<FJsonObject>& OutObject, FString& OutFailureReason);
-	void FindImmediateChildren(const FString& Directory, const FString& Pattern, bool bFiles, bool bDirectories, TArray<FString>& OutChildren);
-	bool FindNewestFile(const FString& Directory, const FString& Pattern, FString& OutPath);
-	TSharedPtr<FJsonObject> MakeFileInfoObject(const FString& Path);
-	TSharedPtr<FJsonObject> MakeMemoryEntrySummary(const TSharedPtr<FJsonObject>& EntryObject, bool bIncludeContent);
-	TSharedPtr<FJsonObject> FindMemoryEntryByKey(const TSharedPtr<FJsonObject>& MemoryObject, const FString& Key);
-	FString TailLines(const FString& Text, int32 MaxLines);
-	FString RecommendPipelineNextStep(const TSharedPtr<FJsonObject>& MemoryEntry);
-	FString GetUnrealMcpSavedRoot();
-	FString GetProjectMemoryFilePath();
-	FString GetMcpExtensionBackupRoot();
-	FString GetMcpBuildLogRoot();
-	FString GetLatestMcpExtensionManifestPath();
-
-
 	FUnrealMcpExecutionResult PipelineStatus(const FJsonObject& Arguments)
 	{
 		FString MemoryKey = TEXT("mcp.extension.pipeline");

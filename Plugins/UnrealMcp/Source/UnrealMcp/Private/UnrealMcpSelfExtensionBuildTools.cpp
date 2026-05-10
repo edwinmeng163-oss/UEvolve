@@ -1,4 +1,5 @@
 #include "UnrealMcpSelfExtensionTools.h"
+#include "UnrealMcpSelfExtensionInternal.h"
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -11,16 +12,6 @@
 
 namespace UnrealMcp
 {
-	int32 GetPositiveIntArgument(const FJsonObject& Arguments, const FString& FieldName, int32 DefaultValue);
-	FUnrealMcpExecutionResult MakeExecutionResult(const FString& Text, const TSharedPtr<FJsonObject>& StructuredContent, bool bIsError);
-	FString GetMcpBuildLogRoot();
-	FString TailLines(const FString& Text, int32 MaxLines);
-	bool LoadJsonObject(const FString& JsonText, TSharedPtr<FJsonObject>& OutObject);
-	bool FindNewestFile(const FString& Directory, const FString& Pattern, FString& OutPath);
-	bool ResolveProjectPathInsideProject(const FString& RequestedPath, FString& OutPath, FString& OutFailureReason);
-	FString SanitizeMcpToolIdForPath(const FString& ToolName);
-	FString JsonObjectToString(const TSharedPtr<FJsonObject>& Object);
-	TArray<TSharedPtr<FJsonValue>> MakeJsonStringArray(const TArray<FString>& Strings);
 	FUnrealMcpExecutionResult ProjectMemoryWrite(const FJsonObject& Arguments);
 
 		FString GetHostBuildPlatformName()

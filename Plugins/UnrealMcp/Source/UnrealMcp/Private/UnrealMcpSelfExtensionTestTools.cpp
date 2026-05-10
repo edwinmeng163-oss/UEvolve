@@ -1,4 +1,5 @@
 #include "UnrealMcpSelfExtensionTools.h"
+#include "UnrealMcpSelfExtensionInternal.h"
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -8,26 +9,8 @@
 
 namespace UnrealMcp
 {
-	int32 GetPositiveIntArgument(const FJsonObject& Arguments, const FString& FieldName, int32 DefaultValue);
-	FUnrealMcpExecutionResult MakeExecutionResult(const FString& Text, const TSharedPtr<FJsonObject>& StructuredContent, bool bIsError);
 	TSharedPtr<FJsonObject> MakeObjectSchema();
-	TSharedPtr<FJsonObject> MakeFileInfoObject(const FString& Path);
-	TArray<TSharedPtr<FJsonValue>> MakeJsonStringArray(const TArray<FString>& Strings);
-	FString JsonObjectToString(const TSharedPtr<FJsonObject>& Object);
 	FString NormalizeFullPathForCompare(const FString& Path);
-	FString GetUnrealMcpSavedRoot();
-	bool LoadJsonObject(const FString& JsonText, TSharedPtr<FJsonObject>& OutObject);
-	bool LoadJsonObjectFromFile(const FString& FilePath, TSharedPtr<FJsonObject>& OutObject, FString& OutFailureReason);
-	bool ResolveProjectPathInsideProject(const FString& RequestedPath, FString& OutPath, FString& OutFailureReason);
-	bool ResolveProjectOutputDirectory(const FString& RequestedOutputRoot, FString& OutDirectory, FString& OutFailureReason);
-	bool ResolveMcpScaffoldDirectory(const FJsonObject& Arguments, FString& OutDirectory, FString& OutToolName, FString& OutFailureReason);
-	FString SanitizeMcpToolIdForPath(const FString& ToolName);
-	TSharedPtr<FJsonObject> ValidateCppSnippetText(
-		const FString& SnippetText,
-		const FString& SnippetName,
-		const FString& ToolName);
-	void FindImmediateChildren(const FString& Directory, const FString& Pattern, bool bFiles, bool bDirectories, TArray<FString>& OutChildren);
-	TSharedPtr<FJsonObject> FindToolDefinitionByName(const TArray<TSharedPtr<FJsonValue>>& ToolsArray, const FString& ToolName);
 	bool AnalyzeOpenAiSchemaCompatibility(
 		const TSharedPtr<FJsonObject>& InputSchema,
 		TArray<TSharedPtr<FJsonValue>>& Issues,

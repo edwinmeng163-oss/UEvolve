@@ -1,4 +1,5 @@
 #include "UnrealMcpSelfExtensionTools.h"
+#include "UnrealMcpSelfExtensionInternal.h"
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -8,18 +9,6 @@
 
 namespace UnrealMcp
 {
-	int32 GetPositiveIntArgument(const FJsonObject& Arguments, const FString& FieldName, int32 DefaultValue);
-	FUnrealMcpExecutionResult MakeExecutionResult(const FString& Text, const TSharedPtr<FJsonObject>& StructuredContent, bool bIsError);
-	bool ResolveProjectPathInsideProject(const FString& RequestedPath, FString& OutPath, FString& OutFailureReason);
-	bool LoadJsonObjectFromFile(const FString& FilePath, TSharedPtr<FJsonObject>& OutObject, FString& OutFailureReason);
-	bool SaveJsonObjectToFile(const TSharedPtr<FJsonObject>& Object, const FString& FilePath, FString& OutFailureReason);
-	bool ResolveMcpScaffoldDirectory(const FJsonObject& Arguments, FString& OutDirectory, FString& OutToolName, FString& OutFailureReason);
-	FString GetLatestMcpExtensionManifestPath();
-	FString GetUnrealMcpSavedRoot();
-	FString HashTextForManifest(const FString& Text);
-	FString SanitizeMcpToolIdForPath(const FString& ToolName);
-	void AddAuditIssue(TArray<TSharedPtr<FJsonValue>>& Issues, const FString& Severity, const FString& Location, const FString& Message);
-
 		void BuildSimpleLineDiffPreview(
 			const FString& BeforeText,
 			const FString& AfterText,
