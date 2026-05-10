@@ -1,0 +1,35 @@
+{
+  "name": "knowledge_search_source_kinds_filter",
+  "description": "Search versioned-doc cards through the additive sourceKinds filter.",
+  "category": "happy_path",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": false,
+  "expectToolCallStructuredFields": {
+    "action": "knowledge_search",
+    "query": "Knowledge RAG source taxonomy"
+  },
+  "expectationNote": "The current fixture runner asserts scalar structured fields. expectedContract records the array-level assertion: every returned result must have sourceKind=versioned-doc.",
+  "expectedContract": {
+    "requestArgument": "sourceKinds",
+    "allowedResultSourceKind": "versioned-doc",
+    "allResultsMatchFilter": true,
+    "kindStatusPresent": true
+  },
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 501,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.knowledge_search",
+      "arguments": {
+        "query": "Knowledge RAG source taxonomy",
+        "sourceKinds": [
+          "versioned-doc"
+        ],
+        "limit": 5,
+        "maxExcerptChars": 240
+      }
+    }
+  }
+}

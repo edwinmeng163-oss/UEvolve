@@ -1,0 +1,25 @@
+{
+  "name": "knowledge_search_kind_status",
+  "description": "Search responses should always include kindStatus and mark runtime-memory as reserved until an indexer emits it.",
+  "category": "happy_path",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": false,
+  "expectToolCallStructuredFields": {
+    "action": "knowledge_search",
+    "query": "test",
+    "kindStatus.runtime-memory": "reserved-not-active"
+  },
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 502,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.knowledge_search",
+      "arguments": {
+        "query": "test",
+        "limit": 1
+      }
+    }
+  }
+}
