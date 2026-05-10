@@ -1,0 +1,114 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://uevolve.local/schemas/UnrealMcpActivityLogEntry.schema.json",
+  "title": "UEvolve.UnrealMcpActivityLogEntry.v2",
+  "description": "A local-first UEvolve ActivityLog JSONL entry used by closed-loop RAG session evidence.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "sessionId",
+    "ts",
+    "eventKind",
+    "summary"
+  ],
+  "properties": {
+    "sessionId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "ts": {
+      "type": "string",
+      "minLength": 1
+    },
+    "eventKind": {
+      "type": "string",
+      "enum": [
+        "tool_call",
+        "chat_turn",
+        "manifest_apply",
+        "manifest_dryrun",
+        "skill_apply",
+        "skill_distilled",
+        "asset_change",
+        "level_open",
+        "pie_event",
+        "map_check",
+        "console_command",
+        "extension_lock_acquire",
+        "extension_lock_release",
+        "heartbeat",
+        "recording_started",
+        "recording_stopped",
+        "skill_draft_saved",
+        "skill_draft_promoted",
+        "mcp_tool_call",
+        "mcp_tool_result"
+      ]
+    },
+    "taskLabel": {
+      "type": "string"
+    },
+    "summary": {
+      "type": "string"
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "refs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mapPath": {
+          "type": "string"
+        },
+        "blueprintPath": {
+          "type": "string"
+        },
+        "actorLabels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "assetPaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "correlation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "chatTurnId": {
+          "type": "string"
+        },
+        "toolCallId": {
+          "type": "string"
+        },
+        "manifestId": {
+          "type": "string"
+        },
+        "parentSessionId": {
+          "type": "string"
+        }
+      }
+    },
+    "eventType": {
+      "type": "string"
+    },
+    "goal": {
+      "type": "string"
+    },
+    "timestampUtc": {
+      "type": "string"
+    },
+    "details": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

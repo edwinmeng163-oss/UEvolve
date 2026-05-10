@@ -1,0 +1,30 @@
+{
+  "name": "activity_rolling_window_contract",
+  "description": "Structural contract for ActivityLog rolling windows. TODO(T2b): exercise this through an ActivityLog emitter or dedicated internal test surface once always-on event emission is available.",
+  "category": "contract_deferred",
+  "expectToolListed": false,
+  "executeTool": false,
+  "expectToolCallError": false,
+  "expectationNote": "The shared writer rotates before append when either cap is reached: 5000 entries or 10 MB. It preserves the same sessionId and renames the current file to <sessionId>.<rolloverIndex>.jsonl starting at 1.",
+  "expectedContract": {
+    "activeFile": "Saved/UnrealMcp/ActivityLog/<sessionId>.jsonl",
+    "rolledFiles": [
+      "Saved/UnrealMcp/ActivityLog/<sessionId>.1.jsonl",
+      "Saved/UnrealMcp/ActivityLog/<sessionId>.2.jsonl"
+    ],
+    "maxEntriesPerFile": 5000,
+    "maxFileBytes": 10485760,
+    "dropDataOnRotate": false,
+    "readerPattern": "<sessionId>*.jsonl",
+    "readerSort": "lexicographic"
+  },
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 202,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.chat_label_active_task",
+      "arguments": {}
+    }
+  }
+}
