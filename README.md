@@ -47,6 +47,8 @@ The repository currently contains:
 - [Security Model](Docs/SecurityModel.md)
 - [Self-Extension Pipeline](Docs/SelfExtensionPipeline.md)
 - [Knowledge And RAG Plan](Docs/KnowledgeRag.md)
+- [Deployment Troubleshooting](Docs/DeploymentTroubleshooting.md)
+- [Unreal Task Recipes](Docs/UnrealTaskRecipes.md)
 - [Tool Naming](Docs/ToolNaming.md)
 - [Manifest Schema](Docs/ManifestSchema.md)
 - [External Supervisor](Docs/Supervisor.md)
@@ -143,6 +145,9 @@ Unreal MCP currently supports:
   - `unreal.knowledge_index_refresh`
   - `unreal.knowledge_search`
   - `unreal.tool_recommend`
+  - `unreal.tool_gap_analyze`
+  - `unreal.workflow_recommend`
+  - `unreal.knowledge_eval_run`
 - Legacy/demo gameplay scaffold helpers are retained for direct compatibility
   but hidden from AI-facing `tools/list`:
   - `unreal.scaffold_round_system`
@@ -344,16 +349,27 @@ Saved/UnrealMcp/KnowledgeSources/UnrealEngineOfficialDocs/5.7
 
 The fetcher uses Epic's structured documentation JSON endpoint for normal docs
 pages and static HTML for pages like the Unreal Python API. Low-content pages are
-flagged in `manifest.json` so the future knowledge indexer can skip or
-deprioritize weak sources. See [Knowledge And RAG Plan](Docs/KnowledgeRag.md).
+flagged in `manifest.json` so the knowledge indexer can skip or deprioritize
+weak sources. KnowledgeCards are section-aware, use Chinese/English synonym
+expansion, and follow the schema in
+`Schemas/UnrealMcpKnowledgeCard.schema.json`. See
+[Knowledge And RAG Plan](Docs/KnowledgeRag.md).
 
-Chat can connect the RAG layer on demand. Search first; if the index is missing,
-refresh it and retry:
+Versioned local knowledge also includes deployment troubleshooting and common
+Unreal task recipes, so first-run RAG can answer practical install, Blueprint,
+Widget, first-person character, and self-extension workflow questions before a
+large official documentation cache has been downloaded.
+
+Chat now builds a compact RAG/tool-planning capsule before AI turns. You can
+also call the RAG layer directly:
 
 ```text
 /tool unreal.knowledge_search {"query":"Blueprint graph editing tools"}
 /tool unreal.knowledge_index_refresh {"includeOfficialDocs":true,"includeVersionedDocs":true,"includeToolRegistry":true}
 /tool unreal.tool_recommend {"task":"Build a Widget HUD using existing MCP tools","riskMax":"medium"}
+/tool unreal.tool_gap_analyze {"task":"Should this become a new MCP tool?","riskMax":"medium"}
+/tool unreal.workflow_recommend {"task":"Build and verify a Widget HUD","riskMax":"medium"}
+/tool unreal.knowledge_eval_run {"evalPath":"Tools/UnrealMcpKnowledge/Evals","includeDetails":false}
 ```
 
 External supervisor:

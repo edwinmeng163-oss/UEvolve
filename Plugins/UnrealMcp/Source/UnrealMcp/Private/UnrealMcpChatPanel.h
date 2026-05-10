@@ -55,7 +55,7 @@ private:
 	FReply HandleStopClicked();
 	FReply HandleClearClicked();
 	FReply HandleCopyChatClicked();
-	FReply HandleCopyLastLogClicked();
+	FReply HandleCopyToolLogClicked();
 	FReply HandleToolsOverviewClicked();
 	FReply HandleOpenAiSettingsClicked();
 	FReply HandleTestAiConnectionClicked();
@@ -104,12 +104,18 @@ private:
 	void SaveHistory() const;
 	void ResetHistory(bool bAddReadyMessage);
 	FString BuildTranscriptText() const;
+	FString BuildToolLogText() const;
+	bool HasTranscriptEntries() const;
+	bool HasToolLogEntries() const;
+	FString BuildRagContextBlock(const FString& CurrentUserPrompt) const;
 	FString BuildAssistantConversationContext(const FString& CurrentUserPrompt) const;
 	FString BuildToolsOverviewText(const FUnrealMcpExecutionResult& Result) const;
 
 	FUnrealMcpModule* OwnerModule = nullptr;
 	FString LastAssistantResponseId;
 	FString LastLogText;
+	mutable FString LastRagContextPrompt;
+	mutable FString LastRagContextBlock;
 	bool bAssistantRequestInFlight = false;
 	bool bHasInjectedPersistedContextThisSession = false;
 	TArray<TSharedPtr<FUnrealMcpChatEntry>> Entries;

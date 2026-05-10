@@ -91,6 +91,9 @@ Editor action tools:
 - `unreal.knowledge_index_refresh`
 - `unreal.knowledge_search`
 - `unreal.tool_recommend`
+- `unreal.tool_gap_analyze`
+- `unreal.workflow_recommend`
+- `unreal.knowledge_eval_run`
 - `unreal.project_memory_write`
 - `unreal.project_memory_read`
 - `unreal.project_memory_view`
@@ -520,9 +523,9 @@ Inspect pipeline state and last source apply:
 
 `unreal.workflow_run` is the generic composition executor for bounded high-level tool combinations. It accepts inline `steps`, a `workflowJson` string, or a project-local `workflowPath`, defaults to `dryRun:true`, blocks nested workflows plus high/critical step tools unless explicitly allowed, executes every step through the normal MCP handler path, and can write `chat.active_task` for continuation after planned, paused, or completed workflows.
 
-`unreal.knowledge_search` and `unreal.tool_recommend` are the first local RAG-facing planning tools. Chat should search first; if the local KnowledgeCard index is missing, run `unreal.knowledge_index_refresh` and retry. The index is written under `Saved/UnrealMcp/KnowledgeIndex`, while fetched official documentation caches stay under `Saved/UnrealMcp/KnowledgeSources`.
+`unreal.knowledge_search`, `unreal.tool_recommend`, `unreal.tool_gap_analyze`, `unreal.workflow_recommend`, and `unreal.knowledge_eval_run` are the local RAG-facing planning tools. Chat builds a compact RAG/tool-planning capsule before AI turns; if the local KnowledgeCard index is missing, it can run `unreal.knowledge_index_refresh` and retry. The index is written under `Saved/UnrealMcp/KnowledgeIndex`, while fetched official documentation caches stay under `Saved/UnrealMcp/KnowledgeSources`.
 
-The Workbench UI is intentionally thin: it calls the same MCP tools used by Chat and displays the latest structured result. It currently exposes safe operational buttons for status refresh, audit, core test suite, pipeline status, lock status, Skill Activity status, draft distillation, promote dry-run, and copying the latest result. High-risk actions such as apply, build, restart, real promote, and rollback should stay behind the existing dry-run, lock, supervisor, and manifest workflow until the UI adds explicit confirmation surfaces.
+The Workbench UI is intentionally thin: it calls the same MCP tools used by Chat and displays the latest structured result. It currently exposes safe operational buttons for status refresh, audit, core test suite, pipeline status, lock status, Skill Activity status, draft distillation, promote dry-run, Knowledge refresh/search/tool recommendation/eval, and copying the latest result. High-risk actions such as apply, build, restart, real promote, and rollback should stay behind the existing dry-run, lock, supervisor, and manifest workflow until the UI adds explicit confirmation surfaces.
 
 `tools/list`, audit output, and workbench status include ToolRegistry policy metadata for every visible tool:
 

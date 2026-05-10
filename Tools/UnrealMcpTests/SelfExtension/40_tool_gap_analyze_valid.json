@@ -1,0 +1,25 @@
+{
+  "name": "tool_gap_analyze_valid",
+  "description": "Analyze whether a high-level Widget HUD task can use existing tools or needs a new MCP tool.",
+  "category": "happy_path",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": false,
+  "expectToolCallStructuredFields": {
+    "action": "tool_gap_analyze",
+    "riskMax": "medium"
+  },
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 340,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.tool_gap_analyze",
+      "arguments": {
+        "task": "Build a Widget HUD with existing UMG tools and verify the result",
+        "riskMax": "medium",
+        "limit": 6
+      }
+    }
+  }
+}

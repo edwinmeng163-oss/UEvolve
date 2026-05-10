@@ -27,6 +27,9 @@ Versioned sources:
   sandboxed tool usage.
 - `Docs/**`, `README.md`, and `Plugins/UnrealMcp/README.md`: installation,
   architecture, security, supervisor, pipeline, and troubleshooting docs.
+- `Docs/DeploymentTroubleshooting.md` and `Docs/UnrealTaskRecipes.md`:
+  practical install recovery, common editor tasks, and safe self-extension
+  workflows.
 - `Tools/UnrealMcpSkills/**`: reviewed reusable skills promoted by the user.
 
 Local runtime sources:
@@ -69,11 +72,20 @@ Official Unreal Engine docs bootstrap:
 Start with deterministic local retrieval before embeddings:
 
 1. Parse versioned docs, registry entries, test fixtures, skills, and selected
-   local memory into normalized `KnowledgeCard` records.
+   local memory into normalized `KnowledgeCard` records. The versioned schema is
+   `Schemas/UnrealMcpKnowledgeCard.schema.json`.
 2. Store a generated index under `Saved/UnrealMcp/KnowledgeIndex/index.json`.
-3. Score search with simple token matching, title/category boosts, and exact
+   The `cards.jsonl` companion file is written as UTF-8 JSONL so external
+   scripts and package validators can inspect it without Unreal-specific text
+   decoding.
+3. Split markdown-like sources by section headings before chunking, so search
+   can cite the relevant local section instead of a random character window.
+4. Score search with token matching, Chinese/English synonym expansion,
+   title/section/category boosts, source weights, confidence weights, and exact
    tool-name boosts.
-4. Return compact cards with source path, excerpt, category, risk metadata, and
+5. De-duplicate near-identical cards and collapse repeated adjacent source
+   sections in search results.
+6. Return compact cards with source path, excerpt, category, risk metadata, and
    suggested next tool calls.
 
 This avoids API cost, preserves privacy, and works offline. Embeddings can be
@@ -102,33 +114,47 @@ added later as an optional backend, but the baseline should not require them.
   dry-run/preflight needs, backup needs, and verification tools.
 - Should prefer composition before self-extension.
 
-`unreal.tool_gap_analyze`
+`unreal.tool_gap_analyze` implemented
 
 - Decides whether a task should use existing tools, compose existing tools, or
   scaffold a new MCP tool.
 - If a new tool is needed, returns descriptor hints, schema risks, test ideas,
   and the self-extension pipeline steps.
 
-`unreal.workflow_recommend`
+`unreal.workflow_recommend` implemented
 
 - Converts a task plus retrieved cards into a bounded `unreal.workflow_run`
   draft.
 - Should default to `dryRun:true` and include verification gates.
 
+`unreal.knowledge_eval_run` implemented
+
+- Runs versioned local eval cases from `Tools/UnrealMcpKnowledge/Evals`.
+- Covers search, tool recommendation, gap analysis, and workflow recommendation
+  regressions.
+- Returns pass rate, failed cases, and optional structured per-case evidence.
+
 ## Chat Integration
 
 Recommended turn flow for complex requests:
 
-1. `unreal.tool_recommend` checks whether existing tools or recipes cover it.
-2. `unreal.knowledge_search` retrieves docs, tests, and failure patterns. If the
+1. Chat builds a compact local RAG/tool-planning capsule before AI turns. It
+   calls `unreal.tool_recommend`, refreshes the local index when missing, and
+   injects only the top tools/cards/workflow gates into the model context.
+2. `unreal.tool_recommend` checks whether existing tools or recipes cover it.
+3. `unreal.knowledge_search` retrieves docs, tests, and failure patterns. If the
    index is missing, run `unreal.knowledge_index_refresh` and retry the search.
-3. `unreal.preview_change_plan` turns the request into a structured plan using
+4. `unreal.preview_change_plan` turns the request into a structured plan using
    the recommendation/search evidence.
-4. If the plan is composable, generate or run a bounded `unreal.workflow_run`.
-5. If there is a true gap, use the self-extension pipeline:
+5. `unreal.tool_gap_analyze` decides whether existing tools, a workflow, or a
+   new descriptor-first MCP tool is the right path.
+6. If the plan is composable, generate a bounded draft with
+   `unreal.workflow_recommend`, then run it through `unreal.workflow_run` only
+   after exact arguments are filled and risk gates are clear.
+7. If there is a true gap, use the self-extension pipeline:
    schema validation, dry-run apply, build, test suite, verification, and
    rollback/fix plan on failure.
-6. Write `chat.active_task` when the task is long, paused, failed, or near tool
+8. Write `chat.active_task` when the task is long, paused, failed, or near tool
    round limits.
 
 ## Privacy And Safety
@@ -156,7 +182,7 @@ they should support local model backends and explicit opt-in cloud embeddings.
 ## Milestones
 
 1. Add `KnowledgeCard` JSON schema and local index writer. Done for local
-   `cards.jsonl`; a standalone schema file can follow.
+   `cards.jsonl` plus `Schemas/UnrealMcpKnowledgeCard.schema.json`.
 2. Implement `unreal.knowledge_index_refresh` and `unreal.knowledge_search`.
    Done.
 3. Convert fetched docs manifests and `documents.jsonl` rows into
@@ -168,7 +194,9 @@ they should support local model backends and explicit opt-in cloud embeddings.
 5. Implement `unreal.tool_recommend` using registry policy and search cards.
    Done.
 6. Implement `unreal.tool_gap_analyze` and connect it to scaffold generation.
+   Done for read-only gap decisions and scaffold hints.
 7. Implement `unreal.workflow_recommend` and allow dry-run execution through
-   `unreal.workflow_run`.
-8. Add Workbench buttons for Refresh Knowledge, Search Knowledge, and Recommend
-   Tools while keeping the UI thin.
+   `unreal.workflow_run`. Done for safe draft generation with skipped
+   placeholder task-specific steps.
+8. Add Workbench buttons for Refresh Knowledge, Search Knowledge, Recommend
+   Tools, and Run RAG Evals while keeping the UI thin. Done.

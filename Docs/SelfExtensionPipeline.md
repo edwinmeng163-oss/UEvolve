@@ -18,6 +18,8 @@ The self-extension pipeline lets Unreal MCP add new MCP tools from inside Editor
 - `unreal.mcp_rollback_to_manifest`: restore a selected historical manifest.
 - `unreal.mcp_extension_pipeline`: orchestrate the flow.
 - `unreal.mcp_workbench_status`: summarize health and next steps.
+- `unreal.knowledge_eval_run`: run local RAG regression cases after changing
+  docs, ToolRegistry metadata, search scoring, or tool recommendation logic.
 
 The same status and safety tools are also exposed through `Window > Unreal MCP Workbench`, a thin Slate panel for people who prefer a dashboard over typing `/tool` commands.
 
@@ -31,18 +33,23 @@ Shared contracts:
 
 ## Normal Flow
 
-1. Preview the change plan with `unreal.preview_change_plan`.
-2. Validate schema.
-3. Generate tests.
-4. Dry-run apply.
-5. Capture a before snapshot when real work will run.
-6. Apply with backup.
-7. Write project memory.
-8. Build editor.
-9. Restart if new plugin code must be loaded.
-10. Run test suite.
-11. Capture an after snapshot, diff it, and run `unreal.verify_task_outcome` when no restart deferral is needed.
-12. Audit and inspect workbench status.
+1. Search or recommend tools with `unreal.knowledge_search`,
+   `unreal.tool_recommend`, or `unreal.tool_gap_analyze`.
+2. Preview the change plan with `unreal.preview_change_plan`.
+3. Validate schema.
+4. Generate tests.
+5. Dry-run apply.
+6. Capture a before snapshot when real work will run.
+7. Apply with backup.
+8. Write project memory.
+9. Build editor.
+10. Restart if new plugin code must be loaded.
+11. Run test suite.
+12. Run `unreal.knowledge_eval_run` when RAG, docs, recommendation, or
+    ToolRegistry metadata changed.
+13. Capture an after snapshot, diff it, and run `unreal.verify_task_outcome`
+    when no restart deferral is needed.
+14. Audit and inspect workbench status.
 
 `unreal.mcp_extension_pipeline` now treats this as the default gate:
 

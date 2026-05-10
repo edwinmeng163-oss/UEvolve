@@ -279,6 +279,24 @@ namespace UnrealMcp
 			return true;
 		}
 
+		if (ToolName == TEXT("unreal.tool_gap_analyze"))
+		{
+			OutResult = ToolGapAnalyze(Arguments, ToolsArray);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.workflow_recommend"))
+		{
+			OutResult = WorkflowRecommend(Arguments, ToolsArray);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.knowledge_eval_run"))
+		{
+			OutResult = KnowledgeEvalRun(Arguments, ToolsArray);
+			return true;
+		}
+
 		if (ToolName == TEXT("unreal.mcp_compile_error_fix_plan"))
 		{
 			OutResult = CompileErrorFixPlan(Arguments);

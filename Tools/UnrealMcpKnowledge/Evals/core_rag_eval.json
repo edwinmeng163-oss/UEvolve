@@ -1,0 +1,73 @@
+{
+  "schema": "UEvolve.KnowledgeEval.v1",
+  "description": "Core local RAG regression cases for search, tool recommendation, gap analysis, and workflow recommendation.",
+  "cases": [
+    {
+      "name": "search_blueprint_tool_cards",
+      "type": "search",
+      "query": "蓝图 Blueprint graph node pin tools",
+      "expectCategories": [
+        "mcp-tools"
+      ],
+      "expectSourceKinds": [
+        "tool-registry"
+      ]
+    },
+    {
+      "name": "search_deployment_troubleshooting_docs",
+      "type": "search",
+      "query": "Windows Build.bat Live Coding NetFxSDK endpoint offline tail_log project plugin install",
+      "expectCategories": [
+        "uevolve-docs"
+      ],
+      "expectSourceKinds": [
+        "versioned-doc"
+      ]
+    },
+    {
+      "name": "search_first_person_recipe_docs",
+      "type": "search",
+      "query": "first person character GameMode DefaultPawn PlayerStart camera movement input",
+      "expectCategories": [
+        "uevolve-docs"
+      ],
+      "expectSourceKinds": [
+        "versioned-doc"
+      ]
+    },
+    {
+      "name": "recommend_widget_tools",
+      "type": "tool_recommend",
+      "task": "Create a Widget HUD and verify it with existing UMG tools",
+      "riskMax": "medium",
+      "expectAnyTools": [
+        "unreal.widget_dump_tree",
+        "unreal.widget_build_template",
+        "unreal.widget_add",
+        "unreal.widget_set_property"
+      ]
+    },
+    {
+      "name": "gap_analysis_prefers_composition_for_widget_task",
+      "type": "tool_gap_analyze",
+      "task": "Build a Widget HUD with existing tools and verification gates",
+      "riskMax": "medium",
+      "expectDecisionIn": [
+        "use_existing_tool",
+        "compose_existing_tools"
+      ]
+    },
+    {
+      "name": "workflow_recommend_has_core_gates",
+      "type": "workflow_recommend",
+      "task": "Build and verify a Widget HUD using safe MCP workflow gates",
+      "riskMax": "medium",
+      "expectWorkflowTools": [
+        "unreal.preview_change_plan",
+        "unreal.knowledge_search",
+        "unreal.tool_gap_analyze",
+        "unreal.verify_task_outcome"
+      ]
+    }
+  ]
+}

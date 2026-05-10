@@ -170,6 +170,11 @@ void SUnrealMcpWorkbenchPanel::Construct(const FArguments& InArgs, FUnrealMcpMod
 				[
 					SNew(SButton)
 					.Text(LOCTEXT("CopyResult", "Copy Result"))
+					.ToolTipText(LOCTEXT("CopyResultTooltip", "Copy the latest Workbench tool result, including structuredContent when available."))
+					.IsEnabled_Lambda([this]()
+					{
+						return !LastResultText.IsEmpty();
+					})
 					.OnClicked(this, &SUnrealMcpWorkbenchPanel::HandleCopyResultClicked)
 				]
 				]
@@ -200,6 +205,47 @@ void SUnrealMcpWorkbenchPanel::Construct(const FArguments& InArgs, FUnrealMcpMod
 						SNew(SButton)
 						.Text(LOCTEXT("PromoteSkillDryRun", "Promote Dry Run"))
 						.OnClicked(this, &SUnrealMcpWorkbenchPanel::HandleSkillPromoteDryRunClicked)
+					]
+				]
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				.Padding(0.0f, 6.0f, 0.0f, 0.0f)
+				[
+					SNew(SHorizontalBox)
+					+ SHorizontalBox::Slot()
+					.AutoWidth()
+					.Padding(0.0f, 0.0f, 6.0f, 0.0f)
+					[
+						SNew(SButton)
+						.Text(LOCTEXT("RefreshKnowledge", "Refresh Knowledge"))
+						.ToolTipText(LOCTEXT("RefreshKnowledgeTooltip", "Rebuild the local KnowledgeCard index from Saved docs, versioned docs, and ToolRegistry metadata."))
+						.OnClicked(this, &SUnrealMcpWorkbenchPanel::HandleKnowledgeRefreshClicked)
+					]
+					+ SHorizontalBox::Slot()
+					.AutoWidth()
+					.Padding(0.0f, 0.0f, 6.0f, 0.0f)
+					[
+						SNew(SButton)
+						.Text(LOCTEXT("SearchKnowledge", "Search Knowledge"))
+						.ToolTipText(LOCTEXT("SearchKnowledgeTooltip", "Run a default knowledge_search smoke query for Blueprint, Widget, and self-extension guidance."))
+						.OnClicked(this, &SUnrealMcpWorkbenchPanel::HandleKnowledgeSearchClicked)
+					]
+					+ SHorizontalBox::Slot()
+					.AutoWidth()
+					.Padding(0.0f, 0.0f, 6.0f, 0.0f)
+					[
+						SNew(SButton)
+						.Text(LOCTEXT("RecommendTools", "Recommend Tools"))
+						.ToolTipText(LOCTEXT("RecommendToolsTooltip", "Recommend tools for a representative Widget HUD task using local RAG and ToolRegistry policy."))
+						.OnClicked(this, &SUnrealMcpWorkbenchPanel::HandleToolRecommendClicked)
+					]
+					+ SHorizontalBox::Slot()
+					.AutoWidth()
+					[
+						SNew(SButton)
+						.Text(LOCTEXT("RunKnowledgeEvals", "Run RAG Evals"))
+						.ToolTipText(LOCTEXT("RunKnowledgeEvalsTooltip", "Run versioned local RAG regression cases."))
+						.OnClicked(this, &SUnrealMcpWorkbenchPanel::HandleKnowledgeEvalClicked)
 					]
 				]
 				+ SVerticalBox::Slot()
@@ -339,6 +385,51 @@ FReply SUnrealMcpWorkbenchPanel::HandleSkillPromoteDryRunClicked()
 	Arguments->SetStringField(TEXT("skillName"), LastSkillName);
 	Arguments->SetBoolField(TEXT("dryRun"), true);
 	RunToolAndDisplay(TEXT("unreal.skill_promote_draft"), Arguments);
+	return FReply::Handled();
+}
+
+FReply SUnrealMcpWorkbenchPanel::HandleKnowledgeRefreshClicked()
+{
+	TSharedPtr<FJsonObject> Arguments = UnrealMcpWorkbench::MakeEmptyObject();
+	Arguments->SetBoolField(TEXT("includeOfficialDocs"), true);
+	Arguments->SetBoolField(TEXT("includeVersionedDocs"), true);
+	Arguments->SetBoolField(TEXT("includeToolRegistry"), true);
+	Arguments->SetBoolField(TEXT("skipLowContent"), true);
+	Arguments->SetNumberField(TEXT("maxCards"), 2000.0);
+	RunToolAndDisplay(TEXT("unreal.knowledge_index_refresh"), Arguments);
+	return FReply::Handled();
+}
+
+FReply SUnrealMcpWorkbenchPanel::HandleKnowledgeSearchClicked()
+{
+	TSharedPtr<FJsonObject> Arguments = UnrealMcpWorkbench::MakeEmptyObject();
+	Arguments->SetStringField(TEXT("query"), TEXT("Blueprint Widget MCP self-extension workflow"));
+	Arguments->SetNumberField(TEXT("limit"), 6.0);
+	Arguments->SetBoolField(TEXT("includeText"), false);
+	RunToolAndDisplay(TEXT("unreal.knowledge_search"), Arguments);
+	return FReply::Handled();
+}
+
+FReply SUnrealMcpWorkbenchPanel::HandleToolRecommendClicked()
+{
+	TSharedPtr<FJsonObject> Arguments = UnrealMcpWorkbench::MakeEmptyObject();
+	Arguments->SetStringField(TEXT("task"), TEXT("Build a Widget HUD using existing MCP tools, then verify the result."));
+	Arguments->SetStringField(TEXT("riskMax"), TEXT("medium"));
+	Arguments->SetNumberField(TEXT("limit"), 6.0);
+	Arguments->SetBoolField(TEXT("includeKnowledge"), true);
+	Arguments->SetBoolField(TEXT("includeWorkflowDraft"), true);
+	RunToolAndDisplay(TEXT("unreal.tool_recommend"), Arguments);
+	return FReply::Handled();
+}
+
+FReply SUnrealMcpWorkbenchPanel::HandleKnowledgeEvalClicked()
+{
+	TSharedPtr<FJsonObject> Arguments = UnrealMcpWorkbench::MakeEmptyObject();
+	Arguments->SetStringField(TEXT("evalPath"), TEXT("Tools/UnrealMcpKnowledge/Evals"));
+	Arguments->SetBoolField(TEXT("refreshIndex"), false);
+	Arguments->SetBoolField(TEXT("includeDetails"), false);
+	Arguments->SetNumberField(TEXT("limit"), 6.0);
+	RunToolAndDisplay(TEXT("unreal.knowledge_eval_run"), Arguments);
 	return FReply::Handled();
 }
 

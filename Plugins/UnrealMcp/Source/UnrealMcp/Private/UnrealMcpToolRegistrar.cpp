@@ -271,6 +271,63 @@ namespace UnrealMcp
 
 			{
 				TSharedPtr<FJsonObject> Properties = MakeShared<FJsonObject>();
+				Properties->SetObjectField(TEXT("task"), MakeStringProperty(TEXT("Natural-language task to analyze for tool coverage gaps."), FString()));
+				Properties->SetObjectField(TEXT("riskMax"), MakeStringProperty(TEXT("Maximum existing-tool risk to consider: read_only, low, medium, high, or critical."), TEXT("critical")));
+				Properties->SetObjectField(TEXT("limit"), MakeNumberProperty(TEXT("Maximum existing tool recommendations to include."), 6.0));
+				TSharedPtr<FJsonObject> Schema = MakeObjectSchema();
+				Schema->SetObjectField(TEXT("properties"), Properties);
+				Registrar.Add(
+					MakeDescriptor(
+						TEXT("unreal.tool_gap_analyze"),
+						TEXT("Analyze MCP Tool Gap"),
+						TEXT("Decides whether a task should use existing tools, compose a workflow, or scaffold a new descriptor-first MCP tool, with schema/test/pipeline hints."),
+						TEXT("self-extension"),
+						TEXT("UnrealMcpKnowledgeTools.cpp"),
+						EUnrealMcpToolRisk::ReadOnly),
+					Schema);
+			}
+
+			{
+				TSharedPtr<FJsonObject> Properties = MakeShared<FJsonObject>();
+				Properties->SetObjectField(TEXT("task"), MakeStringProperty(TEXT("Natural-language task to convert into a recommended MCP workflow draft."), FString()));
+				Properties->SetObjectField(TEXT("riskMax"), MakeStringProperty(TEXT("Maximum tool risk to include in recommendations: read_only, low, medium, high, or critical."), TEXT("critical")));
+				Properties->SetObjectField(TEXT("limit"), MakeNumberProperty(TEXT("Maximum recommended task-specific tools to include as skipped placeholder steps."), 5.0));
+				Properties->SetObjectField(TEXT("includeKnowledge"), MakeBoolProperty(TEXT("Include knowledge_search as an early workflow step."), true));
+				Properties->SetObjectField(TEXT("dryRun"), MakeBoolProperty(TEXT("Set the generated workflow_run draft dryRun flag."), true));
+				TSharedPtr<FJsonObject> Schema = MakeObjectSchema();
+				Schema->SetObjectField(TEXT("properties"), Properties);
+				Registrar.Add(
+					MakeDescriptor(
+						TEXT("unreal.workflow_recommend"),
+						TEXT("Recommend MCP Workflow"),
+						TEXT("Generates a safe workflow_run draft from a task using KnowledgeCards, ToolRegistry policy, gap analysis, snapshot gates, skipped placeholder tool steps, and final verification."),
+						TEXT("self-extension"),
+						TEXT("UnrealMcpKnowledgeTools.cpp"),
+						EUnrealMcpToolRisk::ReadOnly),
+					Schema);
+			}
+
+			{
+				TSharedPtr<FJsonObject> Properties = MakeShared<FJsonObject>();
+				Properties->SetObjectField(TEXT("evalPath"), MakeStringProperty(TEXT("Project-local eval JSON file or directory. Defaults to Tools/UnrealMcpKnowledge/Evals."), FString()));
+				Properties->SetObjectField(TEXT("refreshIndex"), MakeBoolProperty(TEXT("Refresh the local KnowledgeCard index before running evals."), false));
+				Properties->SetObjectField(TEXT("includeDetails"), MakeBoolProperty(TEXT("Include per-case structuredContent in the eval output."), true));
+				Properties->SetObjectField(TEXT("limit"), MakeNumberProperty(TEXT("Search/recommendation limit used by each eval case."), 6.0));
+				TSharedPtr<FJsonObject> Schema = MakeObjectSchema();
+				Schema->SetObjectField(TEXT("properties"), Properties);
+				Registrar.Add(
+					MakeDescriptor(
+						TEXT("unreal.knowledge_eval_run"),
+						TEXT("Run Knowledge Evals"),
+						TEXT("Runs versioned local RAG eval cases against knowledge_search, tool_recommend, tool_gap_analyze, and workflow_recommend, returning pass rate and failure evidence."),
+						TEXT("self-extension"),
+						TEXT("UnrealMcpKnowledgeTools.cpp"),
+						EUnrealMcpToolRisk::ReadOnly),
+					Schema);
+			}
+
+			{
+				TSharedPtr<FJsonObject> Properties = MakeShared<FJsonObject>();
 				Properties->SetObjectField(TEXT("task"), MakeStringProperty(TEXT("Natural-language task to turn into a structured change plan."), FString()));
 				TSharedPtr<FJsonObject> Schema = MakeObjectSchema();
 				Schema->SetObjectField(TEXT("properties"), Properties);

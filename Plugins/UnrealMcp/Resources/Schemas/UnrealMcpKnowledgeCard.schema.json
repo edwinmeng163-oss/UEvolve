@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uevolve.local/schemas/UnrealMcpKnowledgeCard.schema.json",
+  "title": "UEvolve KnowledgeCard",
+  "description": "A normalized local-first RAG card used by UEvolve knowledge_search, tool_recommend, tool_gap_analyze, and workflow_recommend.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "cardId",
+    "sourceId",
+    "title",
+    "category",
+    "sourceKind",
+    "sourcePath",
+    "text",
+    "chunkIndex",
+    "textLength"
+  ],
+  "properties": {
+    "cardId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sourceId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sectionTitle": {
+      "type": "string"
+    },
+    "sectionPath": {
+      "type": "string"
+    },
+    "category": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "sourceKind": {
+      "type": "string",
+      "enum": [
+        "tool-registry",
+        "versioned-doc",
+        "official-docs",
+        "skill",
+        "runtime-memory",
+        "activity-log",
+        "test-fixture",
+        "unknown"
+      ]
+    },
+    "sourcePath": {
+      "type": "string"
+    },
+    "url": {
+      "type": "string"
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1
+    },
+    "chunkIndex": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "textLength": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "sourceWeight": {
+      "type": "number",
+      "minimum": 0
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "updatedAt": {
+      "type": "string"
+    }
+  }
+}

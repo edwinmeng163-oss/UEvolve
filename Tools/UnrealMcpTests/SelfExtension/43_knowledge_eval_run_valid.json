@@ -1,0 +1,26 @@
+{
+  "name": "knowledge_eval_run_valid",
+  "description": "Run versioned local RAG evals for search, recommendation, gap analysis, and workflow recommendation.",
+  "category": "happy_path",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": false,
+  "expectToolCallStructuredFields": {
+    "action": "knowledge_eval_run",
+    "failedCount": 0
+  },
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 343,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.knowledge_eval_run",
+      "arguments": {
+        "evalPath": "Tools/UnrealMcpKnowledge/Evals",
+        "refreshIndex": false,
+        "includeDetails": false,
+        "limit": 6
+      }
+    }
+  }
+}

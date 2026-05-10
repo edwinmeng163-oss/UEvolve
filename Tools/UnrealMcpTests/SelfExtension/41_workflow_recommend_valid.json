@@ -1,0 +1,27 @@
+{
+  "name": "workflow_recommend_valid",
+  "description": "Generate a safe workflow_run draft from RAG and ToolRegistry recommendations.",
+  "category": "happy_path",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": false,
+  "expectToolCallStructuredFields": {
+    "action": "workflow_recommend",
+    "riskMax": "medium"
+  },
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 341,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.workflow_recommend",
+      "arguments": {
+        "task": "Create a Blueprint actor setup with verification gates",
+        "riskMax": "medium",
+        "limit": 5,
+        "includeKnowledge": true,
+        "dryRun": true
+      }
+    }
+  }
+}

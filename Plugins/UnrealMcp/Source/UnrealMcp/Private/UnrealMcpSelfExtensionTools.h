@@ -15,6 +15,9 @@ namespace UnrealMcp
 	FUnrealMcpExecutionResult KnowledgeIndexRefresh(const FJsonObject& Arguments);
 	FUnrealMcpExecutionResult KnowledgeSearch(const FJsonObject& Arguments);
 	FUnrealMcpExecutionResult ToolRecommend(const FJsonObject& Arguments, const TArray<TSharedPtr<FJsonValue>>& ToolsArray);
+	FUnrealMcpExecutionResult ToolGapAnalyze(const FJsonObject& Arguments, const TArray<TSharedPtr<FJsonValue>>& ToolsArray);
+	FUnrealMcpExecutionResult WorkflowRecommend(const FJsonObject& Arguments, const TArray<TSharedPtr<FJsonValue>>& ToolsArray);
+	FUnrealMcpExecutionResult KnowledgeEvalRun(const FJsonObject& Arguments, const TArray<TSharedPtr<FJsonValue>>& ToolsArray);
 	bool TryExecuteSelfExtensionTool(
 		const FString& ToolName,
 		const FJsonObject& Arguments,

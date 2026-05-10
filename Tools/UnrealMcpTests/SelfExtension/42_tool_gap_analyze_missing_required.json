@@ -1,0 +1,18 @@
+{
+  "name": "tool_gap_analyze_missing_required",
+  "description": "tool_gap_analyze should reject calls without a task.",
+  "category": "missing_required",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": true,
+  "expectToolCallTextContains": "Missing required field 'task'",
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 342,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.tool_gap_analyze",
+      "arguments": {}
+    }
+  }
+}

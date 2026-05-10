@@ -24,6 +24,10 @@ private:
 	FReply HandleSkillActivityStatusClicked();
 	FReply HandleSkillDistillDraftClicked();
 	FReply HandleSkillPromoteDryRunClicked();
+	FReply HandleKnowledgeRefreshClicked();
+	FReply HandleKnowledgeSearchClicked();
+	FReply HandleToolRecommendClicked();
+	FReply HandleKnowledgeEvalClicked();
 	FReply HandleCopyResultClicked();
 
 	void RunToolAndDisplay(const FString& ToolName, const TSharedPtr<FJsonObject>& Arguments);

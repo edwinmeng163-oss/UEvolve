@@ -1,6 +1,6 @@
 {
   "name": "unreal_engine_official_docs_5_7",
-  "version": 1,
+  "version": 2,
   "description": "Curated Epic official Unreal Engine 5.7 documentation seeds for UEvolve local RAG bootstrap.",
   "defaultOutputDir": "Saved/UnrealMcp/KnowledgeSources/UnrealEngineOfficialDocs/5.7",
   "licenseNotice": "Downloaded pages are Epic documentation content. Keep fetched page caches local under Saved/UnrealMcp and do not commit redistributed copies unless the license explicitly allows it.",
@@ -46,6 +46,41 @@
       "category": "editor-automation",
       "tags": ["python", "blueprint", "editor-scripting", "automation"],
       "url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/scripting-and-automating-the-unreal-editor?application_version=5.7"
+    },
+    {
+      "id": "ue57-input-overview",
+      "title": "Input",
+      "category": "input",
+      "tags": ["input", "player-controller", "pawn", "character"],
+      "url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/input-in-unreal-engine?application_version=5.7"
+    },
+    {
+      "id": "ue57-setting-up-character",
+      "title": "Setting Up a Character",
+      "category": "character",
+      "tags": ["character", "pawn", "game-mode", "player-controller", "movement", "first-person"],
+      "url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/setting-up-a-character-in-unreal-engine?application_version=5.7"
+    },
+    {
+      "id": "ue57-implementing-character",
+      "title": "Implementing your Character",
+      "category": "character",
+      "tags": ["character", "input", "movement", "first-person", "cpp"],
+      "url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/implementing-your-character-in-unreal-engine?application_version=5.7"
+    },
+    {
+      "id": "ue57-movement-components",
+      "title": "Movement Components",
+      "category": "movement",
+      "tags": ["movement", "character-movement", "pawn", "component"],
+      "url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/movement-components-in-unreal-engine?application_version=5.7"
+    },
+    {
+      "id": "ue57-gameplay-systems",
+      "title": "Gameplay Systems",
+      "category": "gameplay",
+      "tags": ["gameplay-framework", "game-mode", "controller", "pawn", "camera", "input"],
+      "url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/gameplay-systems-in-unreal-engine?application_version=5.7"
     },
     {
       "id": "ue57-python-api-index",

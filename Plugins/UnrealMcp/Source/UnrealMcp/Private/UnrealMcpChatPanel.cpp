@@ -995,9 +995,10 @@ void SUnrealMcpChatPanel::Construct(const FArguments& InArgs, FUnrealMcpModule* 
 				[
 					SNew(SButton)
 					.Text(LOCTEXT("CopyChat", "Copy Chat"))
+					.ToolTipText(LOCTEXT("CopyChatTooltip", "Copy only the visible conversation pane: user, assistant, and system messages."))
 					.IsEnabled_Lambda([this]()
 					{
-						return Entries.Num() > 0;
+						return HasTranscriptEntries();
 					})
 					.OnClicked(this, &SUnrealMcpChatPanel::HandleCopyChatClicked)
 				]
@@ -1006,12 +1007,13 @@ void SUnrealMcpChatPanel::Construct(const FArguments& InArgs, FUnrealMcpModule* 
 				.Padding(0.0f, 0.0f, 6.0f, 0.0f)
 				[
 					SNew(SButton)
-					.Text(LOCTEXT("CopyLog", "Copy Log"))
+					.Text(LOCTEXT("CopyToolLog", "Copy Tool Log"))
+					.ToolTipText(LOCTEXT("CopyToolLogTooltip", "Copy the visible Tool Log pane, including tool names, status, text, and details."))
 					.IsEnabled_Lambda([this]()
 					{
-						return !LastLogText.IsEmpty();
+						return HasToolLogEntries();
 					})
-					.OnClicked(this, &SUnrealMcpChatPanel::HandleCopyLastLogClicked)
+					.OnClicked(this, &SUnrealMcpChatPanel::HandleCopyToolLogClicked)
 				]
 				+ SHorizontalBox::Slot()
 				.AutoWidth()
@@ -1061,11 +1063,12 @@ FReply SUnrealMcpChatPanel::HandleCopyChatClicked()
 	return FReply::Handled();
 }
 
-FReply SUnrealMcpChatPanel::HandleCopyLastLogClicked()
+FReply SUnrealMcpChatPanel::HandleCopyToolLogClicked()
 {
-	if (!LastLogText.IsEmpty())
+	const FString ToolLogText = BuildToolLogText();
+	if (!ToolLogText.IsEmpty())
 	{
-		FPlatformApplicationMisc::ClipboardCopy(*LastLogText);
+		FPlatformApplicationMisc::ClipboardCopy(*ToolLogText);
 	}
 	return FReply::Handled();
 }
@@ -1745,6 +1748,10 @@ void SUnrealMcpChatPanel::StartAssistantRequest(const FString& UserPrompt)
 	{
 		ConversationContext = BuildAssistantConversationContext(UserPrompt);
 	}
+	else
+	{
+		ConversationContext = BuildRagContextBlock(UserPrompt);
+	}
 
 	TWeakPtr<SUnrealMcpChatPanel> WeakPanel = SharedThis(this);
 	ActiveAssistantHandle = OwnerModule->ExecuteAssistantTurnAsync(
@@ -2075,7 +2082,7 @@ FString SUnrealMcpChatPanel::BuildTranscriptText() const
 
 	for (const TSharedPtr<FUnrealMcpChatEntry>& Entry : Entries)
 	{
-		if (!Entry.IsValid())
+		if (!Entry.IsValid() || Entry->Type == EUnrealMcpChatEntryType::Tool)
 		{
 			continue;
 		}
@@ -2084,6 +2091,171 @@ FString SUnrealMcpChatPanel::BuildTranscriptText() const
 	}
 
 	return FString::Join(Blocks, TEXT("\n\n"));
+}
+
+FString SUnrealMcpChatPanel::BuildToolLogText() const
+{
+	TArray<FString> Blocks;
+	Blocks.Reserve(Entries.Num());
+
+	for (const TSharedPtr<FUnrealMcpChatEntry>& Entry : Entries)
+	{
+		if (!Entry.IsValid() || Entry->Type != EUnrealMcpChatEntryType::Tool)
+		{
+			continue;
+		}
+
+		Blocks.Add(UnrealMcpChat::BuildEntryClipboardText(*Entry));
+	}
+
+	return FString::Join(Blocks, TEXT("\n\n"));
+}
+
+bool SUnrealMcpChatPanel::HasTranscriptEntries() const
+{
+	for (const TSharedPtr<FUnrealMcpChatEntry>& Entry : Entries)
+	{
+		if (Entry.IsValid() && Entry->Type != EUnrealMcpChatEntryType::Tool)
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+bool SUnrealMcpChatPanel::HasToolLogEntries() const
+{
+	for (const TSharedPtr<FUnrealMcpChatEntry>& Entry : Entries)
+	{
+		if (Entry.IsValid() && Entry->Type == EUnrealMcpChatEntryType::Tool)
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+FString SUnrealMcpChatPanel::BuildRagContextBlock(const FString& CurrentUserPrompt) const
+{
+	if (!OwnerModule)
+	{
+		return FString();
+	}
+
+	const FString Prompt = CurrentUserPrompt.TrimStartAndEnd();
+	if (Prompt.IsEmpty() || Prompt.StartsWith(TEXT("/")))
+	{
+		return FString();
+	}
+
+	if (Prompt.Equals(LastRagContextPrompt, ESearchCase::CaseSensitive) && !LastRagContextBlock.IsEmpty())
+	{
+		return LastRagContextBlock;
+	}
+
+	auto RunToolRecommend = [this, &Prompt]()
+	{
+		TSharedPtr<FJsonObject> Arguments = MakeShared<FJsonObject>();
+		Arguments->SetStringField(TEXT("task"), Prompt);
+		Arguments->SetStringField(TEXT("riskMax"), TEXT("critical"));
+		Arguments->SetNumberField(TEXT("limit"), 6.0);
+		Arguments->SetBoolField(TEXT("includeKnowledge"), true);
+		Arguments->SetBoolField(TEXT("includeWorkflowDraft"), true);
+		return OwnerModule->ExecuteToolFromEditorUI(TEXT("unreal.tool_recommend"), *Arguments);
+	};
+
+	FUnrealMcpExecutionResult RecommendResult = RunToolRecommend();
+	if (RecommendResult.StructuredContent.IsValid())
+	{
+		FString KnowledgeNote;
+		if (RecommendResult.StructuredContent->TryGetStringField(TEXT("knowledgeNote"), KnowledgeNote)
+			&& KnowledgeNote.Contains(TEXT("Knowledge index not found"), ESearchCase::IgnoreCase))
+		{
+			TSharedPtr<FJsonObject> RefreshArguments = MakeShared<FJsonObject>();
+			RefreshArguments->SetBoolField(TEXT("includeOfficialDocs"), true);
+			RefreshArguments->SetBoolField(TEXT("includeVersionedDocs"), true);
+			RefreshArguments->SetBoolField(TEXT("includeToolRegistry"), true);
+			RefreshArguments->SetBoolField(TEXT("skipLowContent"), true);
+			RefreshArguments->SetNumberField(TEXT("maxCards"), 2000.0);
+			OwnerModule->ExecuteToolFromEditorUI(TEXT("unreal.knowledge_index_refresh"), *RefreshArguments);
+			RecommendResult = RunToolRecommend();
+		}
+	}
+
+	if (RecommendResult.bIsError || !RecommendResult.StructuredContent.IsValid())
+	{
+		return FString();
+	}
+
+	const TSharedPtr<FJsonObject> Root = RecommendResult.StructuredContent;
+	TArray<FString> Lines;
+	Lines.Add(TEXT("Local RAG/tool-planning capsule. Use this as compact evidence for tool choice; do not repeat it verbatim."));
+
+	const TArray<TSharedPtr<FJsonValue>>* Recommendations = nullptr;
+	if (Root->TryGetArrayField(TEXT("recommendations"), Recommendations) && Recommendations)
+	{
+		Lines.Add(TEXT("Recommended tools:"));
+		int32 Count = 0;
+		for (const TSharedPtr<FJsonValue>& Value : *Recommendations)
+		{
+			if (++Count > 5 || !Value.IsValid() || !Value->AsObject().IsValid())
+			{
+				break;
+			}
+			const TSharedPtr<FJsonObject> Tool = Value->AsObject();
+			Lines.Add(FString::Printf(
+				TEXT("- %s [%s, risk=%s]: %s"),
+				*UnrealMcpChat::GetJsonStringField(Tool, TEXT("toolName")),
+				*UnrealMcpChat::GetJsonStringField(Tool, TEXT("category")),
+				*UnrealMcpChat::GetJsonStringField(Tool, TEXT("riskLevel")),
+				*UnrealMcpChat::ClampForAssistantContext(UnrealMcpChat::GetJsonStringField(Tool, TEXT("description")), 180)));
+		}
+	}
+
+	const TArray<TSharedPtr<FJsonValue>>* KnowledgeCards = nullptr;
+	if (Root->TryGetArrayField(TEXT("knowledgeCards"), KnowledgeCards) && KnowledgeCards && KnowledgeCards->Num() > 0)
+	{
+		Lines.Add(TEXT("Relevant KnowledgeCards:"));
+		int32 Count = 0;
+		for (const TSharedPtr<FJsonValue>& Value : *KnowledgeCards)
+		{
+			if (++Count > 3 || !Value.IsValid() || !Value->AsObject().IsValid())
+			{
+				break;
+			}
+			const TSharedPtr<FJsonObject> Card = Value->AsObject();
+			Lines.Add(FString::Printf(
+				TEXT("- %s (%s): %s"),
+				*UnrealMcpChat::GetJsonStringField(Card, TEXT("title")),
+				*UnrealMcpChat::GetJsonStringField(Card, TEXT("sourcePath")),
+				*UnrealMcpChat::ClampForAssistantContext(UnrealMcpChat::GetJsonStringField(Card, TEXT("excerpt")), 260)));
+		}
+	}
+
+	const TArray<TSharedPtr<FJsonValue>>* WorkflowDraft = nullptr;
+	if (Root->TryGetArrayField(TEXT("workflowDraft"), WorkflowDraft) && WorkflowDraft && WorkflowDraft->Num() > 0)
+	{
+		Lines.Add(TEXT("Suggested workflow gates:"));
+		int32 Count = 0;
+		for (const TSharedPtr<FJsonValue>& Value : *WorkflowDraft)
+		{
+			if (++Count > 6 || !Value.IsValid() || !Value->AsObject().IsValid())
+			{
+				break;
+			}
+			const TSharedPtr<FJsonObject> Step = Value->AsObject();
+			Lines.Add(FString::Printf(
+				TEXT("- %s: %s"),
+				*UnrealMcpChat::GetJsonStringField(Step, TEXT("tool")),
+				*UnrealMcpChat::GetJsonStringField(Step, TEXT("purpose"))));
+		}
+	}
+
+	LastRagContextPrompt = Prompt;
+	LastRagContextBlock = UnrealMcpChat::ClampForAssistantContext(FString::Join(Lines, TEXT("\n")), 2400);
+	return LastRagContextBlock;
 }
 
 FString SUnrealMcpChatPanel::BuildToolsOverviewText(const FUnrealMcpExecutionResult& Result) const
@@ -2235,6 +2407,13 @@ FString SUnrealMcpChatPanel::BuildAssistantConversationContext(const FString& Cu
 	{
 		CapsuleSections.Add(ActiveTaskBlock);
 		RemainingChars -= FMath::Min(RemainingChars, ActiveTaskBlock.Len() + 2);
+	}
+
+	const FString RagContextBlock = BuildRagContextBlock(CurrentUserPrompt);
+	if (!RagContextBlock.IsEmpty() && RemainingChars > 0)
+	{
+		CapsuleSections.Add(RagContextBlock);
+		RemainingChars -= FMath::Min(RemainingChars, RagContextBlock.Len() + 2);
 	}
 
 	bool bSkippedTrailingCurrentUserPrompt = false;
@@ -2444,6 +2623,8 @@ void SUnrealMcpChatPanel::LoadHistory()
 	ToolEntriesByCallId.Reset();
 	LastAssistantResponseId.Reset();
 	LastLogText.Reset();
+	LastRagContextPrompt.Reset();
+	LastRagContextBlock.Reset();
 	bHasInjectedPersistedContextThisSession = false;
 
 	const FString HistoryPath = UnrealMcpChat::GetHistoryFilePath();
@@ -2535,6 +2716,8 @@ void SUnrealMcpChatPanel::ResetHistory(bool bAddReadyMessage)
 	ToolEntriesByCallId.Reset();
 	LastAssistantResponseId.Reset();
 	LastLogText.Reset();
+	LastRagContextPrompt.Reset();
+	LastRagContextBlock.Reset();
 	bHasInjectedPersistedContextThisSession = false;
 	ActiveAssistantEntry.Reset();
 	ActiveAssistantHandle.Reset();
