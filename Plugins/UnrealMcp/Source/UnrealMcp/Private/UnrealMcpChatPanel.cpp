@@ -1482,7 +1482,7 @@ void SUnrealMcpChatPanel::RefreshProviderOptions()
 	TArray<const FAiProviderConfig*> SortedProviders;
 	for (const FAiProviderConfig& Provider : Settings->Providers) { SortedProviders.Add(&Provider); }
 
-	SortedProviders.Sort([](const FAiProviderConfig* A, const FAiProviderConfig* B)
+	SortedProviders.Sort([](const FAiProviderConfig* const& A, const FAiProviderConfig* const& B)
 	{
 		const FString ADisplay = A ? (A->DisplayName.TrimStartAndEnd().IsEmpty() ? A->Id : A->DisplayName.TrimStartAndEnd()) : FString();
 		const FString BDisplay = B ? (B->DisplayName.TrimStartAndEnd().IsEmpty() ? B->Id : B->DisplayName.TrimStartAndEnd()) : FString();
