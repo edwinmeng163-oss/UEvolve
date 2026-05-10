@@ -33,6 +33,7 @@ struct FUnrealMcpChatEntry
 	FString ToolCallId;
 	bool bIsError = false;
 	bool bIsPending = false;
+	bool bToolCardExpanded = false;
 };
 
 struct FUnrealMcpSkillOption
@@ -97,7 +98,7 @@ private:
 	TSharedPtr<FUnrealMcpChatEntry> AppendToolCard(const FString& ToolName, const FString& ToolCallId, const FString& ArgumentsJson);
 	void AddEntryWidget(const TSharedPtr<FUnrealMcpChatEntry>& Entry);
 	void AddEntryWidgetToPane(const TSharedPtr<FUnrealMcpChatEntry>& Entry, bool bScrollAfterAdd);
-	TSharedRef<SWidget> BuildEntryWidget(const TSharedPtr<FUnrealMcpChatEntry>& Entry) const;
+	TSharedRef<SWidget> BuildEntryWidget(const TSharedPtr<FUnrealMcpChatEntry>& Entry);
 	void RebuildEntryWidgets(bool bScrollTranscript, bool bScrollToolLog);
 	void InvalidateEntryWidgets();
 	bool MoveEntryToEnd(const TSharedPtr<FUnrealMcpChatEntry>& Entry);
@@ -105,6 +106,10 @@ private:
 	void ScrollToolLogToEnd();
 	EActiveTimerReturnType HandleDeferredTranscriptScroll(double InCurrentTime, float InDeltaTime);
 	EActiveTimerReturnType HandleDeferredToolLogScroll(double InCurrentTime, float InDeltaTime);
+	FText GetActiveRequestProgressText() const;
+	FString BuildEntryCopyText(const FUnrealMcpChatEntry& Entry) const;
+	bool IsTranscriptNearBottom() const;
+	FReply HandleEntryCopyClicked(TSharedPtr<FUnrealMcpChatEntry> Entry);
 	void LoadHistory();
 	void SaveHistory() const;
 	void ResetHistory(bool bAddReadyMessage);
@@ -122,6 +127,7 @@ private:
 	mutable FString LastRagContextPrompt;
 	mutable FString LastRagContextBlock;
 	bool bAssistantRequestInFlight = false;
+	FDateTime ActiveAssistantRequestStartTime;
 	bool bHasInjectedPersistedContextThisSession = false;
 	TArray<TSharedPtr<FUnrealMcpChatEntry>> Entries;
 	TMap<FString, TSharedPtr<FUnrealMcpChatEntry>> ToolEntriesByCallId;
@@ -146,7 +152,9 @@ private:
 	TSharedPtr<SScrollBox> ToolLogScrollBox;
 	TSharedPtr<SVerticalBox> ToolLogEntriesBox;
 	bool bDeferredTranscriptScrollActive = false;
+	bool bDeferredTranscriptShouldAutoScroll = true;
 	int32 DeferredTranscriptScrollFrames = 0;
 	bool bDeferredToolLogScrollActive = false;
+	bool bDeferredToolLogShouldAutoScroll = true;
 	int32 DeferredToolLogScrollFrames = 0;
 };

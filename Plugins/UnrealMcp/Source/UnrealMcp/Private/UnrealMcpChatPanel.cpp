@@ -19,11 +19,13 @@
 #include "Styling/AppStyle.h"
 #include "UnrealMcpModule.h"
 #include "UnrealMcpSettings.h"
+#include "Widgets/Images/SThrobber.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SComboBox.h"
 #include "Widgets/Input/SEditableTextBox.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SBox.h"
+#include "Widgets/Layout/SExpandableArea.h"
 #include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/Layout/SSeparator.h"
 #include "Widgets/Layout/SSpacer.h"
@@ -123,12 +125,17 @@ namespace UnrealMcpChat
 
 	FLinearColor GetBackgroundColor(const FUnrealMcpChatEntry& Entry)
 	{
+		if (Entry.bIsError)
+		{
+			return FLinearColor(0.40f, 0.10f, 0.10f, 0.40f);
+		}
+
 		switch (Entry.Type)
 		{
 		case EUnrealMcpChatEntryType::User:
 			return FLinearColor(0.08f, 0.12f, 0.18f, 0.95f);
 		case EUnrealMcpChatEntryType::Assistant:
-			return Entry.bIsError ? FLinearColor(0.20f, 0.08f, 0.08f, 0.95f) : FLinearColor(0.08f, 0.16f, 0.10f, 0.95f);
+			return FLinearColor(0.08f, 0.16f, 0.10f, 0.95f);
 		case EUnrealMcpChatEntryType::Tool:
 			return FLinearColor(0.18f, 0.14f, 0.07f, 0.95f);
 		case EUnrealMcpChatEntryType::System:
@@ -202,6 +209,50 @@ namespace UnrealMcpChat
 		}
 
 		return FString::Join(Lines, TEXT("\n"));
+	}
+
+	FString GetToolStatusIcon(const FUnrealMcpChatEntry& Entry)
+	{
+		if (Entry.bIsPending)
+		{
+			return TEXT("...");
+		}
+
+		return Entry.bIsError ? TEXT("✗") : TEXT("✓");
+	}
+
+	FString BuildEntryTitleText(const FUnrealMcpChatEntry& Entry)
+	{
+		const FString ErrorPrefix = Entry.bIsError ? TEXT("⚠ ") : FString();
+		if (Entry.Type == EUnrealMcpChatEntryType::Tool)
+		{
+			const FString Status = Entry.bIsPending ? TEXT("running") : (Entry.bIsError ? TEXT("error") : TEXT("done"));
+			return FString::Printf(TEXT("%s%s Tool • %s (%s)"), *ErrorPrefix, *GetToolStatusIcon(Entry), *Entry.Title, *Status);
+		}
+
+		return ErrorPrefix + Entry.Speaker;
+	}
+
+	FSlateColor GetEntryTitleColor(const FUnrealMcpChatEntry& Entry)
+	{
+		return Entry.bIsError ? FSlateColor(FLinearColor(1.0f, 0.60f, 0.60f, 1.0f)) : FSlateColor::UseForeground();
+	}
+
+	bool IsScrollBoxNearBottom(const TSharedPtr<SScrollBox>& ScrollBox)
+	{
+		if (!ScrollBox.IsValid())
+		{
+			return true;
+		}
+
+		if (ScrollBox->GetViewOffsetFraction() > 0.95f)
+		{
+			return true;
+		}
+
+		const float ScrollOffset = ScrollBox->GetScrollOffset();
+		const float EndOffset = ScrollBox->GetScrollOffsetOfEnd();
+		return EndOffset <= 0.0f || (EndOffset - ScrollOffset) <= 50.0f;
 	}
 
 	TSharedRef<SWidget> MakeSelectableReadOnlyText(
@@ -1142,6 +1193,36 @@ void SUnrealMcpChatPanel::Construct(const FArguments& InArgs, FUnrealMcpModule* 
 				]
 				+ SHorizontalBox::Slot()
 				.AutoWidth()
+				.VAlign(VAlign_Center)
+				.Padding(0.0f, 0.0f, 8.0f, 0.0f)
+				[
+					SNew(SHorizontalBox)
+					.Visibility_Lambda([this]()
+					{
+						return bAssistantRequestInFlight ? EVisibility::Visible : EVisibility::Collapsed;
+					})
+					+ SHorizontalBox::Slot()
+					.AutoWidth()
+					.VAlign(VAlign_Center)
+					.Padding(0.0f, 0.0f, 4.0f, 0.0f)
+					[
+						SNew(SThrobber)
+						.Visibility_Lambda([this]()
+						{
+							return bAssistantRequestInFlight ? EVisibility::Visible : EVisibility::Collapsed;
+						})
+					]
+					+ SHorizontalBox::Slot()
+					.AutoWidth()
+					.VAlign(VAlign_Center)
+					[
+						SNew(STextBlock)
+						.Font(FAppStyle::GetFontStyle("SmallFont"))
+						.Text(this, &SUnrealMcpChatPanel::GetActiveRequestProgressText)
+					]
+				]
+				+ SHorizontalBox::Slot()
+				.AutoWidth()
 				.Padding(0.0f, 0.0f, 6.0f, 0.0f)
 				[
 					SNew(SButton)
@@ -1233,6 +1314,20 @@ FReply SUnrealMcpChatPanel::HandleCopyToolLogClicked()
 	{
 		FPlatformApplicationMisc::ClipboardCopy(*ToolLogText);
 	}
+	return FReply::Handled();
+}
+
+FReply SUnrealMcpChatPanel::HandleEntryCopyClicked(TSharedPtr<FUnrealMcpChatEntry> Entry)
+{
+	if (Entry.IsValid())
+	{
+		const FString EntryText = BuildEntryCopyText(*Entry);
+		if (!EntryText.IsEmpty())
+		{
+			FPlatformApplicationMisc::ClipboardCopy(*EntryText);
+		}
+	}
+
 	return FReply::Handled();
 }
 
@@ -2121,6 +2216,7 @@ void SUnrealMcpChatPanel::StartAssistantRequest(const FString& UserPrompt)
 	}
 
 	bAssistantRequestInFlight = true;
+	ActiveAssistantRequestStartTime = FDateTime::UtcNow();
 	ActiveAssistantEntry = AppendMessage(EUnrealMcpChatEntryType::Assistant, TEXT("Unreal MCP AI"), FString());
 	if (ActiveAssistantEntry.IsValid())
 	{
@@ -2222,6 +2318,7 @@ void SUnrealMcpChatPanel::StartAssistantRequest(const FString& UserPrompt)
 			if (const TSharedPtr<SUnrealMcpChatPanel> PinnedThis = WeakPanel.Pin())
 			{
 				PinnedThis->bAssistantRequestInFlight = false;
+				PinnedThis->ActiveAssistantRequestStartTime = FDateTime();
 				PinnedThis->ActiveAssistantHandle.Reset();
 				if (!Result.bIsError && !Result.ResponseId.IsEmpty())
 				{
@@ -2318,6 +2415,8 @@ void SUnrealMcpChatPanel::AddEntryWidgetToPane(const TSharedPtr<FUnrealMcpChatEn
 	}
 
 	const bool bIsToolEntry = Entry->Type == EUnrealMcpChatEntryType::Tool;
+	const bool bShouldAutoScroll = bScrollAfterAdd
+		&& (bIsToolEntry ? UnrealMcpChat::IsScrollBoxNearBottom(ToolLogScrollBox) : IsTranscriptNearBottom());
 	TSharedPtr<SVerticalBox> TargetEntriesBox = bIsToolEntry ? ToolLogEntriesBox : TranscriptEntriesBox;
 	if (!TargetEntriesBox.IsValid())
 	{
@@ -2331,7 +2430,7 @@ void SUnrealMcpChatPanel::AddEntryWidgetToPane(const TSharedPtr<FUnrealMcpChatEn
 		BuildEntryWidget(Entry)
 	];
 
-	if (!bScrollAfterAdd)
+	if (!bShouldAutoScroll)
 	{
 		return;
 	}
@@ -2348,6 +2447,9 @@ void SUnrealMcpChatPanel::AddEntryWidgetToPane(const TSharedPtr<FUnrealMcpChatEn
 
 void SUnrealMcpChatPanel::RebuildEntryWidgets(bool bScrollTranscript, bool bScrollToolLog)
 {
+	const bool bShouldScrollTranscript = bScrollTranscript && IsTranscriptNearBottom();
+	const bool bShouldScrollToolLog = bScrollToolLog && UnrealMcpChat::IsScrollBoxNearBottom(ToolLogScrollBox);
+
 	if (TranscriptEntriesBox.IsValid())
 	{
 		TranscriptEntriesBox->ClearChildren();
@@ -2364,18 +2466,131 @@ void SUnrealMcpChatPanel::RebuildEntryWidgets(bool bScrollTranscript, bool bScro
 	}
 
 	InvalidateEntryWidgets();
-	if (bScrollTranscript)
+	if (bShouldScrollTranscript)
 	{
 		ScrollTranscriptToEnd();
 	}
-	if (bScrollToolLog)
+	if (bShouldScrollToolLog)
 	{
 		ScrollToolLogToEnd();
 	}
 }
 
-TSharedRef<SWidget> SUnrealMcpChatPanel::BuildEntryWidget(const TSharedPtr<FUnrealMcpChatEntry>& Entry) const
+TSharedRef<SWidget> SUnrealMcpChatPanel::BuildEntryWidget(const TSharedPtr<FUnrealMcpChatEntry>& Entry)
 {
+	if (Entry->Type == EUnrealMcpChatEntryType::Tool)
+	{
+		return SNew(SBorder)
+			.BorderImage(FAppStyle::GetBrush("WhiteBrush"))
+			.BorderBackgroundColor_Lambda([Entry]()
+			{
+				return UnrealMcpChat::GetBorderColor(*Entry);
+			})
+			.Padding(1.0f)
+			[
+				SNew(SBorder)
+				.BorderImage(FAppStyle::GetBrush("WhiteBrush"))
+				.BorderBackgroundColor_Lambda([Entry]()
+				{
+					return UnrealMcpChat::GetBackgroundColor(*Entry);
+				})
+				.Padding(10.0f)
+				[
+					SNew(SExpandableArea)
+					.InitiallyCollapsed(!Entry->bToolCardExpanded)
+					.OnAreaExpansionChanged(FOnBooleanValueChanged::CreateLambda([Entry](bool bIsExpanded)
+					{
+						Entry->bToolCardExpanded = bIsExpanded;
+					}))
+					.HeaderContent()
+					[
+						SNew(SHorizontalBox)
+						+ SHorizontalBox::Slot()
+						.FillWidth(1.0f)
+						.VAlign(VAlign_Center)
+						[
+							SNew(STextBlock)
+							.Font(FAppStyle::GetFontStyle("NormalFontBold"))
+							.ColorAndOpacity_Lambda([Entry]()
+							{
+								return UnrealMcpChat::GetEntryTitleColor(*Entry);
+							})
+							.Text_Lambda([Entry]()
+							{
+								return FText::FromString(UnrealMcpChat::BuildEntryTitleText(*Entry));
+							})
+						]
+						+ SHorizontalBox::Slot()
+						.AutoWidth()
+						.VAlign(VAlign_Center)
+						.Padding(6.0f, 0.0f, 0.0f, 0.0f)
+						[
+							SNew(SButton)
+							.ContentPadding(FMargin(4.0f, 1.0f))
+							.ToolTipText(LOCTEXT("CopyEntryTooltip", "Copy this entry."))
+							.Text(LOCTEXT("CopyEntryIcon", "📋"))
+							.OnClicked_Lambda([this, Entry]()
+							{
+								return HandleEntryCopyClicked(Entry);
+							})
+						]
+					]
+					.BodyContent()
+					[
+						SNew(SVerticalBox)
+						+ SVerticalBox::Slot()
+						.AutoHeight()
+						.Padding(0.0f, 6.0f, 0.0f, 0.0f)
+						[
+							UnrealMcpChat::MakeSelectableReadOnlyText(
+								TAttribute<FText>::Create(TAttribute<FText>::FGetter::CreateLambda([Entry]()
+								{
+									if (Entry->Body.IsEmpty() && Entry->bIsPending)
+									{
+										return FText::FromString(TEXT("Running..."));
+									}
+
+									return FText::FromString(Entry->Body);
+								})),
+								FAppStyle::GetFontStyle("NormalFont"))
+						]
+						+ SVerticalBox::Slot()
+						.AutoHeight()
+						.Padding(0.0f, 8.0f, 0.0f, 0.0f)
+						[
+							SNew(SBox)
+							.Visibility_Lambda([Entry]()
+							{
+								return Entry->Details.IsEmpty() ? EVisibility::Collapsed : EVisibility::Visible;
+							})
+							[
+								SNew(SVerticalBox)
+								+ SVerticalBox::Slot()
+								.AutoHeight()
+								[
+									SNew(STextBlock)
+									.Font(FAppStyle::GetFontStyle("SmallFont"))
+									.ColorAndOpacity(FLinearColor(0.78f, 0.80f, 0.84f, 1.0f))
+									.Text(LOCTEXT("DetailsLabel", "Details"))
+								]
+								+ SVerticalBox::Slot()
+								.AutoHeight()
+								.Padding(0.0f, 3.0f, 0.0f, 0.0f)
+								[
+									UnrealMcpChat::MakeSelectableReadOnlyText(
+										TAttribute<FText>::Create(TAttribute<FText>::FGetter::CreateLambda([Entry]()
+										{
+											return FText::FromString(Entry->Details);
+										})),
+										FAppStyle::GetFontStyle("SmallFont"))
+								]
+							]
+						]
+					]
+				]
+			];
+	}
+
 	return SNew(SBorder)
 		.BorderImage(FAppStyle::GetBrush("WhiteBrush"))
 		.BorderBackgroundColor_Lambda([Entry]()
@@ -2396,18 +2611,36 @@ TSharedRef<SWidget> SUnrealMcpChatPanel::BuildEntryWidget(const TSharedPtr<FUnre
 				+ SVerticalBox::Slot()
 				.AutoHeight()
 				[
-					SNew(STextBlock)
-					.Font(FAppStyle::GetFontStyle("NormalFontBold"))
-					.Text_Lambda([Entry]()
-					{
-						if (Entry->Type == EUnrealMcpChatEntryType::Tool)
+					SNew(SHorizontalBox)
+					+ SHorizontalBox::Slot()
+					.FillWidth(1.0f)
+					.VAlign(VAlign_Center)
+					[
+						SNew(STextBlock)
+						.Font(FAppStyle::GetFontStyle("NormalFontBold"))
+						.ColorAndOpacity_Lambda([Entry]()
 						{
-							const FString Status = Entry->bIsPending ? TEXT("running") : (Entry->bIsError ? TEXT("error") : TEXT("done"));
-							return FText::FromString(FString::Printf(TEXT("Tool • %s (%s)"), *Entry->Title, *Status));
-						}
-
-						return FText::FromString(Entry->Speaker);
-					})
+							return UnrealMcpChat::GetEntryTitleColor(*Entry);
+						})
+						.Text_Lambda([Entry]()
+						{
+							return FText::FromString(UnrealMcpChat::BuildEntryTitleText(*Entry));
+						})
+					]
+					+ SHorizontalBox::Slot()
+					.AutoWidth()
+					.VAlign(VAlign_Center)
+					.Padding(6.0f, 0.0f, 0.0f, 0.0f)
+					[
+						SNew(SButton)
+						.ContentPadding(FMargin(4.0f, 1.0f))
+						.ToolTipText(LOCTEXT("CopyEntryTooltip", "Copy this entry."))
+						.Text(LOCTEXT("CopyEntryIcon", "📋"))
+						.OnClicked_Lambda([this, Entry]()
+						{
+							return HandleEntryCopyClicked(Entry);
+						})
+					]
 				]
 				+ SVerticalBox::Slot()
 				.AutoHeight()
@@ -2458,7 +2691,7 @@ TSharedRef<SWidget> SUnrealMcpChatPanel::BuildEntryWidget(const TSharedPtr<FUnre
 					]
 				]
 			]
-			];
+		];
 }
 
 FString SUnrealMcpChatPanel::BuildTranscriptText() const
@@ -2495,6 +2728,31 @@ FString SUnrealMcpChatPanel::BuildToolLogText() const
 	}
 
 	return FString::Join(Blocks, TEXT("\n\n"));
+}
+
+FString SUnrealMcpChatPanel::BuildEntryCopyText(const FUnrealMcpChatEntry& Entry) const
+{
+	return UnrealMcpChat::BuildEntryClipboardText(Entry);
+}
+
+FText SUnrealMcpChatPanel::GetActiveRequestProgressText() const
+{
+	if (!bAssistantRequestInFlight)
+	{
+		return FText::GetEmpty();
+	}
+
+	const FTimespan Elapsed = FDateTime::UtcNow() - ActiveAssistantRequestStartTime;
+	const int32 ElapsedSeconds = FMath::Max(0, FMath::FloorToInt(Elapsed.GetTotalSeconds()));
+
+	// FUnrealMcpAssistantEvent and FUnrealMcpAssistantTurnResult do not expose token usage yet,
+	// so the v1 progress indicator reports elapsed wall-clock time only.
+	return FText::FromString(FString::Printf(TEXT("⏱ %ds"), ElapsedSeconds));
+}
+
+bool SUnrealMcpChatPanel::IsTranscriptNearBottom() const
+{
+	return UnrealMcpChat::IsScrollBoxNearBottom(TranscriptScrollBox);
 }
 
 bool SUnrealMcpChatPanel::HasTranscriptEntries() const
@@ -2907,6 +3165,8 @@ bool SUnrealMcpChatPanel::MoveEntryToEnd(const TSharedPtr<FUnrealMcpChatEntry>& 
 
 void SUnrealMcpChatPanel::ScrollTranscriptToEnd()
 {
+	bDeferredTranscriptShouldAutoScroll = IsTranscriptNearBottom();
+
 	if (TranscriptEntriesBox.IsValid())
 	{
 		TranscriptEntriesBox->Invalidate(EInvalidateWidgetReason::Prepass);
@@ -2915,7 +3175,16 @@ void SUnrealMcpChatPanel::ScrollTranscriptToEnd()
 	if (TranscriptScrollBox.IsValid())
 	{
 		TranscriptScrollBox->Invalidate(EInvalidateWidgetReason::Prepass);
-		TranscriptScrollBox->ScrollToEnd();
+		if (bDeferredTranscriptShouldAutoScroll)
+		{
+			TranscriptScrollBox->ScrollToEnd();
+		}
+	}
+
+	if (!bDeferredTranscriptShouldAutoScroll)
+	{
+		DeferredTranscriptScrollFrames = 0;
+		return;
 	}
 
 	DeferredTranscriptScrollFrames = FMath::Max(DeferredTranscriptScrollFrames, 10);
@@ -2930,6 +3199,8 @@ void SUnrealMcpChatPanel::ScrollTranscriptToEnd()
 
 void SUnrealMcpChatPanel::ScrollToolLogToEnd()
 {
+	bDeferredToolLogShouldAutoScroll = UnrealMcpChat::IsScrollBoxNearBottom(ToolLogScrollBox);
+
 	if (ToolLogEntriesBox.IsValid())
 	{
 		ToolLogEntriesBox->Invalidate(EInvalidateWidgetReason::Prepass);
@@ -2938,7 +3209,16 @@ void SUnrealMcpChatPanel::ScrollToolLogToEnd()
 	if (ToolLogScrollBox.IsValid())
 	{
 		ToolLogScrollBox->Invalidate(EInvalidateWidgetReason::Prepass);
-		ToolLogScrollBox->ScrollToEnd();
+		if (bDeferredToolLogShouldAutoScroll)
+		{
+			ToolLogScrollBox->ScrollToEnd();
+		}
+	}
+
+	if (!bDeferredToolLogShouldAutoScroll)
+	{
+		DeferredToolLogScrollFrames = 0;
+		return;
 	}
 
 	DeferredToolLogScrollFrames = FMath::Max(DeferredToolLogScrollFrames, 10);
@@ -2964,7 +3244,16 @@ EActiveTimerReturnType SUnrealMcpChatPanel::HandleDeferredTranscriptScroll(doubl
 	if (TranscriptScrollBox.IsValid())
 	{
 		TranscriptScrollBox->Invalidate(EInvalidateWidgetReason::Prepass);
-		TranscriptScrollBox->ScrollToEnd();
+		if (bDeferredTranscriptShouldAutoScroll)
+		{
+			TranscriptScrollBox->ScrollToEnd();
+		}
+	}
+
+	if (!bDeferredTranscriptShouldAutoScroll)
+	{
+		bDeferredTranscriptScrollActive = false;
+		return EActiveTimerReturnType::Stop;
 	}
 
 	--DeferredTranscriptScrollFrames;
@@ -2990,7 +3279,16 @@ EActiveTimerReturnType SUnrealMcpChatPanel::HandleDeferredToolLogScroll(double I
 	if (ToolLogScrollBox.IsValid())
 	{
 		ToolLogScrollBox->Invalidate(EInvalidateWidgetReason::Prepass);
-		ToolLogScrollBox->ScrollToEnd();
+		if (bDeferredToolLogShouldAutoScroll)
+		{
+			ToolLogScrollBox->ScrollToEnd();
+		}
+	}
+
+	if (!bDeferredToolLogShouldAutoScroll)
+	{
+		bDeferredToolLogScrollActive = false;
+		return EActiveTimerReturnType::Stop;
 	}
 
 	--DeferredToolLogScrollFrames;
@@ -3108,9 +3406,12 @@ void SUnrealMcpChatPanel::ResetHistory(bool bAddReadyMessage)
 	ActiveAssistantEntry.Reset();
 	ActiveAssistantHandle.Reset();
 	bAssistantRequestInFlight = false;
+	ActiveAssistantRequestStartTime = FDateTime();
 	bDeferredTranscriptScrollActive = false;
+	bDeferredTranscriptShouldAutoScroll = true;
 	DeferredTranscriptScrollFrames = 0;
 	bDeferredToolLogScrollActive = false;
+	bDeferredToolLogShouldAutoScroll = true;
 	DeferredToolLogScrollFrames = 0;
 
 	if (TranscriptEntriesBox.IsValid())
