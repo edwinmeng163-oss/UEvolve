@@ -73,7 +73,7 @@ private:
 	void HandleSkillApplyModeChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo);
 	void RefreshProviderOptions(); void RefreshModelOptionsForActiveProvider(); void LoadRecentModelsFromDisk(); void SaveRecentModelsToDisk() const;
 	void SetActiveProviderById(const FString& NewId); void RememberRecentModel(const FString& ProviderId, const FString& Model);
-	FText GetCurrentProviderDisplayText() const; FText GetCurrentModelDisplayText() const; bool IsActiveProviderCodexKind() const; static FString KindShortName(EAiProviderKind Kind);
+	FText GetCurrentProviderDisplayText() const; FText GetCurrentModelDisplayText() const; bool IsActiveProviderModelLocked() const; static FString KindShortName(EAiProviderKind Kind);
 	void SendCurrentInput();
 	void SendCommand(const FString& CommandText);
 	void StopAssistantRequest();

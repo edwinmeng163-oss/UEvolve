@@ -71,6 +71,7 @@ namespace UnrealMcp
 				ProviderMap.Add(EAiProviderKind::OpenAiChatCompat, CreateOpenAiChatCompletionsProvider());
 				ProviderMap.Add(EAiProviderKind::AnthropicMessages, CreateAnthropicMessagesProvider());
 				ProviderMap.Add(EAiProviderKind::Codex, CreateCodexProvider());
+				ProviderMap.Add(EAiProviderKind::CodexAppServer, CreateCodexAppServerProvider());
 			}
 
 			const FAiProviderConfig* ActiveProvider = Settings.FindActiveProvider();

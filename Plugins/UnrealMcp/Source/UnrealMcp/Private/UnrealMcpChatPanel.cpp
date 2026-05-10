@@ -98,7 +98,7 @@ namespace UnrealMcpChat
 	FString ProviderKindShortName(EAiProviderKind Kind)
 	{
 		switch (Kind)
-		{ case EAiProviderKind::OpenAiResponses: return TEXT("OpenAI"); case EAiProviderKind::OpenAiChatCompat: return TEXT("OpenAI-compat"); case EAiProviderKind::AnthropicMessages: return TEXT("Anthropic"); case EAiProviderKind::Codex: return TEXT("Codex"); default: return TEXT("Unknown"); }
+		{ case EAiProviderKind::OpenAiResponses: return TEXT("OpenAI"); case EAiProviderKind::OpenAiChatCompat: return TEXT("OpenAI-compat"); case EAiProviderKind::AnthropicMessages: return TEXT("Anthropic"); case EAiProviderKind::Codex: return TEXT("Codex"); case EAiProviderKind::CodexAppServer: return TEXT("CodexDesktop"); default: return TEXT("Unknown"); }
 	}
 
 	FString FormatProviderLabel(const FAiProviderConfig& Provider)
@@ -949,7 +949,7 @@ void SUnrealMcpChatPanel::Construct(const FArguments& InArgs, FUnrealMcpModule* 
 							.MinDesiredWidth(200.0f)
 							.Visibility_Lambda([this]()
 							{
-								return ProviderOptionIds.Num() > 0 && !IsActiveProviderCodexKind() ? EVisibility::Visible : EVisibility::Collapsed;
+								return ProviderOptionIds.Num() > 0 && !IsActiveProviderModelLocked() ? EVisibility::Visible : EVisibility::Collapsed;
 							})
 							[
 								SAssignNew(ModelComboBox, SComboBox<TSharedPtr<FString>>)
@@ -990,9 +990,9 @@ void SUnrealMcpChatPanel::Construct(const FArguments& InArgs, FUnrealMcpModule* 
 							.MinDesiredWidth(200.0f)
 							.Visibility_Lambda([this]()
 							{
-								return ProviderOptionIds.Num() > 0 && IsActiveProviderCodexKind() ? EVisibility::Visible : EVisibility::Collapsed;
+								return ProviderOptionIds.Num() > 0 && IsActiveProviderModelLocked() ? EVisibility::Visible : EVisibility::Collapsed;
 							})
-							.ToolTipText(LOCTEXT("CodexLockedModelTooltip", "Codex provider is hard-locked to gpt-5.5 with xhigh reasoning per project policy."))
+							.ToolTipText(LOCTEXT("CodexLockedModelTooltip", "Codex variants are hard-locked to gpt-5.5 with xhigh reasoning per project policy."))
 							[
 								SNew(STextBlock)
 								.Text(this, &SUnrealMcpChatPanel::GetCurrentModelDisplayText)
@@ -1546,7 +1546,7 @@ void SUnrealMcpChatPanel::HandleProviderSelectionChanged(TSharedPtr<FString> New
 
 void SUnrealMcpChatPanel::HandleModelSelectionChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo)
 {
-	if (!NewSelection.IsValid() || IsActiveProviderCodexKind()) { return; }
+	if (!NewSelection.IsValid() || IsActiveProviderModelLocked()) { return; }
 	SelectedModel = NewSelection;
 	if (ModelEditableTextBox.IsValid()) { ModelEditableTextBox->SetText(FText::FromString(*NewSelection)); }
 	if (SelectInfo != ESelectInfo::Direct) { HandleModelTextCommitted(FText::FromString(*NewSelection), ETextCommit::OnEnter); }
@@ -1554,7 +1554,7 @@ void SUnrealMcpChatPanel::HandleModelSelectionChanged(TSharedPtr<FString> NewSel
 
 void SUnrealMcpChatPanel::HandleModelTextCommitted(const FText& InText, ETextCommit::Type CommitType)
 {
-	if (IsActiveProviderCodexKind() || (CommitType != ETextCommit::OnEnter && CommitType != ETextCommit::OnUserMovedFocus)) { return; }
+	if (IsActiveProviderModelLocked() || (CommitType != ETextCommit::OnEnter && CommitType != ETextCommit::OnUserMovedFocus)) { return; }
 	const FString Model = InText.ToString().TrimStartAndEnd();
 	if (Model.IsEmpty()) { return; }
 	UUnrealMcpSettings* Settings = GetMutableDefault<UUnrealMcpSettings>();
@@ -1615,7 +1615,7 @@ void SUnrealMcpChatPanel::RefreshModelOptionsForActiveProvider()
 		return;
 	}
 
-	const FString CurrentModel = IsActiveProviderCodexKind() ? TEXT("gpt-5.5") : Provider->Model.TrimStartAndEnd();
+	const FString CurrentModel = IsActiveProviderModelLocked() ? TEXT("gpt-5.5") : Provider->Model.TrimStartAndEnd();
 	TSet<FString> SeenModels;
 	if (!CurrentModel.IsEmpty()) { SelectedModel = MakeShared<FString>(CurrentModel); ModelOptions.Add(SelectedModel); SeenModels.Add(CurrentModel); }
 
@@ -1742,17 +1742,17 @@ FText SUnrealMcpChatPanel::GetCurrentProviderDisplayText() const
 
 FText SUnrealMcpChatPanel::GetCurrentModelDisplayText() const
 {
-	if (IsActiveProviderCodexKind()) { return FText::FromString(TEXT("gpt-5.5 (locked)")); }
+	if (IsActiveProviderModelLocked()) { return FText::FromString(TEXT("gpt-5.5 (locked)")); }
 	return FText::FromString(SelectedModel.IsValid() ? *SelectedModel : FString());
 }
 
-bool SUnrealMcpChatPanel::IsActiveProviderCodexKind() const
+bool SUnrealMcpChatPanel::IsActiveProviderModelLocked() const
 {
 	const UUnrealMcpSettings* Settings = GetDefault<UUnrealMcpSettings>();
 	if (!Settings) { return false; }
 	const FString ProviderId = SelectedProviderId.IsValid() ? *SelectedProviderId : Settings->ActiveProviderId;
 	const FAiProviderConfig* Provider = UnrealMcpChat::FindProviderById(*Settings, ProviderId);
-	return Provider && Provider->Kind == EAiProviderKind::Codex;
+	return Provider && (Provider->Kind == EAiProviderKind::Codex || Provider->Kind == EAiProviderKind::CodexAppServer);
 }
 
 FString SUnrealMcpChatPanel::KindShortName(EAiProviderKind Kind)

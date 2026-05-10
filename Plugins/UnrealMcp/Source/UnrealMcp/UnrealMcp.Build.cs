@@ -37,7 +37,8 @@ public class UnrealMcp : ModuleRules
 			"ToolMenus",
 			"UMG",
 			"UMGEditor",
-			"UnrealEd"
+			"UnrealEd",
+			"WebSockets"
 		});
 	}
 }

@@ -33,6 +33,7 @@ namespace UnrealMcp
 		TUniquePtr<IAssistantProvider> CreateOpenAiChatCompletionsProvider();
 		TUniquePtr<IAssistantProvider> CreateAnthropicMessagesProvider();
 		TUniquePtr<IAssistantProvider> CreateCodexProvider();
+		TUniquePtr<IAssistantProvider> CreateCodexAppServerProvider();
 		// Returned pointer is owned by an internal static map; caller must NOT delete.
 		IAssistantProvider* ResolveActiveProvider(const UUnrealMcpSettings& Settings, FString& OutError);
 	}
