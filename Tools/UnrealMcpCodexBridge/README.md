@@ -3,9 +3,9 @@
 This is the P7.A bridge daemon between the Codex App Server protocol and the
 simple WebSocket API that the Unreal plugin will consume in P7.B.
 
-The bridge starts its own `codex app-server` subprocess on a temporary Unix
-socket, initializes the App Server protocol, creates one Codex thread, then
-listens for UE-facing WebSocket messages on:
+The bridge starts its own `codex app-server` subprocess, connects to it over a
+platform-selected transport, initializes the App Server protocol, creates one
+Codex thread, then listens for UE-facing WebSocket messages on:
 
 ```text
 ws://127.0.0.1:8766/uevolve
@@ -58,12 +58,36 @@ Expected startup output:
 
 ```text
 UEvolve Codex Bridge listening at ws://127.0.0.1:8766/uevolve
+Codex app-server transport=unix endpoint=/tmp/uevolve-codex-bridge-<id>/codex.sock
 Codex model=gpt-5.5 effort=xhigh approvalPolicy=reject log=/tmp/uevolve-codex-bridge-<pid>.log
 ```
 
 Stop with `Ctrl-C`. On shutdown, the bridge interrupts any in-flight Codex turn,
 closes connected WebSocket clients, and terminates its spawned app-server
 subprocess.
+
+## Platform Support
+
+The bridge defaults to Unix-domain sockets on macOS and Linux:
+
+```text
+codex app-server --listen unix://<tmpdir>/codex.sock
+```
+
+On Windows, it automatically uses localhost WebSocket transport instead:
+
+```text
+codex app-server --listen ws://127.0.0.1:<auto-port>
+```
+
+The start command is the same on every platform:
+
+```bash
+bun run --cwd Tools/UnrealMcpCodexBridge src/index.ts
+```
+
+No `.bat` helper is required. If a firewall or local policy requires a stable
+Codex App Server port, set `UEVOLVE_CODEX_APP_SERVER_PORT`.
 
 ## Configuration
 
@@ -74,11 +98,19 @@ UEVOLVE_CODEX_BRIDGE_PORT=8766
 UEVOLVE_CODEX_BRIDGE_PATH=/uevolve
 UEVOLVE_CODEX_CWD=<working directory for Codex turns; default is repo root>
 UEVOLVE_CODEX_APPROVAL_POLICY=reject|auto-approve
+UEVOLVE_CODEX_TRANSPORT=ws|unix
+UEVOLVE_CODEX_APP_SERVER_PORT=<port for ws transport; default is auto>
 UEVOLVE_MCP_NAME=unrealmcp
 UEVOLVE_MCP_URL=http://127.0.0.1:8765/mcp
 UEVOLVE_DISABLE_AUTO_MCP_REGISTER=1
 UEVOLVE_MCP_BEARER=<future UE MCP bearer token>
 ```
+
+`UEVOLVE_CODEX_TRANSPORT` overrides the OS default on any platform. `ws` uses
+`ws://127.0.0.1:<port>`; `unix` uses a temporary Unix-domain socket. When
+`UEVOLVE_CODEX_APP_SERVER_PORT` is unset, the bridge briefly binds
+`127.0.0.1:0` to discover a free port, closes that probe listener, then starts
+Codex App Server on the selected port.
 
 The bridge hard-codes:
 
@@ -106,7 +138,7 @@ By default, the bridge starts Codex with the running Unreal MCP endpoint
 registered as an App Server MCP server:
 
 ```bash
-codex app-server --listen unix://<sock> -c mcp_servers.unrealmcp.url="http://127.0.0.1:8765/mcp"
+codex app-server --listen <unix-or-ws-endpoint> -c mcp_servers.unrealmcp.url="http://127.0.0.1:8765/mcp"
 ```
 
 That makes Codex see the Unreal tool inventory, including tools such as
@@ -220,7 +252,8 @@ after a non-empty `turn_complete`.
 ## Known Limitations
 
 - The bridge always spawns a fresh `codex app-server` subprocess. Connecting to
-  a running Codex Desktop IPC socket, such as `ipc-501.sock`, is deferred to v2.
+  a running Codex Desktop IPC socket, such as the macOS-only
+  `codex app-server proxy --sock ipc-501.sock` path, is deferred to v2.
 - The bridge does not auto-restart the app-server subprocess. If Codex exits,
   health becomes `failed`.
 - V1 supports one active turn at a time on the cached thread.

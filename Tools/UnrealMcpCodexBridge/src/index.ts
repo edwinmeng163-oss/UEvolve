@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { approvalModeFromEnv } from "./approval-policy";
-import { CodexWsClient, startCodexAppServer, waitForSocket } from "./codex-protocol";
+import { CodexWsClient, startCodexAppServer, waitForEndpoint } from "./codex-protocol";
 import { createBridgeServer, send, type HealthState } from "./server";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -24,7 +24,7 @@ function log(direction: string, payload: any): void {
   fs.appendFileSync(logPath, `${new Date().toISOString()} ${direction} ${JSON.stringify(payload)}\n`);
 }
 
-const child = startCodexAppServer((reason) => {
+const child = await startCodexAppServer((reason) => {
   health = { state: "failed", reason };
   console.error(reason);
 });
@@ -53,8 +53,8 @@ function onNotification(message: any): void {
   }
 }
 
-await waitForSocket(child.socketPath);
-codex = new CodexWsClient(child.socketPath, log, approvalMode, onNotification);
+await waitForEndpoint(child.endpoint, child.transport);
+codex = new CodexWsClient(child.endpoint, log, approvalMode, onNotification);
 await codex.connect();
 await codex.initialize();
 const mcpStatus = await codex.request("mcpServerStatus/list", { detail: "toolsAndAuthOnly" }).catch((error) => ({ error: String(error), data: [] }));
@@ -108,6 +108,7 @@ const bridge = createBridgeServer({
 });
 
 console.log(`UEvolve Codex Bridge listening at ${bridge.url}`);
+console.log(`Codex app-server transport=${child.transport} endpoint=${child.endpoint}`);
 console.log(`Codex app-server args: ${formatSpawnArgs(child.spawnArgs)}`);
 console.log(`MCP registration: ${JSON.stringify(child.mcpRegistration)}`);
 console.log(`MCP status: ${summarizeMcpStatus(mcpStatus)}`);
