@@ -23,6 +23,7 @@ SOURCE_SUFFIXES = {".h", ".cpp", ".inl"}
 # build, not just speculation. Version-specific shims belong in
 # UnrealMcpEngineCompat.h; add forbidden bare includes or raw ENGINE_*_VERSION
 # checks here so future PRs keep business code on the central shim.
+# To seed candidates after a UE upgrade run: python3 Tools/audit_engine_header_diff.py --format markdown
 FORBIDDEN_PATTERNS: list[dict[str, Any]] = [
     {
         "pattern": r'^\s*#include\s+"Misc/StringOutputDevice\.h"\s*$',
