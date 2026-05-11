@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+if grep -q -- "--silent" Tools/validate_tool_registry.py; then
+  registry_command=(python3 Tools/validate_tool_registry.py --silent)
+else
+  registry_command=(python3 Tools/validate_tool_registry.py)
+fi
+
+if ! "${registry_command[@]}"; then
+  echo "pre-commit: Tools/validate_tool_registry.py failed; see output above." >&2
+  exit 1
+fi
+
+if ! python3 Tools/check_ue56_compat.py; then
+  echo "pre-commit: Tools/check_ue56_compat.py failed; see output above." >&2
+  exit 1
+fi

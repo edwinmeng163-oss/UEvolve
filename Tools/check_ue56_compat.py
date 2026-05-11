@@ -8,23 +8,32 @@ import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SOURCE_ROOT = REPO_ROOT / "Plugins" / "UnrealMcp" / "Source" / "UnrealMcp"
+ENGINE_COMPAT_HEADER = SOURCE_ROOT / "Private" / "UnrealMcpEngineCompat.h"
+MODULE_FILE = SOURCE_ROOT / "Private" / "UnrealMcpModule.cpp"
 SOURCE_SUFFIXES = {".h", ".cpp", ".inl"}
 
 
 # Each entry: pattern = python regex, reason = short note, added_in = UE version,
 # severity = 'error' | 'warning'. Entries should be confirmed by real cross-version
-# build, not just speculation. Always pair a forbidden pattern with the matching
-# #if ENGINE_*_VERSION shim in the offending file, then add the regex here so a
-# future PR that re-introduces the bare include/symbol is caught at lint time.
-FORBIDDEN_PATTERNS: list[dict[str, str]] = [
+# build, not just speculation. Version-specific shims belong in
+# UnrealMcpEngineCompat.h; add forbidden bare includes or raw ENGINE_*_VERSION
+# checks here so future PRs keep business code on the central shim.
+FORBIDDEN_PATTERNS: list[dict[str, Any]] = [
     {
         "pattern": r'^\s*#include\s+"Misc/StringOutputDevice\.h"\s*$',
-        "reason": "Misc/StringOutputDevice.h is 5.7+. Wrap include with #if ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 7; in 5.6 the FStringOutputDevice symbol is provided via Containers/UnrealString.h transitively from Misc/OutputDevice.h.",
+        "reason": "Misc/StringOutputDevice.h is 5.7+. Include UnrealMcpEngineCompat.h instead so business code does not carry engine-version shims.",
+        "added_in": "5.7",
+        "severity": "warning",
+        "suppress_when_guarded": True,
+    },
+    {
+        "pattern": r"^\s*#\s*if\b.*\bENGINE_(?:MAJOR|MINOR)_VERSION\b",
+        "reason": "Raw ENGINE_*_VERSION checks belong in UnrealMcpEngineCompat.h; business code must use the central compatibility shim.",
         "added_in": "5.7",
         "severity": "warning",
     },
@@ -88,11 +97,21 @@ def is_inside_version_guard(lines: list[str], target_idx: int, min_minor: int) -
     return False
 
 
-def scan_file(path: Path, pattern_entry: dict[str, str]) -> list[Finding]:
+def is_allowed_engine_version_preprocessor(path: Path, line: str) -> bool:
+    if path == ENGINE_COMPAT_HEADER:
+        return True
+    if path == MODULE_FILE:
+        stripped = line.strip()
+        return stripped.startswith("#if !defined(ENGINE_MAJOR_VERSION)") or stripped.startswith("#if (ENGINE_MAJOR_VERSION < 5)")
+    return False
+
+
+def scan_file(path: Path, pattern_entry: dict[str, Any]) -> list[Finding]:
     expression = re.compile(pattern_entry["pattern"])
     reason = pattern_entry["reason"]
     added_in = pattern_entry["added_in"]
     severity = pattern_entry["severity"]
+    suppress_when_guarded = bool(pattern_entry.get("suppress_when_guarded", False))
     findings: list[Finding] = []
 
     added_major, added_minor = parse_engine_version(added_in)
@@ -103,7 +122,9 @@ def scan_file(path: Path, pattern_entry: dict[str, str]) -> list[Finding]:
     for line_index, line in enumerate(lines):
         if not expression.search(line):
             continue
-        if added_major == 5 and is_inside_version_guard(lines, line_index, added_minor):
+        if is_allowed_engine_version_preprocessor(path, line):
+            continue
+        if suppress_when_guarded and added_major == 5 and is_inside_version_guard(lines, line_index, added_minor):
             # The forbidden symbol is gated behind the matching engine-version
             # guard, so the lower-version path uses the correct alternative.
             continue

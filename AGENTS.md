@@ -50,6 +50,14 @@ Two optional sample-content hosts ship alongside the root:
 `Examples/UEvolveExample` (UE 5.6.1) and `Examples/UEvolveExample57`
 (UE 5.7.4). Pick the variant matching the installed engine.
 
+### Multi-engine compatibility discipline
+
+- All `#if ENGINE_*_VERSION` goes in `UnrealMcpEngineCompat.h`. Business code
+  must not contain version checks.
+- Run `Tools/install_git_hooks.sh` once after clone to enable the local
+  pre-commit linter.
+- `EAiProviderKind` values are append-only; do not renumber.
+
 ## Product Goal
 
 The user is building more than a normal Unreal automation plugin. The target is:

@@ -7,11 +7,12 @@
 UENUM()
 enum class EAiProviderKind : uint8
 {
-	OpenAiResponses    UMETA(DisplayName="OpenAI Responses API"),
-	OpenAiChatCompat   UMETA(DisplayName="OpenAI-Compatible (chat/completions: Kimi/GLM/DeepSeek/Qwen/Ollama)"),
-	AnthropicMessages  UMETA(DisplayName="Anthropic Messages"),
-	Codex              UMETA(DisplayName="Codex CLI (local subprocess)"),
-	CodexAppServer     UMETA(DisplayName="Codex Desktop / App Server (Plan B bridge)"),
+	// Append-only. Never renumber or remove a kind, even if deprecated; UE serialization persists by numeric value. New kinds get the next free integer.
+	OpenAiResponses    = 0 UMETA(DisplayName="OpenAI Responses API"),
+	OpenAiChatCompat   = 1 UMETA(DisplayName="OpenAI-Compatible (chat/completions: Kimi/GLM/DeepSeek/Qwen/Ollama)"),
+	AnthropicMessages  = 2 UMETA(DisplayName="Anthropic Messages"),
+	Codex              = 3 UMETA(DisplayName="Codex CLI (local subprocess)"),
+	CodexAppServer     = 4 UMETA(DisplayName="Codex Desktop / App Server (Plan B bridge)"),
 };
 
 USTRUCT()

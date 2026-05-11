@@ -19,16 +19,11 @@
 #include "Misc/FileHelper.h"
 #include "Misc/OutputDevice.h"
 #include "Misc/Paths.h"
-#include "Runtime/Launch/Resources/Version.h"
-#if ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 7
-#include "Misc/StringOutputDevice.h"
-#else
-#include "Containers/UnrealString.h"
-#endif
 #include "PlayInEditorDataTypes.h"
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "Subsystems/EditorActorSubsystem.h"
 #include "Subsystems/EditorAssetSubsystem.h"
+#include "UnrealMcpEngineCompat.h"
 #include "UnrealMcpModule.h"
 #include "UnrealMcpSettings.h"
 
