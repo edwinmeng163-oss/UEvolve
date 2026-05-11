@@ -7,6 +7,17 @@
 #include "UnrealMcpAssistantRun.h"
 #include "UnrealMcpSession.h"
 #include "UnrealMcpSkillTools.h"
+#include "Runtime/Launch/Resources/Version.h"
+
+#if !defined(ENGINE_MAJOR_VERSION) || !defined(ENGINE_MINOR_VERSION)
+	#error "UnrealMcp requires Runtime/Launch/Resources/Version.h to define ENGINE_MAJOR_VERSION and ENGINE_MINOR_VERSION."
+#endif
+#if (ENGINE_MAJOR_VERSION < 5) || (ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION < 6)
+	#error "UnrealMcp requires Unreal Engine 5.6 or later. See Docs/Release-2026-05.md for the supported version matrix."
+#endif
+static_assert(
+	(ENGINE_MAJOR_VERSION > 5) || (ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 6),
+	"UnrealMcp requires Unreal Engine 5.6 or later. See Docs/Release-2026-05.md for the supported version matrix.");
 
 DEFINE_LOG_CATEGORY(LogUnrealMcp);
 
@@ -50,6 +61,8 @@ void FUnrealMcpModule::StartupModule()
 {
 	UnrealMcp::InitializeLaunchSession();
 	StartServer();
+	UE_LOG(LogUnrealMcp, Display, TEXT("UnrealMcp plugin built against UE %d.%d.%d (built-time engine version)"),
+		ENGINE_MAJOR_VERSION, ENGINE_MINOR_VERSION, ENGINE_PATCH_VERSION);
 	SkillActivityTickerHandle = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateRaw(this, &FUnrealMcpModule::TickSkillActivity), 60.0f);
 	RegisterTabSpawner();
 	UToolMenus::Get()->RegisterStartupCallback(FSimpleMulticastDelegate::FDelegate::CreateRaw(this, &FUnrealMcpModule::RegisterMenus));

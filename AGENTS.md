@@ -693,10 +693,11 @@ Windows UE 5.7 build example:
   -WaitMutex
 ```
 
-Registry validation:
+Pre-commit / CI checks:
 
 ```bash
 python3 Tools/validate_tool_registry.py
+python3 Tools/check_ue56_compat.py
 ```
 
 Core test suite from Chat:

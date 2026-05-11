@@ -70,6 +70,8 @@
 
 UEvolve plugin 当前支持 Unreal Engine 5.6 和 5.7。同一套 C++ 源码以 UE 5.6 作为最低支持版本；`UEvolve.uproject` 默认 `EngineAssociation` 设为 `5.6`，5.7 用户可以通过右键项目文件选择 **Switch Unreal Engine Version** 升级本地工程绑定。本次代码审计没有发现需要 5.7 专用 API shim 的 plugin 调用；请在 UE 5.6 环境中执行最终编译验证。
 
+- **Pre-commit / linter**：提交前运行 `python3 Tools/check_ue56_compat.py`，检查已知 UE 5.7-only API，避免代码在 UE 5.7 机器上通过却在 UE 5.6 用户环境中失败。
+
 ---
 
 ### 安装指南（新用户从 Git 拉取到本地）
@@ -304,6 +306,8 @@ A Provider/Model selector at the top of the chat panel switches between configur
 
 The UEvolve plugin supports Unreal Engine 5.6 and 5.7 from the same source tree. UE 5.6 is the lower bound, so `UEvolve.uproject` defaults `EngineAssociation` to `5.6`; UE 5.7 users can switch the local project association through **Switch Unreal Engine Version**. This code-only audit found no plugin API calls that require UE 5.7-specific conditional shims; final compile validation still needs to run in a UE 5.6 installation.
 
+- **Pre-commit / linter**: Before committing, run `python3 Tools/check_ue56_compat.py` to catch known UE 5.7-only APIs so code that passes on a UE 5.7 machine does not regress UE 5.6 users.
+
 ---
 
 ### Setup Guide (new contributor cloning the repo)
@@ -524,6 +528,8 @@ In the chat panel:
 ### Engine Compatibility / エンジン互換性
 
 UEvolve plugin は Unreal Engine 5.6 と 5.7 の両方を同じソースツリーでサポートします。最低対応バージョンは UE 5.6 のため、`UEvolve.uproject` の既定 `EngineAssociation` は `5.6` です。UE 5.7 のユーザーは **Switch Unreal Engine Version** でローカルプロジェクトの関連付けを更新できます。今回のコードのみの監査では UE 5.7 専用の conditional shim が必要な plugin API 呼び出しは見つかっていません。最終確認は UE 5.6 環境でのコンパイルで行ってください。
+
+- **Pre-commit / linter**: コミット前に `python3 Tools/check_ue56_compat.py` を実行し、既知の UE 5.7-only API を検出してください。UE 5.7 環境では通る変更が UE 5.6 ユーザー環境で壊れることを防ぎます。
 
 ---
 
