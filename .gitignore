@@ -3,6 +3,7 @@ Binaries/
 DerivedDataCache/
 Intermediate/
 Saved/
+/Build/
 Examples/*/Binaries/
 Examples/*/DerivedDataCache/
 Examples/*/Intermediate/
@@ -12,6 +13,9 @@ Examples/*/Saved/
 Plugins/*/Binaries/
 Plugins/*/Intermediate/
 Plugins/*/Saved/
+
+# Claude Code harness state (per-machine runtime; never committed)
+.claude/
 
 # IDE / editor generated files
 .vs/
