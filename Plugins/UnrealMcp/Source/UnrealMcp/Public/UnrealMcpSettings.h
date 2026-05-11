@@ -65,6 +65,7 @@ public:
 #if WITH_EDITOR
 	virtual FText GetSectionText() const override;
 	virtual FText GetSectionDescription() const override;
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 #endif
 	const FAiProviderConfig* FindActiveProvider() const;
 
@@ -123,4 +124,8 @@ public:
 
 	UPROPERTY(EditAnywhere, Config, Category="AI", meta=(MultiLine=true, ToolTip="Optional additional instructions appended to the built-in assistant prompt."))
 	FString AssistantSystemPrompt;
+private:
+	static const TCHAR* const BackupFileRelativePath;
+	void WriteProvidersBackup() const;
+	bool LoadProvidersBackup();
 };
