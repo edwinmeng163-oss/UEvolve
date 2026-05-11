@@ -16,6 +16,32 @@
 
 namespace
 {
+	bool IsValidCodexBridgeModelId(const FString& Model)
+	{
+		if (Model.Len() < 1 || Model.Len() > 64)
+		{
+			return false;
+		}
+
+		for (int32 Index = 0; Index < Model.Len(); ++Index)
+		{
+			const TCHAR Ch = Model[Index];
+			const bool bAllowed =
+				(Ch >= 'a' && Ch <= 'z')
+				|| (Ch >= 'A' && Ch <= 'Z')
+				|| (Ch >= '0' && Ch <= '9')
+				|| Ch == '.'
+				|| Ch == '_'
+				|| Ch == '-';
+			if (!bAllowed)
+			{
+				return false;
+			}
+		}
+
+		return true;
+	}
+
 	class FCodexAppServerRun final : public IUnrealMcpAssistantHandle, public TSharedFromThis<FCodexAppServerRun, ESPMode::ThreadSafe>
 	{
 	public:
@@ -139,6 +165,16 @@ namespace
 			Payload->SetStringField(TEXT("requestId"), CurrentRequestId);
 			Payload->SetStringField(TEXT("prompt"), UserPrompt);
 			Payload->SetStringField(TEXT("context"), ConversationContext);
+			const FString Model = Config.Model.TrimStartAndEnd();
+			const FString ReasoningEffort = Config.ReasoningEffort.TrimStartAndEnd();
+			if (!Model.IsEmpty())
+			{
+				Payload->SetStringField(TEXT("model"), Model);
+			}
+			if (!ReasoningEffort.IsEmpty())
+			{
+				Payload->SetStringField(TEXT("effort"), ReasoningEffort);
+			}
 			if (!SendJson(Payload))
 			{
 				Finish(TEXT("Codex App Server bridge WebSocket is not connected; could not start turn."), true);
@@ -434,9 +470,10 @@ namespace UnrealMcp
 			return false;
 		}
 
-		if (!Config.Model.TrimStartAndEnd().IsEmpty() || !Config.ReasoningEffort.TrimStartAndEnd().IsEmpty())
+		const FString Model = Config.Model.TrimStartAndEnd();
+		if (!Model.IsEmpty() && !IsValidCodexBridgeModelId(Model))
 		{
-			UE_LOG(LogUnrealMcp, Warning, TEXT("Provider '%s': Model and ReasoningEffort are ignored by the Codex App Server bridge; the bridge hard-codes gpt-5.5 with xhigh reasoning."), *ProviderId);
+			UE_LOG(LogUnrealMcp, Warning, TEXT("Provider '%s': Model '%s' does not match the Codex App Server bridge model-id pattern /^[a-zA-Z0-9._\\-]{1,64}$/; the bridge may reject the turn."), *ProviderId, *Model);
 		}
 		return true;
 	}

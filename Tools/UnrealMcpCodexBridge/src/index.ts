@@ -9,8 +9,8 @@ const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 const cwd = process.env.UEVOLVE_CODEX_CWD ?? projectRoot;
 const port = Number(process.env.UEVOLVE_CODEX_BRIDGE_PORT ?? 8766);
 const wsPath = process.env.UEVOLVE_CODEX_BRIDGE_PATH ?? "/uevolve";
-const model = "gpt-5.5";
-const effort = "xhigh";
+const defaultModel = requireValidModel(envDefault("UEVOLVE_CODEX_MODEL", "gpt-5.5"), "UEVOLVE_CODEX_MODEL");
+const defaultEffort = requireValidEffort(envDefault("UEVOLVE_CODEX_EFFORT", "xhigh"), "UEVOLVE_CODEX_EFFORT");
 const codexApprovalPolicy = "on-request";
 const sandbox = "workspace-write";
 const approvalMode = approvalModeFromEnv();
@@ -60,11 +60,11 @@ await codex.connect();
 await codex.initialize();
 const mcpStatus = await codex.request("mcpServerStatus/list", { detail: "toolsAndAuthOnly" }).catch((error) => ({ error: String(error), data: [] }));
 const started = await codex.request("thread/start", {
-  model,
+  model: defaultModel,
   cwd,
   approvalPolicy: codexApprovalPolicy,
   sandbox,
-  config: { model_reasoning_effort: effort },
+  config: { model_reasoning_effort: defaultEffort },
   ephemeral: true,
   sessionStartSource: "startup",
   developerInstructions: developerInstructions(child.mcpRegistration.name),
@@ -80,12 +80,17 @@ const bridge = createBridgeServer({
     if (health.state !== "ready") return send(ws, { type: "error", requestId: message.requestId, message: health.reason ?? "Bridge is not ready" });
     if (active.size) return send(ws, { type: "error", requestId: message.requestId, message: "Another Codex turn is already in flight" });
     try {
+      const turnModel = optionalClientString(message.model, "model") ?? defaultModel;
+      const turnEffort = optionalClientString(message.effort, "effort") ?? defaultEffort;
+      requireValidModel(turnModel, "model");
+      requireValidEffort(turnEffort, "effort");
+      console.log(`Codex turn requestId=${message.requestId} model=${turnModel} effort=${turnEffort}`);
       const text = message.context ? `${message.context}\n\n${message.prompt}` : message.prompt;
       const result = await codex.request("turn/start", {
         threadId,
         input: [{ type: "text", text, text_elements: [] }],
-        model,
-        effort,
+        model: turnModel,
+        effort: turnEffort,
         approvalPolicy: codexApprovalPolicy,
       });
       const turnId = result.turn.id;
@@ -113,7 +118,7 @@ console.log(`Codex app-server transport=${child.transport} endpoint=${child.endp
 console.log(`Codex app-server args: ${formatSpawnArgs(child.spawnArgs)}`);
 console.log(`MCP registration: ${JSON.stringify(child.mcpRegistration)}`);
 console.log(`MCP status: ${summarizeMcpStatus(mcpStatus)}`);
-console.log(`Codex model=${model} effort=${effort} approvalPolicy=${approvalMode} sandbox=${sandbox} log=${logPath}`);
+console.log(`Codex defaults model=${defaultModel} effort=${defaultEffort} approvalPolicy=${approvalMode} sandbox=${sandbox} log=${logPath}`);
 
 async function shutdown(): Promise<void> {
   for (const record of active.values()) await codex.request("turn/interrupt", { threadId, turnId: record.turnId }).catch(() => {});
@@ -154,4 +159,20 @@ function summarizeMcpStatus(status: any): string {
   if (status?.error) return status.error;
   const servers = status?.data ?? [];
   return servers.map((server: any) => `${server.name}:${Object.keys(server.tools ?? {}).length} tools:${server.authStatus}`).join(", ") || "none";
+}
+function envDefault(name: string, fallback: string): string {
+  return process.env[name]?.trim() || fallback;
+}
+function optionalClientString(value: any, field: string): string | undefined {
+  if (value == null) return undefined;
+  if (typeof value !== "string") throw new Error(`${field} must be a string`);
+  return value.trim() || undefined;
+}
+function requireValidModel(value: string, field: string): string {
+  if (!/^[a-zA-Z0-9._-]{1,64}$/.test(value)) throw new Error(`${field} must match /^[a-zA-Z0-9._\\-]{1,64}$/`);
+  return value;
+}
+function requireValidEffort(value: string, field: string): string {
+  if (!["low", "medium", "high", "xhigh"].includes(value)) throw new Error(`${field} must be one of low, medium, high, xhigh`);
+  return value;
 }

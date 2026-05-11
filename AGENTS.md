@@ -635,11 +635,15 @@ Codex socket framing is WebSocket-over-UDS, not raw newline JSON, LSP
 WebSocket upgrade, each Codex App Server message is one WebSocket text frame
 containing the lightweight Codex JSON-RPC object without `jsonrpc:"2.0"`.
 
-The bridge hard-codes `gpt-5.5` with reasoning effort `xhigh`. Default approval
-policy is `reject`: command execution, file changes, permission escalation, MCP
-elicitation, dynamic tool calls, and tool user-input requests are declined or
-left unanswered with empty results. `UEVOLVE_CODEX_APPROVAL_POLICY=auto-approve`
-exists for local bridge development only.
+The bridge defaults to `UEVOLVE_CODEX_MODEL=gpt-5.5` and
+`UEVOLVE_CODEX_EFFORT=xhigh`; the UE-facing `start_turn` message may override
+model and effort per turn for human-driven Codex Desktop bridge chat. Default
+approval policy is `reject`: command execution, file changes, permission
+escalation, MCP elicitation, dynamic tool calls, and tool user-input requests
+are declined or left unanswered with empty results.
+`UEVOLVE_CODEX_APPROVAL_POLICY=auto-approve` exists for local bridge development
+only. The separate Codex CLI subprocess provider remains hard-locked to
+`gpt-5.5` with `xhigh` reasoning.
 
 Connecting to an already-running Codex Desktop IPC socket is deferred; V1 always
 spawns its own app-server and marks health `failed` if that child exits.

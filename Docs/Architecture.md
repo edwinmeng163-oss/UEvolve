@@ -39,7 +39,9 @@ Bridge runtime shape:
   Codex JSON-RPC object per WebSocket text frame. The app-server protocol does
   not use the standard `jsonrpc:"2.0"` field.
 - UE-facing transport: WebSocket on `ws://127.0.0.1:8766/uevolve`.
-- Model defaults: `gpt-5.5` with reasoning effort `xhigh`.
+- Model defaults: `UEVOLVE_CODEX_MODEL` defaults to `gpt-5.5`, and
+  `UEVOLVE_CODEX_EFFORT` defaults to `xhigh`; UE-facing turns may override both
+  fields for Codex Desktop bridge chat.
 - Approval default: reject file changes, command execution, permission requests,
   MCP elicitations, and tool user-input requests so Codex remains text-only.
 - Supervision: if the spawned app-server exits, bridge health becomes `failed`;

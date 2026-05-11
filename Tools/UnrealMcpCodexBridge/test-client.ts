@@ -10,7 +10,10 @@ const timeout = setTimeout(() => {
 }, 180000);
 
 ws.addEventListener("open", () => {
-  ws.send(JSON.stringify({ type: "start_turn", requestId, prompt: "List three Unreal Engine 5 actor classes" }));
+  const message: Record<string, string> = { type: "start_turn", requestId, prompt: "List three Unreal Engine 5 actor classes" };
+  if (process.env.UEVOLVE_CODEX_MODEL) message.model = process.env.UEVOLVE_CODEX_MODEL;
+  if (process.env.UEVOLVE_CODEX_EFFORT) message.effort = process.env.UEVOLVE_CODEX_EFFORT;
+  ws.send(JSON.stringify(message));
 });
 
 ws.addEventListener("message", (event) => {

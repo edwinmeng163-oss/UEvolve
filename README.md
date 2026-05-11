@@ -103,8 +103,9 @@ Tools/UnrealMcpCodexBridge
 
 It starts a fresh `codex app-server` subprocess on a temporary Unix socket,
 connects using the Codex WebSocket-over-UDS App Server transport, initializes a
-single thread with `gpt-5.5` and reasoning effort `xhigh`, then serves the
-UE-facing endpoint:
+single thread with daemon defaults (`UEVOLVE_CODEX_MODEL`, default `gpt-5.5`,
+and `UEVOLVE_CODEX_EFFORT`, default `xhigh`), then serves the UE-facing
+endpoint:
 
 ```text
 ws://127.0.0.1:8766/uevolve
@@ -125,7 +126,9 @@ bun run --cwd Tools/UnrealMcpCodexBridge test-client.ts
 The default bridge approval policy is `reject`: Codex command execution, file
 changes, permission escalation, MCP elicitation, and user-input requests are not
 allowed in V1. See `Tools/UnrealMcpCodexBridge/README.md` for protocol,
-configuration, logging, and limitations.
+configuration, per-turn model/effort selection, logging, and limitations. The
+separate Codex CLI subprocess provider remains locked to `gpt-5.5` with `xhigh`
+reasoning.
 
 ## Tool Coverage
 

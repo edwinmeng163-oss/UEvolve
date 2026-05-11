@@ -76,7 +76,7 @@ Expected startup output:
 Codex binary: /opt/homebrew/bin/codex
 UEvolve Codex Bridge listening at ws://127.0.0.1:8766/uevolve
 Codex app-server transport=unix endpoint=/tmp/uevolve-codex-bridge-<id>/codex.sock
-Codex model=gpt-5.5 effort=xhigh approvalPolicy=reject log=/tmp/uevolve-codex-bridge-<pid>.log
+Codex defaults model=gpt-5.5 effort=xhigh approvalPolicy=reject log=/tmp/uevolve-codex-bridge-<pid>.log
 ```
 
 Stop with `Ctrl-C`. On shutdown, the bridge interrupts any in-flight Codex turn,
@@ -118,6 +118,8 @@ Environment variables:
 UEVOLVE_CODEX_BRIDGE_PORT=8766
 UEVOLVE_CODEX_BRIDGE_PATH=/uevolve
 UEVOLVE_CODEX_CWD=<working directory for Codex turns; default is repo root>
+UEVOLVE_CODEX_MODEL=gpt-5.5
+UEVOLVE_CODEX_EFFORT=xhigh
 UEVOLVE_CODEX_BIN=<absolute path to codex.exe/codex.cmd/codex>
 UEVOLVE_CODEX_APPROVAL_POLICY=reject|auto-approve
 UEVOLVE_CODEX_TRANSPORT=ws|unix
@@ -134,7 +136,7 @@ UEVOLVE_MCP_BEARER=<future UE MCP bearer token>
 `127.0.0.1:0` to discover a free port, closes that probe listener, then starts
 Codex App Server on the selected port.
 
-The bridge hard-codes:
+The bridge daemon defaults are:
 
 ```text
 model: gpt-5.5
@@ -142,6 +144,13 @@ reasoning effort: xhigh
 thread approvalPolicy: on-request
 thread sandbox: workspace-write
 ```
+
+Override the defaults with `UEVOLVE_CODEX_MODEL` and
+`UEVOLVE_CODEX_EFFORT`. `UEVOLVE_CODEX_EFFORT` must be one of `low`,
+`medium`, `high`, or `xhigh`. UE-facing `start_turn` messages can also send
+per-turn `model` and `effort` fields; if omitted, the daemon defaults are used.
+The separate Codex CLI subprocess provider in the UE plugin is not affected and
+remains locked for autonomous orchestration.
 
 `workspace-write` is the narrowest App Server sandbox mode above `read-only`.
 It is used so the app-server can load and call the local HTTP MCP server, while
@@ -196,10 +205,14 @@ layers own Unreal-side safety.
 Client to bridge:
 
 ```json
-{"type":"start_turn","requestId":"<uuid>","prompt":"...","context":"optional"}
+{"type":"start_turn","requestId":"<uuid>","prompt":"...","context":"optional","model":"optional","effort":"optional"}
 {"type":"cancel","requestId":"<uuid>"}
 {"type":"steer","requestId":"<uuid>","instruction":"..."}
 ```
+
+`model` must match `/^[a-zA-Z0-9._\-]{1,64}$/` when provided. `effort` must be
+one of `low`, `medium`, `high`, or `xhigh`. Invalid values receive an `error`
+message and do not start a Codex turn.
 
 Bridge to client:
 

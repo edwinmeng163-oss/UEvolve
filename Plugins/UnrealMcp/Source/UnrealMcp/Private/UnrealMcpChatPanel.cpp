@@ -992,7 +992,7 @@ void SUnrealMcpChatPanel::Construct(const FArguments& InArgs, FUnrealMcpModule* 
 							{
 								return ProviderOptionIds.Num() > 0 && IsActiveProviderModelLocked() ? EVisibility::Visible : EVisibility::Collapsed;
 							})
-							.ToolTipText(LOCTEXT("CodexLockedModelTooltip", "Codex variants are hard-locked to gpt-5.5 with xhigh reasoning per project policy."))
+							.ToolTipText(LOCTEXT("CodexLockedModelTooltip", "Codex CLI provider is hard-locked to gpt-5.5 with xhigh reasoning for safe automated orchestration. Use the Codex Desktop bridge if you need to choose a model."))
 							[
 								SNew(STextBlock)
 								.Text(this, &SUnrealMcpChatPanel::GetCurrentModelDisplayText)
@@ -1752,7 +1752,7 @@ bool SUnrealMcpChatPanel::IsActiveProviderModelLocked() const
 	if (!Settings) { return false; }
 	const FString ProviderId = SelectedProviderId.IsValid() ? *SelectedProviderId : Settings->ActiveProviderId;
 	const FAiProviderConfig* Provider = UnrealMcpChat::FindProviderById(*Settings, ProviderId);
-	return Provider && (Provider->Kind == EAiProviderKind::Codex || Provider->Kind == EAiProviderKind::CodexAppServer);
+	return Provider && Provider->Kind == EAiProviderKind::Codex;
 }
 
 FString SUnrealMcpChatPanel::KindShortName(EAiProviderKind Kind)

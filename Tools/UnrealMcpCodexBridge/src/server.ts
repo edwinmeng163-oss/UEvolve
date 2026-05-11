@@ -1,6 +1,6 @@
 export type HealthState = "starting" | "ready" | "failed";
 export type ClientMessage =
-  | { type: "start_turn"; requestId: string; prompt: string; context?: string }
+  | { type: "start_turn"; requestId: string; prompt: string; context?: string; model?: string; effort?: string }
   | { type: "cancel"; requestId: string }
   | { type: "steer"; requestId: string; instruction: string };
 
