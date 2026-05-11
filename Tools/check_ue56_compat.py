@@ -16,9 +16,19 @@ SOURCE_ROOT = REPO_ROOT / "Plugins" / "UnrealMcp" / "Source" / "UnrealMcp"
 SOURCE_SUFFIXES = {".h", ".cpp", ".inl"}
 
 
-# Currently EMPTY -- the 2026-05 audit confirmed no 5.7-only API surfaces in use.
-# When adding new entries, include 'added_in' to make intent auditable.
-FORBIDDEN_PATTERNS: list[dict[str, str]] = []
+# Each entry: pattern = python regex, reason = short note, added_in = UE version,
+# severity = 'error' | 'warning'. Entries should be confirmed by real cross-version
+# build, not just speculation. Always pair a forbidden pattern with the matching
+# #if ENGINE_*_VERSION shim in the offending file, then add the regex here so a
+# future PR that re-introduces the bare include/symbol is caught at lint time.
+FORBIDDEN_PATTERNS: list[dict[str, str]] = [
+    {
+        "pattern": r'^\s*#include\s+"Misc/StringOutputDevice\.h"\s*$',
+        "reason": "Misc/StringOutputDevice.h is 5.7+. Wrap include with #if ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 7; in 5.6 the FStringOutputDevice symbol is provided via Containers/UnrealString.h transitively from Misc/OutputDevice.h.",
+        "added_in": "5.7",
+        "severity": "warning",
+    },
+]
 
 
 @dataclass(frozen=True)
@@ -51,6 +61,33 @@ def iter_source_files(root: Path) -> Iterable[Path]:
             yield path
 
 
+_GUARD_OPEN_RE = re.compile(
+    r"^\s*#\s*if\s+.*ENGINE_MINOR_VERSION\s*>=\s*(\d+)"
+)
+_GUARD_ENDIF_RE = re.compile(r"^\s*#\s*endif\b")
+_GUARD_IF_RE = re.compile(r"^\s*#\s*if\b")
+
+
+def is_inside_version_guard(lines: list[str], target_idx: int, min_minor: int) -> bool:
+    """Return True when the line at ``target_idx`` is inside a 5.x version
+    guard whose minor floor is at least ``min_minor``. Skips both nested
+    inner guards and unrelated outer #ifs."""
+    depth = 0
+    for i in range(target_idx - 1, -1, -1):
+        line = lines[i]
+        if _GUARD_ENDIF_RE.match(line):
+            depth += 1
+            continue
+        if _GUARD_IF_RE.match(line):
+            if depth == 0:
+                match = _GUARD_OPEN_RE.match(line)
+                if match and int(match.group(1)) >= min_minor:
+                    return True
+                return False
+            depth -= 1
+    return False
+
+
 def scan_file(path: Path, pattern_entry: dict[str, str]) -> list[Finding]:
     expression = re.compile(pattern_entry["pattern"])
     reason = pattern_entry["reason"]
@@ -58,18 +95,27 @@ def scan_file(path: Path, pattern_entry: dict[str, str]) -> list[Finding]:
     severity = pattern_entry["severity"]
     findings: list[Finding] = []
 
+    added_major, added_minor = parse_engine_version(added_in)
+
     with path.open("r", encoding="utf-8", errors="replace") as source_file:
-        for line_number, line in enumerate(source_file, start=1):
-            if expression.search(line):
-                findings.append(
-                    Finding(
-                        path=path,
-                        line_number=line_number,
-                        reason=reason,
-                        added_in=added_in,
-                        severity=severity,
-                    )
-                )
+        lines = source_file.readlines()
+
+    for line_index, line in enumerate(lines):
+        if not expression.search(line):
+            continue
+        if added_major == 5 and is_inside_version_guard(lines, line_index, added_minor):
+            # The forbidden symbol is gated behind the matching engine-version
+            # guard, so the lower-version path uses the correct alternative.
+            continue
+        findings.append(
+            Finding(
+                path=path,
+                line_number=line_index + 1,
+                reason=reason,
+                added_in=added_in,
+                severity=severity,
+            )
+        )
     return findings
 
 
