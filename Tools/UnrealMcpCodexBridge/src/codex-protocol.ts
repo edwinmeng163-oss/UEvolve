@@ -8,6 +8,18 @@ import { approvalResponse, type ApprovalMode } from "./approval-policy";
 
 export type Logger = (direction: string, payload: any) => void;
 type Pending = { resolve: (value: any) => void; reject: (error: Error) => void };
+type ConfigOverrides = Record<string, string>;
+
+type McpRegistration = {
+  enabled: boolean;
+  name: string;
+  url: string;
+  bearerConfigured: boolean;
+};
+
+type AppServerOptions = {
+  configOverrides?: ConfigOverrides;
+};
 
 export class CodexWsClient {
   private socket?: net.Socket;
@@ -120,11 +132,11 @@ export class CodexWsClient {
 
   private handleJson(message: any): void {
     this.log("recv", message);
-    if (message.id && message.method) {
+    if (message.id != null && message.method) {
       this.send({ id: message.id, result: approvalResponse(message.method, message.params, this.mode) });
       return;
     }
-    if (message.id) {
+    if (message.id != null) {
       const waiter = this.pending.get(String(message.id));
       if (!waiter) return;
       this.pending.delete(String(message.id));
@@ -140,12 +152,25 @@ export class CodexWsClient {
   }
 }
 
-export function startCodexAppServer(onExit: (reason: string) => void): { proc: ChildProcessWithoutNullStreams; socketPath: string; dir: string } {
+export function startCodexAppServer(
+  onExit: (reason: string) => void,
+  options: AppServerOptions = {},
+): { proc: ChildProcessWithoutNullStreams; socketPath: string; dir: string; spawnArgs: string[]; mcpRegistration: McpRegistration } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "uevolve-codex-bridge-"));
   const socketPath = path.join(dir, "codex.sock");
-  const proc = spawn("codex", ["app-server", "--listen", `unix://${socketPath}`], { stdio: ["ignore", "pipe", "pipe"] });
+  const spawnArgs = ["app-server", "--listen", `unix://${socketPath}`];
+  const mcpRegistration = mcpRegistrationFromEnv();
+  const configOverrides: ConfigOverrides = {};
+  if (mcpRegistration.enabled) {
+    configOverrides[`mcp_servers.${mcpRegistration.name}.url`] = tomlString(mcpRegistration.url);
+    const bearer = process.env.UEVOLVE_MCP_BEARER;
+    if (bearer) configOverrides[`mcp_servers.${mcpRegistration.name}.bearer_token`] = tomlString(bearer);
+  }
+  Object.assign(configOverrides, options.configOverrides ?? {});
+  for (const [key, value] of Object.entries(configOverrides)) spawnArgs.push("-c", `${key}=${value}`);
+  const proc = spawn("codex", spawnArgs, { stdio: ["ignore", "pipe", "pipe"] });
   proc.once("exit", (code, signal) => onExit(`codex app-server exited code=${code} signal=${signal}`));
-  return { proc, socketPath, dir };
+  return { proc, socketPath, dir, spawnArgs, mcpRegistration };
 }
 
 export async function waitForSocket(socketPath: string): Promise<void> {
@@ -175,4 +200,19 @@ function u64(value: number): Buffer {
   const buf = Buffer.alloc(8);
   buf.writeBigUInt64BE(BigInt(value));
   return buf;
+}
+
+function mcpRegistrationFromEnv(): McpRegistration {
+  const name = process.env.UEVOLVE_MCP_NAME ?? "unrealmcp";
+  if (!/^[A-Za-z0-9_-]+$/.test(name)) throw new Error(`Invalid UEVOLVE_MCP_NAME: ${name}`);
+  return {
+    enabled: process.env.UEVOLVE_DISABLE_AUTO_MCP_REGISTER !== "1",
+    name,
+    url: process.env.UEVOLVE_MCP_URL ?? "http://127.0.0.1:8765/mcp",
+    bearerConfigured: Boolean(process.env.UEVOLVE_MCP_BEARER),
+  };
+}
+
+function tomlString(value: string): string {
+  return JSON.stringify(value);
 }

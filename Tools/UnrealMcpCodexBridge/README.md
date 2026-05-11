@@ -74,6 +74,10 @@ UEVOLVE_CODEX_BRIDGE_PORT=8766
 UEVOLVE_CODEX_BRIDGE_PATH=/uevolve
 UEVOLVE_CODEX_CWD=<working directory for Codex turns; default is repo root>
 UEVOLVE_CODEX_APPROVAL_POLICY=reject|auto-approve
+UEVOLVE_MCP_NAME=unrealmcp
+UEVOLVE_MCP_URL=http://127.0.0.1:8765/mcp
+UEVOLVE_DISABLE_AUTO_MCP_REGISTER=1
+UEVOLVE_MCP_BEARER=<future UE MCP bearer token>
 ```
 
 The bridge hard-codes:
@@ -82,14 +86,56 @@ The bridge hard-codes:
 model: gpt-5.5
 reasoning effort: xhigh
 thread approvalPolicy: on-request
-thread sandbox: read-only
+thread sandbox: workspace-write
 ```
+
+`workspace-write` is the narrowest App Server sandbox mode above `read-only`.
+It is used so the app-server can load and call the local HTTP MCP server, while
+the bridge approval handler still denies Codex's built-in file, shell, and
+permission paths.
 
 The daemon writes all App Server JSON sent and received to:
 
 ```text
 /tmp/uevolve-codex-bridge-<pid>.log
 ```
+
+## MCP Tool Bridging
+
+By default, the bridge starts Codex with the running Unreal MCP endpoint
+registered as an App Server MCP server:
+
+```bash
+codex app-server --listen unix://<sock> -c mcp_servers.unrealmcp.url="http://127.0.0.1:8765/mcp"
+```
+
+That makes Codex see the Unreal tool inventory, including tools such as
+`unreal.editor_status`, `unreal.execute_python`, `unreal.spawn_actor`, and the
+self-extension `unreal.mcp_*` tools exposed by the editor.
+
+Override the registration with:
+
+```text
+UEVOLVE_MCP_NAME=<config key; default unrealmcp>
+UEVOLVE_MCP_URL=<HTTP MCP endpoint; default http://127.0.0.1:8765/mcp>
+UEVOLVE_DISABLE_AUTO_MCP_REGISTER=1
+```
+
+If the Unreal MCP endpoint later enables bearer authentication, set:
+
+```text
+UEVOLVE_MCP_BEARER=<token>
+```
+
+The bridge passes that value as
+`mcp_servers.<name>.bearer_token="<token>"`. Be aware that command-line
+configuration can be visible in process listings on local development machines.
+
+Codex CLI 0.130.0 `codex mcp add --help` exposes HTTP URL and bearer-token
+configuration, but it does not expose a per-server `trusted` or `auto_approve`
+field. The bridge therefore does not set one. Unreal MCP tool execution is
+delegated to the UE MCP server, whose audit, dry-run, backup, test, and rollback
+layers own Unreal-side safety.
 
 ## UE-Facing WebSocket Protocol
 
@@ -114,10 +160,11 @@ Bridge to client:
 
 ## Approval Policy
 
-Default policy is `reject`.
+Default policy is `reject`. `auto-approve` is retained as an operator label for
+compatibility, but built-in OS-level capabilities are rejected in both modes.
 
-V1 rejects or withholds all Codex requests that would write files, run commands,
-change permissions, request user input, or elicit external MCP input:
+The bridge rejects or withholds all Codex requests that would write files, run
+commands, change permissions, request user input, or elicit external MCP input:
 
 ```text
 applyPatchApproval
@@ -130,19 +177,14 @@ item/tool/requestUserInput
 item/tool/call
 ```
 
-This is intentional for the Unreal workflow: Codex is used as a reasoning and
-text-generation service, while Unreal project mutation remains under the UE MCP
-tooling, audit, dry-run, backup, build, test, and rollback path.
+Codex CLI 0.130.0 routes MCP tool-call confirmation through
+`mcpServer/elicitation/request` with `_meta.codex_approval_kind` set to
+`mcp_tool_call`. The bridge accepts only that narrow MCP tool-call approval when
+`serverName` matches `UEVOLVE_MCP_NAME`; all other MCP elicitations remain
+declined.
 
-For local bridge development only, set:
-
-```bash
-UEVOLVE_CODEX_APPROVAL_POLICY=auto-approve
-```
-
-This auto-accepts command/file approval requests and grants requested permission
-profiles for the current turn. It is not the default and should not be used for
-normal UE project work.
+This is intentional for the Unreal workflow: Codex should mutate the Unreal
+project through MCP tools, not through raw shell commands or direct file edits.
 
 ## Smoke Test
 
@@ -165,6 +207,16 @@ A captured smoke transcript is available at:
 /tmp/uevolve-codex-bridge-smoke.log
 ```
 
+To verify direct Unreal MCP tool use with the editor running:
+
+```bash
+bun run --cwd Tools/UnrealMcpCodexBridge test-mcp-roundtrip.ts
+```
+
+The roundtrip test asks Codex to call `unreal.editor_status`, requires matching
+`tool_started` and `tool_finished` bridge events, and exits with code `0` only
+after a non-empty `turn_complete`.
+
 ## Known Limitations
 
 - The bridge always spawns a fresh `codex app-server` subprocess. Connecting to
@@ -172,4 +224,5 @@ A captured smoke transcript is available at:
 - The bridge does not auto-restart the app-server subprocess. If Codex exits,
   health becomes `failed`.
 - V1 supports one active turn at a time on the cached thread.
-- The UE plugin does not consume this bridge yet. That integration is P7.B.
+- The bridge requires a running Unreal Editor with the Unreal MCP plugin loaded
+  before MCP tool calls can succeed.

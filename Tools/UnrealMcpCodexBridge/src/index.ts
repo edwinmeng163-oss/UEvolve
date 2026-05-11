@@ -12,6 +12,7 @@ const wsPath = process.env.UEVOLVE_CODEX_BRIDGE_PATH ?? "/uevolve";
 const model = "gpt-5.5";
 const effort = "xhigh";
 const codexApprovalPolicy = "on-request";
+const sandbox = "workspace-write";
 const approvalMode = approvalModeFromEnv();
 const logPath = `/tmp/uevolve-codex-bridge-${process.pid}.log`;
 let health: { state: HealthState; reason?: string } = { state: "starting" };
@@ -56,15 +57,16 @@ await waitForSocket(child.socketPath);
 codex = new CodexWsClient(child.socketPath, log, approvalMode, onNotification);
 await codex.connect();
 await codex.initialize();
+const mcpStatus = await codex.request("mcpServerStatus/list", { detail: "toolsAndAuthOnly" }).catch((error) => ({ error: String(error), data: [] }));
 const started = await codex.request("thread/start", {
   model,
   cwd,
   approvalPolicy: codexApprovalPolicy,
-  sandbox: "read-only",
+  sandbox,
   config: { model_reasoning_effort: effort },
   ephemeral: true,
   sessionStartSource: "startup",
-  developerInstructions: "You are serving UEvolve through a text-only bridge. Do not run commands or edit files; provide concise text and instructions only.",
+  developerInstructions: developerInstructions(child.mcpRegistration.name),
 });
 threadId = started.thread.id;
 health = { state: "ready" };
@@ -106,7 +108,10 @@ const bridge = createBridgeServer({
 });
 
 console.log(`UEvolve Codex Bridge listening at ${bridge.url}`);
-console.log(`Codex model=${model} effort=${effort} approvalPolicy=${approvalMode} log=${logPath}`);
+console.log(`Codex app-server args: ${formatSpawnArgs(child.spawnArgs)}`);
+console.log(`MCP registration: ${JSON.stringify(child.mcpRegistration)}`);
+console.log(`MCP status: ${summarizeMcpStatus(mcpStatus)}`);
+console.log(`Codex model=${model} effort=${effort} approvalPolicy=${approvalMode} sandbox=${sandbox} log=${logPath}`);
 
 async function shutdown(): Promise<void> {
   for (const record of active.values()) await codex.request("turn/interrupt", { threadId, turnId: record.turnId }).catch(() => {});
@@ -136,4 +141,15 @@ function toolError(item: any): boolean {
 }
 function extractFinalText(turn: any): string {
   return (turn?.items ?? []).filter((item: any) => item.type === "agentMessage").map((item: any) => item.text).join("");
+}
+function developerInstructions(mcpName: string): string {
+  return `You are an AI assistant embedded inside the Unreal Editor through a bridge. Use the ${mcpName} MCP server's tools to inspect and mutate the project. Prefer the smallest safe set of tool calls, inspect before concluding for read-only questions, act directly for clear modification requests, and avoid destructive actions unless explicitly asked. Do not attempt to write files outside MCP tool calls or run shell commands; those paths are disabled.`;
+}
+function formatSpawnArgs(args: string[]): string {
+  return args.map((arg) => (arg.includes("bearer_token=") ? arg.replace(/bearer_token=.*/, 'bearer_token="<redacted>"') : arg)).join(" ");
+}
+function summarizeMcpStatus(status: any): string {
+  if (status?.error) return status.error;
+  const servers = status?.data ?? [];
+  return servers.map((server: any) => `${server.name}:${Object.keys(server.tools ?? {}).length} tools:${server.authStatus}`).join(", ") || "none";
 }

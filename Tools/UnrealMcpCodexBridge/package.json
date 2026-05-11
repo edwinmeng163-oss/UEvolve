@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "start": "bun run src/index.ts",
-    "smoke": "bun run test-client.ts"
+    "smoke": "bun run test-client.ts",
+    "mcp-roundtrip": "bun run test-mcp-roundtrip.ts"
   },
   "dependencies": {}
 }
