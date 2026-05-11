@@ -71,6 +71,42 @@ follow this narration rule:
   Keep them concise; do not summarize file contents inline that the
   viewer can read by expanding the card.
 
+## Sandbox tier (choose before dispatch)
+
+- `read-only`: for pure-query tasks that read files / git history and report.
+  No edits, no shell side-effects.
+- `workspace-write` (default for code/docs work): for tasks that ONLY edit files
+  inside the repo cwd and don't shell out to long-running builds or process
+  management. Most refactor / bug-fix / docs tasks.
+- `danger-full-access`: required for UE build / editor smoke / verification
+  tasks. UBT incidentally writes `<engine>/Intermediate/` and
+  `~/Library/Application Support/Epic/UnrealBuildTool/`; process management
+  needs `pgrep`/`kill`. The reviewer (Claude as PM) is responsible for
+  declaring this tier explicitly when dispatching such tasks; codex must NOT
+  assume it without the prompt saying so.
+  Under danger-full-access codex still must obey all source-code read-only /
+  no-commit / no-push constraints from this header. Sandbox tier is only an
+  OS-level write allowance -- it doesn't license violating workflow rules.
+
+## UE editor smoke test pattern
+
+- Pre-step: `rm -f <Project>/Saved/Logs/<Project>.log` before launch so any log
+  you read is fresh.
+- Launch FOREGROUND with `-AbsLog=/tmp/<job>-<project>.log` so engine output
+  lands at a known path immediately. Background `&` under codex's shell can
+  orphan the child and produce no log file. Example invocation:
+```
+'/Users/Shared/Epic Games/UE_5.7/Engine/Binaries/Mac/UnrealEditor.app/Contents/MacOS/UnrealEditor' \
+  "$(pwd)/<Project>.uproject" -AbsLog=/tmp/<job>-smoke.log
+```
+- Boot markers to poll for, in priority order: `Engine is initialized`,
+  `LogInit: Engine initialized`, or any `LogUnrealMcp:` line. Poll every ~5s;
+  give up to 10 minutes total.
+- Shutdown: `kill -INT <pid>` is UE's graceful quit. Wait up to 60s. Escalate
+  to `kill -TERM` if needed; never `kill -KILL` unless every other path failed.
+- Cleanup invariant: at end of task, `pgrep -fl /UnrealEditor` must return
+  nothing. If it doesn't, that's a SMOKE failure regardless of other markers.
+
 ## Final report (always required at the end of the task)
 
 1. Full unified diff of your changes (one fenced block per file).
