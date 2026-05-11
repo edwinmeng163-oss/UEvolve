@@ -7,7 +7,7 @@ for project structure, current self-extension workflow, RAG/tooling context,
 safe edit rules, and the requirement to update `AGENTS.md` plus this `README.md`
 after meaningful changes.
 
-This repository is an Unreal Engine 5.7 editor-tooling workbench focused on editor automation, AI-assisted project inspection, Blueprint scaffolding, UMG setup, and local Model Context Protocol workflows.
+This repository is an Unreal Engine 5.6 / 5.7 editor-tooling workbench focused on editor automation, AI-assisted project inspection, Blueprint scaffolding, UMG setup, and local Model Context Protocol workflows.
 
 Its main deliverable is the **Unreal MCP** editor plugin under `Plugins/UnrealMcp`. The plugin exposes Unreal Editor operations through a localhost MCP endpoint and an in-editor chat panel. The repository root includes `UEvolve.uproject` as the default local development host, while `Examples/UEvolveExample` remains an optional validation/demo project.
 
@@ -34,10 +34,10 @@ Its main deliverable is the **Unreal MCP** editor plugin under `Plugins/UnrealMc
 
 The repository currently contains:
 
-- `UEvolve.uproject`, the root Unreal Engine 5.7 local development host for the workbench.
+- `UEvolve.uproject`, the root Unreal Engine 5.6 local development host for the workbench, forward-compatible with UE 5.7.
 - `open_uevolve.command`, a macOS convenience launcher that opens the root host project.
 - `Plugins/UnrealMcp`, an editor plugin for local MCP and in-editor AI/chat workflows.
-- `Examples/UEvolveExample`, an optional Unreal Engine 5.7 C++ example project used to validate the plugin with sample content.
+- `Examples/UEvolveExample`, an optional Unreal Engine 5.6 / 5.7 C++ example project used to validate the plugin with sample content.
 - Git LFS setup for Unreal binary assets.
 - Project-level README and ignore rules suitable for public GitHub hosting.
 - Self-extension safety rails: schema validation, patch-fragment validation, dry-run diffs, backups, build/test handoff, rollback manifests, project memory, and project-local skills.

@@ -37,11 +37,15 @@ Current plugin metadata:
 Plugins/UnrealMcp/UnrealMcp.uplugin
 FriendlyName: Unreal MCP
 VersionName: 0.10.4
+EngineVersion: 5.6.0
 Type: Editor plugin
 Required plugin: PythonScriptPlugin
 ```
 
-The repository root contains `UEvolve.uproject` as the local development host.
+The plugin supports Unreal Engine 5.6 and 5.7 from the same source tree.
+`UEvolve.uproject` is the local development host and defaults its
+`EngineAssociation` to `5.6` as the lower bound; UE 5.7 users can switch the
+local project association when opening or generating project files.
 `Examples/UEvolveExample` is optional validation/demo content.
 
 ## Product Goal

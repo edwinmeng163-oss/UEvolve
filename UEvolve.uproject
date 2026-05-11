@@ -1,6 +1,6 @@
 {
 	"FileVersion": 3,
-	"EngineAssociation": "5.7",
+	"EngineAssociation": "5.6",
 	"Category": "Editor Automation",
 	"Description": "UEvolve local development host project for the Unreal MCP self-extension workbench.",
 	"Modules": [
