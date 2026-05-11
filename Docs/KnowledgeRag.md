@@ -17,6 +17,7 @@ local-first knowledge layer that should support that behavior.
 
 ## Initial Knowledge Sources
 
+The authoritative source taxonomy, including the eventKind enum and capture priorities, lives in `Docs/KnowledgeRagSources.md`.
 Versioned sources:
 
 - `Tools/UnrealMcpToolRegistry/tools.json`: tool category, handler, risk, dry-run,

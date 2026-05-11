@@ -6,6 +6,7 @@
 #include "HAL/FileManager.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "UnrealMcpActivityLog.h"
 #include "UnrealMcpToolHandlerRegistry.h"
 #include "UnrealMcpToolRegistrar.h"
 #include "UnrealMcpToolRegistry.h"
@@ -57,6 +58,41 @@ namespace UnrealMcp
 		const TCHAR* GetUnrealMcpExtensionManifestSchemaName()
 		{
 			return TEXT("UnrealMcpExtensionManifest.v2");
+		}
+
+		void WriteManifestActivityEvent(
+			const FString& EventKind,
+			const FString& ToolName,
+			const FString& ManifestSessionId,
+			const FString& ManifestPath,
+			const FString& BackupDirectory,
+			bool bIncludeBackupDirectory,
+			int32 ChangesCount,
+			int32 FilesCount,
+			bool bPostcheckOk)
+		{
+			TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+			Payload->SetStringField(TEXT("toolId"), SanitizeMcpToolIdForPath(ToolName));
+			Payload->SetStringField(TEXT("toolName"), ToolName);
+			Payload->SetStringField(TEXT("manifestPath"), ManifestPath);
+			if (bIncludeBackupDirectory)
+			{
+				Payload->SetStringField(TEXT("backupDirectory"), BackupDirectory);
+			}
+			Payload->SetNumberField(TEXT("changesCount"), ChangesCount);
+			Payload->SetNumberField(TEXT("filesCount"), FilesCount);
+			Payload->SetBoolField(TEXT("postcheckOk"), bPostcheckOk);
+
+			TSharedPtr<FJsonObject> Correlation = MakeShared<FJsonObject>();
+			Correlation->SetStringField(TEXT("manifestId"), ManifestSessionId);
+
+			UnrealMcp::FActivityLogEvent Event;
+			Event.EventKind = EventKind;
+			Event.Summary = FString::Printf(TEXT("%s for %s: %s."), *EventKind, *ToolName, bPostcheckOk ? TEXT("completed") : TEXT("failed")).Left(2000);
+			Event.Payload = Payload;
+			Event.Correlation = Correlation;
+			Event.LegacyEventType = FString();
+			UnrealMcp::WriteActivityEvent(Event);
 		}
 
 		TSharedPtr<FJsonObject> MakeInsertionChangeObject(
@@ -992,8 +1028,23 @@ namespace UnrealMcp
 				return MakeExecutionResult(TEXT("Descriptor-first scaffold is not registered yet and cannot be applied safely. See registrationStatus, nextSteps, issues, patchValidations, and targetDiffs."), StructuredContent, true);
 			}
 
+			const bool bManifestPostcheckOk = bCanApply
+				&& ConflictCount == 0
+				&& MissingAnchorCount == 0
+				&& (!bValidatePatches || bPatchesSafe || bAllowUnsafePatches);
+
 			if (bDryRun)
 			{
+				WriteManifestActivityEvent(
+					TEXT("manifest_dryrun"),
+					ToolName,
+					ExtensionSessionId,
+					FString(),
+					FString(),
+					false,
+					Changes.Num(),
+					ChangedFiles.Num(),
+					bManifestPostcheckOk);
 				return MakeExecutionResult(
 					FString::Printf(TEXT("Descriptor-first dry run complete for %s. canApply=true"), *ToolName),
 					StructuredContent,
@@ -1067,6 +1118,8 @@ namespace UnrealMcp
 
 			StructuredContent->SetStringField(TEXT("backupDirectory"), BackupDirectory);
 			StructuredContent->SetArrayField(TEXT("manifestFiles"), ManifestFiles);
+			FString ManifestPath;
+			FString LatestManifestPath;
 
 			TSharedPtr<FJsonObject> ManifestObject = MakeShared<FJsonObject>();
 			ManifestObject->SetStringField(TEXT("action"), TEXT("mcp_apply_scaffold"));
@@ -1089,15 +1142,27 @@ namespace UnrealMcp
 			if (bCreateBackup)
 			{
 				FString ManifestFailure;
-				const FString ManifestPath = FPaths::Combine(BackupDirectory, TEXT("Manifest.json"));
+				ManifestPath = FPaths::Combine(BackupDirectory, TEXT("Manifest.json"));
+				LatestManifestPath = GetLatestMcpExtensionManifestPath();
 				if (!SaveJsonObjectToFile(ManifestObject, ManifestPath, ManifestFailure)
-					|| !SaveJsonObjectToFile(ManifestObject, GetLatestMcpExtensionManifestPath(), ManifestFailure))
+					|| !SaveJsonObjectToFile(ManifestObject, LatestManifestPath, ManifestFailure))
 				{
 					return MakeExecutionResult(ManifestFailure, StructuredContent, true);
 				}
 				StructuredContent->SetStringField(TEXT("manifestPath"), ManifestPath);
-				StructuredContent->SetStringField(TEXT("latestManifestPath"), GetLatestMcpExtensionManifestPath());
+				StructuredContent->SetStringField(TEXT("latestManifestPath"), LatestManifestPath);
 			}
+
+			WriteManifestActivityEvent(
+				TEXT("manifest_apply"),
+				ToolName,
+				ExtensionSessionId,
+				ManifestPath,
+				BackupDirectory,
+				true,
+				Changes.Num(),
+				ChangedFiles.Num(),
+				bManifestPostcheckOk);
 
 			return MakeExecutionResult(
 				FString::Printf(TEXT("Applied descriptor-first scaffold for %s. Backup: %s"), *ToolName, *BackupDirectory),

@@ -5,6 +5,7 @@
 #include "Providers/IAssistantProvider.h"
 #include "ToolMenus.h"
 #include "UnrealMcpAssistantRun.h"
+#include "UnrealMcpSession.h"
 #include "UnrealMcpSkillTools.h"
 
 DEFINE_LOG_CATEGORY(LogUnrealMcp);
@@ -47,6 +48,7 @@ namespace
 
 void FUnrealMcpModule::StartupModule()
 {
+	UnrealMcp::InitializeLaunchSession();
 	StartServer();
 	SkillActivityTickerHandle = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateRaw(this, &FUnrealMcpModule::TickSkillActivity), 60.0f);
 	RegisterTabSpawner();
@@ -64,6 +66,7 @@ void FUnrealMcpModule::ShutdownModule()
 	UToolMenus::UnregisterOwner(this);
 	UnregisterTabSpawner();
 	StopServer();
+	UnrealMcp::ShutdownLaunchSession();
 }
 
 bool FUnrealMcpModule::TickSkillActivity(float DeltaTime)

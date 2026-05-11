@@ -1,0 +1,32 @@
+{
+  "name": "activity_tool_call_event_contract",
+  "description": "Structural contract for the always-on ActivityLog tool_call event emitted after tools/call returns. The current fixture runner does not inspect Saved/UnrealMcp/ActivityLog/<sessionId>.jsonl, so this remains a file-level contract.",
+  "category": "contract_deferred",
+  "expectToolListed": true,
+  "executeTool": false,
+  "expectToolCallError": false,
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 205,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.editor_status",
+      "arguments": {}
+    }
+  },
+  "expectedActivityEvent": {
+    "eventKind": "tool_call",
+    "legacyEventType": "",
+    "summary": "Called MCP tool unreal.editor_status: completed.",
+    "payload": {
+      "toolName": "unreal.editor_status",
+      "handlerName": "unreal.editor_status",
+      "riskLevel": "read_only",
+      "argumentKeys": [],
+      "isError": false,
+      "textLength": "<number>",
+      "hasStructuredContent": true,
+      "durationMs": "<number>"
+    }
+  }
+}

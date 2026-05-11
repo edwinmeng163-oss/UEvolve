@@ -18,6 +18,21 @@ You are the **Code Reviewer and Project Manager** for this project. You do NOT w
 - Keep each Codex task focused — one logical change per task.
 - Include acceptance criteria so Codex output can be objectively verified.
 - Reference AGENTS.md sections when the task touches self-extension, RAG, testing, or safety gates.
+- **Every Codex prompt MUST include the AGENTS.md freshness clause.** Codex stays strictly inside the EDIT list you declare; it will not modify `AGENTS.md` unless you tell it to. To prevent silent drift, append the following clause near the end of every Codex prompt that changes behavior, the tool surface, or workflow:
+
+  ```
+  After completing the scoped EDIT list above, evaluate this commit
+  against the AGENTS.md "Documentation Freshness Rule". If your changes
+  cross any threshold (project structure, tool surface, self-extension
+  or RAG behavior, safety rules, build/test commands, current project
+  status), include the corresponding minimal AGENTS.md edits in this
+  same commit. Specifically watch for: the tool-count line ("the
+  registry contained N entries"), the tool list section, the RAG /
+  Knowledge layer section, and the C++ Architecture file inventory.
+  If no threshold applies, state so explicitly in your final report.
+  ```
+
+  Pure-bugfix or pure-refactor prompts usually don't need `AGENTS.md` edits, but the final report should still confirm the rule was evaluated.
 
 ## Key References
 

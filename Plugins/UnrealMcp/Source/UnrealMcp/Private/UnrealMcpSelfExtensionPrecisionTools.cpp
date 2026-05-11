@@ -17,6 +17,7 @@
 #include "Subsystems/EditorActorSubsystem.h"
 #include "Subsystems/EditorAssetSubsystem.h"
 #include "UObject/UObjectGlobals.h"
+#include "UnrealMcpKnowledgeBridge.h"
 
 namespace UnrealMcp
 {
@@ -111,6 +112,183 @@ namespace UnrealMcp
 				return FString();
 			}
 			return ResolvedPath;
+		}
+
+		TArray<TSharedPtr<FJsonValue>> BuildEvidenceValuesForTask(const FString& Task)
+		{
+			TArray<TSharedPtr<FJsonValue>> EvidenceValues;
+			if (Task.TrimStartAndEnd().IsEmpty())
+			{
+				return EvidenceValues;
+			}
+
+			const TArray<TSharedPtr<FJsonObject>> EvidenceObjects = BuildEvidenceForTask(Task, 3, 600);
+			for (const TSharedPtr<FJsonObject>& EvidenceObject : EvidenceObjects)
+			{
+				if (EvidenceObject.IsValid())
+				{
+					EvidenceValues.Add(MakeShared<FJsonValueObject>(EvidenceObject));
+				}
+			}
+			return EvidenceValues;
+		}
+
+		bool TryLoadOutcomeManifest(const FJsonObject& Arguments, TSharedPtr<FJsonObject>& OutManifest, FString& OutManifestPath)
+		{
+			FString ManifestPath = GetStringArgument(Arguments, TEXT("manifestPath"));
+			const bool bExplicitManifestPath = !ManifestPath.IsEmpty();
+			FString FailureReason;
+			if (bExplicitManifestPath)
+			{
+				ManifestPath = ResolveSnapshotPathForRead(ManifestPath, FailureReason);
+			}
+			else
+			{
+				ManifestPath = GetLatestMcpExtensionManifestPath();
+			}
+			if (ManifestPath.IsEmpty() || !LoadJsonObjectFromFile(ManifestPath, OutManifest, FailureReason) || !OutManifest.IsValid())
+			{
+				return false;
+			}
+
+			if (!bExplicitManifestPath)
+			{
+				FString BackupDirectory;
+				if (OutManifest->TryGetStringField(TEXT("backupDirectory"), BackupDirectory) && !BackupDirectory.IsEmpty())
+				{
+					const FString BackupManifestPath = FPaths::Combine(BackupDirectory, TEXT("Manifest.json"));
+					if (FPaths::FileExists(BackupManifestPath))
+					{
+						ManifestPath = BackupManifestPath;
+					}
+				}
+			}
+
+			OutManifestPath = ManifestPath;
+			return true;
+		}
+
+		bool IsOutcomeManifestPostcheckOk(const TSharedPtr<FJsonObject>& Manifest)
+		{
+			const TSharedPtr<FJsonObject>* PostcheckObject = nullptr;
+			if (!Manifest.IsValid() || !Manifest->TryGetObjectField(TEXT("postcheck"), PostcheckObject) || !PostcheckObject || !(*PostcheckObject).IsValid())
+			{
+				return false;
+			}
+
+			bool bDescriptorSourceIntegrated = false;
+			bool bHandlerSourceIntegrated = false;
+			bool bRegistryPatchIntegrated = false;
+			(*PostcheckObject)->TryGetBoolField(TEXT("descriptorSourceIntegrated"), bDescriptorSourceIntegrated);
+			(*PostcheckObject)->TryGetBoolField(TEXT("handlerSourceIntegrated"), bHandlerSourceIntegrated);
+			(*PostcheckObject)->TryGetBoolField(TEXT("registryPatchIntegrated"), bRegistryPatchIntegrated);
+			return bDescriptorSourceIntegrated && bHandlerSourceIntegrated && bRegistryPatchIntegrated;
+		}
+
+		FString MakeOutcomeTitle(const TSharedPtr<FJsonObject>& Manifest, const FString& Task, const FString& SessionId)
+		{
+			FString ToolName;
+			if (Manifest.IsValid())
+			{
+				Manifest->TryGetStringField(TEXT("toolName"), ToolName);
+			}
+			if (!ToolName.TrimStartAndEnd().IsEmpty())
+			{
+				return FString::Printf(TEXT("Outcome: %s"), *ToolName.TrimStartAndEnd());
+			}
+			if (!Task.TrimStartAndEnd().IsEmpty())
+			{
+				return FString::Printf(TEXT("Outcome: %s"), *Task.TrimStartAndEnd().Left(80));
+			}
+			return FString::Printf(TEXT("Outcome: %s"), *SessionId);
+		}
+
+		FString BuildOutcomeCardText(
+			const TSharedPtr<FJsonObject>& Manifest,
+			const FString& ManifestPath,
+			const FString& Task,
+			int32 CheckCount,
+			int32 FailedChecks)
+		{
+			FString SessionId;
+			FString ToolName;
+			FString ToolId;
+			FString ScaffoldDir;
+			if (Manifest.IsValid())
+			{
+				Manifest->TryGetStringField(TEXT("sessionId"), SessionId);
+				Manifest->TryGetStringField(TEXT("toolName"), ToolName);
+				Manifest->TryGetStringField(TEXT("toolId"), ToolId);
+				Manifest->TryGetStringField(TEXT("scaffoldDir"), ScaffoldDir);
+			}
+
+			TArray<FString> Lines;
+			Lines.Add(FString::Printf(TEXT("Task: %s"), *Task));
+			Lines.Add(FString::Printf(TEXT("Manifest sessionId: %s"), *SessionId));
+			Lines.Add(FString::Printf(TEXT("Tool: %s"), *ToolName));
+			Lines.Add(FString::Printf(TEXT("ToolId: %s"), *ToolId));
+			Lines.Add(FString::Printf(TEXT("Scaffold: %s"), *ScaffoldDir));
+			Lines.Add(FString::Printf(TEXT("Manifest: %s"), *MakePathRelativeToProject(ManifestPath)));
+			Lines.Add(FString::Printf(TEXT("Verification: passed=true, checkCount=%d, failedCheckCount=%d."), CheckCount, FailedChecks));
+
+			const TSharedPtr<FJsonObject>* PostcheckObject = nullptr;
+			if (Manifest.IsValid() && Manifest->TryGetObjectField(TEXT("postcheck"), PostcheckObject) && PostcheckObject && (*PostcheckObject).IsValid())
+			{
+				bool bDescriptorSourceIntegrated = false;
+				bool bHandlerSourceIntegrated = false;
+				bool bRegistryPatchIntegrated = false;
+				(*PostcheckObject)->TryGetBoolField(TEXT("descriptorSourceIntegrated"), bDescriptorSourceIntegrated);
+				(*PostcheckObject)->TryGetBoolField(TEXT("handlerSourceIntegrated"), bHandlerSourceIntegrated);
+				(*PostcheckObject)->TryGetBoolField(TEXT("registryPatchIntegrated"), bRegistryPatchIntegrated);
+				Lines.Add(FString::Printf(
+					TEXT("Postcheck: descriptorSourceIntegrated=%s, handlerSourceIntegrated=%s, registryPatchIntegrated=%s."),
+					bDescriptorSourceIntegrated ? TEXT("true") : TEXT("false"),
+					bHandlerSourceIntegrated ? TEXT("true") : TEXT("false"),
+					bRegistryPatchIntegrated ? TEXT("true") : TEXT("false")));
+			}
+			return FString::Join(Lines, TEXT("\n")).Left(1800).TrimStartAndEnd();
+		}
+
+		void WriteVerifiedOutcomeCardIfReady(const FJsonObject& Arguments, const FString& Task, int32 CheckCount, int32 FailedChecks)
+		{
+			if (FailedChecks != 0)
+			{
+				return;
+			}
+
+			TSharedPtr<FJsonObject> Manifest;
+			FString ManifestPath;
+			if (!TryLoadOutcomeManifest(Arguments, Manifest, ManifestPath) || !IsOutcomeManifestPostcheckOk(Manifest))
+			{
+				return;
+			}
+
+			FString SessionId;
+			Manifest->TryGetStringField(TEXT("sessionId"), SessionId);
+			if (SessionId.TrimStartAndEnd().IsEmpty())
+			{
+				return;
+			}
+
+			FString ToolId;
+			Manifest->TryGetStringField(TEXT("toolId"), ToolId);
+			TArray<FString> Tags = { TEXT("outcome"), TEXT("self-extension") };
+			if (!ToolId.TrimStartAndEnd().IsEmpty())
+			{
+				Tags.Add(ToolId.TrimStartAndEnd());
+			}
+
+			FString FailureReason;
+			if (!WriteOutcomeKnowledgeCard(
+				SessionId,
+				MakeOutcomeTitle(Manifest, Task, SessionId),
+				BuildOutcomeCardText(Manifest, ManifestPath, Task, CheckCount, FailedChecks),
+				MakePathRelativeToProject(ManifestPath),
+				Tags,
+				FailureReason))
+			{
+				UE_LOG(LogUnrealMcp, Warning, TEXT("Failed to write outcome knowledge card: %s"), *FailureReason);
+			}
 		}
 
 		bool FindLatestSnapshots(FString& OutBeforePath, FString& OutAfterPath)
@@ -556,6 +734,11 @@ namespace UnrealMcp
 		StructuredContent->SetBoolField(TEXT("needsBuild"), Lower.Contains(TEXT("c++")) || Lower.Contains(TEXT("compile")) || Lower.Contains(TEXT("build")) || Lower.Contains(TEXT("编译")));
 		StructuredContent->SetBoolField(TEXT("needsRestart"), Lower.Contains(TEXT("plugin")) || Lower.Contains(TEXT("mcp")) || Lower.Contains(TEXT("restart")) || Lower.Contains(TEXT("重启")));
 		StructuredContent->SetStringField(TEXT("recommendedFirstTool"), TEXT("unreal.capture_project_snapshot"));
+		const TArray<TSharedPtr<FJsonValue>> EvidenceValues = BuildEvidenceValuesForTask(Task);
+		if (!EvidenceValues.IsEmpty())
+		{
+			StructuredContent->SetArrayField(TEXT("evidence"), EvidenceValues);
+		}
 
 		return MakeExecutionResult(FString::Printf(TEXT("Previewed change plan with %d steps."), Steps.Num()), StructuredContent, MissingTools.Num() > 0);
 	}
@@ -722,6 +905,12 @@ namespace UnrealMcp
 		StructuredContent->SetNumberField(TEXT("failedCheckCount"), FailedChecks);
 		StructuredContent->SetBoolField(TEXT("passed"), FailedChecks == 0);
 		StructuredContent->SetArrayField(TEXT("checks"), Checks);
+		const TArray<TSharedPtr<FJsonValue>> EvidenceValues = BuildEvidenceValuesForTask(Task);
+		if (!EvidenceValues.IsEmpty())
+		{
+			StructuredContent->SetArrayField(TEXT("evidence"), EvidenceValues);
+		}
+		WriteVerifiedOutcomeCardIfReady(Arguments, Task, Checks.Num(), FailedChecks);
 		return MakeExecutionResult(FString::Printf(TEXT("Task verification %s: %d checks, %d failed."), FailedChecks == 0 ? TEXT("passed") : TEXT("failed"), Checks.Num(), FailedChecks), StructuredContent, FailedChecks > 0);
 	}
 

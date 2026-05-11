@@ -11,6 +11,8 @@
 #include "Policies/CondensedJsonPrintPolicy.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
+#include "UnrealMcpActivityLog.h"
+#include "UnrealMcpSession.h"
 
 namespace UnrealMcp
 {
@@ -21,6 +23,23 @@ namespace UnrealMcp
 	FString JsonObjectToString(const TSharedPtr<FJsonObject>& JsonObject);
 	TArray<TSharedPtr<FJsonValue>> MakeJsonStringArray(const TArray<FString>& Values);
 	FUnrealMcpExecutionResult ProjectMemoryWrite(const FJsonObject& Arguments);
+
+	FUnrealMcpExecutionResult ChatLabelActiveTask(const FJsonObject& Arguments)
+	{
+		FString Label;
+		Arguments.TryGetStringField(TEXT("label"), Label);
+		Label = Label.TrimStartAndEnd().Left(2000);
+		UnrealMcp::SetLaunchSessionTaskLabel(Label);
+
+		TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+		StructuredContent->SetStringField(TEXT("sessionId"), UnrealMcp::GetLaunchSessionId());
+		StructuredContent->SetStringField(TEXT("taskLabel"), Label);
+		StructuredContent->SetBoolField(TEXT("cleared"), Label.IsEmpty());
+		return MakeExecutionResult(
+			Label.IsEmpty() ? TEXT("Cleared active launch-session task label.") : FString::Printf(TEXT("Set active launch-session task label to '%s'."), *Label),
+			StructuredContent,
+			false);
+	}
 
 	bool TryExecuteSkillTool(
 		const FString& ToolName,
@@ -79,6 +98,12 @@ namespace UnrealMcp
 		if (ToolName == TEXT("unreal.skill_promote_draft"))
 		{
 			OutResult = PromoteDraft(Arguments);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.chat_label_active_task"))
+		{
+			OutResult = ChatLabelActiveTask(Arguments);
 			return true;
 		}
 
@@ -182,24 +207,9 @@ namespace UnrealMcp
 			}
 		}
 
-		bool AppendActivityJsonLine(const FString& ActivityLogPath, const TSharedPtr<FJsonObject>& EventObject, FString& OutFailureReason)
+		bool AppendActivityJsonLine(const FString& SessionId, const FActivityLogEvent& Event, FString& OutFailureReason)
 		{
-			FScopeLock FileLock(&GSkillActivityFileMutex);
-			IFileManager::Get().MakeDirectory(*FPaths::GetPath(ActivityLogPath), true);
-			FString CompactJson;
-			const TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer = TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&CompactJson);
-			if (!FJsonSerializer::Serialize(EventObject.ToSharedRef(), Writer))
-			{
-				OutFailureReason = TEXT("Failed to serialize activity event.");
-				return false;
-			}
-			const FString Line = CompactJson + LINE_TERMINATOR;
-			if (!FFileHelper::SaveStringToFile(Line, *ActivityLogPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM, &IFileManager::Get(), FILEWRITE_Append))
-			{
-				OutFailureReason = FString::Printf(TEXT("Failed to append activity event to %s."), *ActivityLogPath);
-				return false;
-			}
-			return true;
+			return TryWriteActivityEventForSession(SessionId, Event, OutFailureReason);
 		}
 
 		bool ResetActivityLogFile(const FString& ActivityLogPath, FString& OutFailureReason)
@@ -211,15 +221,18 @@ namespace UnrealMcp
 
 			FScopeLock FileLock(&GSkillActivityFileMutex);
 			IFileManager::Get().MakeDirectory(*FPaths::GetPath(ActivityLogPath), true);
-			if (!FPaths::FileExists(ActivityLogPath))
+			const FString ActivityLogRoot = FPaths::GetPath(ActivityLogPath);
+			const FString BaseName = FPaths::GetBaseFilename(ActivityLogPath);
+			TArray<FString> FileNames;
+			IFileManager::Get().FindFiles(FileNames, *FPaths::Combine(ActivityLogRoot, BaseName + TEXT("*.jsonl")), true, false);
+			for (const FString& FileName : FileNames)
 			{
-				return true;
-			}
-
-			if (!IFileManager::Get().Delete(*ActivityLogPath, false, true, true))
-			{
-				OutFailureReason = FString::Printf(TEXT("Failed to reset activity log %s."), *ActivityLogPath);
-				return false;
+				const FString CandidatePath = FPaths::Combine(ActivityLogRoot, FileName);
+				if (!IFileManager::Get().Delete(*CandidatePath, false, true, true))
+				{
+					OutFailureReason = FString::Printf(TEXT("Failed to reset activity log %s."), *CandidatePath);
+					return false;
+				}
 			}
 			return true;
 		}
@@ -273,11 +286,29 @@ namespace UnrealMcp
 			TArray<FString> Lines;
 			{
 				FScopeLock FileLock(&GSkillActivityFileMutex);
-				if (!FFileHelper::LoadFileToStringArray(Lines, *OutLogPath))
+				const FString ActivityLogRoot = GetActivityLogRoot();
+				const FString SafeSessionId = SanitizeSkillSlug(EffectiveSessionId);
+				TArray<FString> FileNames;
+				IFileManager::Get().FindFiles(FileNames, *FPaths::Combine(ActivityLogRoot, SafeSessionId + TEXT("*.jsonl")), true, false);
+				FileNames.Sort();
+				if (FileNames.Num() == 0)
 				{
 					OutFailureReason = FString::Printf(TEXT("No activity log found at %s."), *OutLogPath);
 					return false;
 				}
+				for (const FString& FileName : FileNames)
+				{
+					TArray<FString> FileLines;
+					if (FFileHelper::LoadFileToStringArray(FileLines, *FPaths::Combine(ActivityLogRoot, FileName)))
+					{
+						Lines.Append(FileLines);
+					}
+				}
+			}
+			if (Lines.Num() == 0)
+			{
+				OutFailureReason = FString::Printf(TEXT("No activity log entries found for session %s."), *EffectiveSessionId);
+				return false;
 			}
 
 			const int32 SafeMaxEvents = FMath::Clamp(MaxEvents, 1, 5000);
@@ -320,24 +351,67 @@ namespace UnrealMcp
 			return Value;
 		}
 
-		bool GetEventBoolDetail(const TSharedPtr<FJsonObject>& Event, const FString& FieldName)
+		FString NormalizeActivityEventKind(const FString& EventKind)
+		{
+			if (EventKind == TEXT("mcp_tool_call") || EventKind == TEXT("mcp_tool_result"))
+			{
+				return TEXT("tool_call");
+			}
+			return EventKind;
+		}
+
+		FString GetActivityEventKind(const TSharedPtr<FJsonObject>& Event)
+		{
+			FString EventKind = GetEventStringField(Event, TEXT("eventType"));
+			if (EventKind.IsEmpty())
+			{
+				EventKind = GetEventStringField(Event, TEXT("eventKind"));
+			}
+			return NormalizeActivityEventKind(EventKind);
+		}
+
+		FString GetActivityEventTimestamp(const TSharedPtr<FJsonObject>& Event)
+		{
+			FString Timestamp = GetEventStringField(Event, TEXT("ts"));
+			if (Timestamp.IsEmpty())
+			{
+				Timestamp = GetEventStringField(Event, TEXT("timestampUtc"));
+			}
+			return Timestamp;
+		}
+
+		TSharedPtr<FJsonObject> GetEventDetailObject(const TSharedPtr<FJsonObject>& Event)
 		{
 			const TSharedPtr<FJsonObject>* Details = nullptr;
-			bool bValue = false;
 			if (Event.IsValid() && Event->TryGetObjectField(TEXT("details"), Details) && Details && Details->IsValid())
 			{
-				(*Details)->TryGetBoolField(FieldName, bValue);
+				return *Details;
+			}
+			if (Event.IsValid() && Event->TryGetObjectField(TEXT("payload"), Details) && Details && Details->IsValid())
+			{
+				return *Details;
+			}
+			return nullptr;
+		}
+
+		bool GetEventBoolDetail(const TSharedPtr<FJsonObject>& Event, const FString& FieldName)
+		{
+			bool bValue = false;
+			const TSharedPtr<FJsonObject> Details = GetEventDetailObject(Event);
+			if (Details.IsValid())
+			{
+				Details->TryGetBoolField(FieldName, bValue);
 			}
 			return bValue;
 		}
 
 		FString GetEventStringDetail(const TSharedPtr<FJsonObject>& Event, const FString& FieldName)
 		{
-			const TSharedPtr<FJsonObject>* Details = nullptr;
 			FString Value;
-			if (Event.IsValid() && Event->TryGetObjectField(TEXT("details"), Details) && Details && Details->IsValid())
+			const TSharedPtr<FJsonObject> Details = GetEventDetailObject(Event);
+			if (Details.IsValid())
 			{
-				(*Details)->TryGetStringField(FieldName, Value);
+				Details->TryGetStringField(FieldName, Value);
 			}
 			return Value;
 		}
@@ -352,9 +426,9 @@ namespace UnrealMcp
 
 			for (const TSharedPtr<FJsonObject>& Event : Events)
 			{
-				const FString EventType = GetEventStringField(Event, TEXT("eventType"));
+				const FString EventType = GetActivityEventKind(Event);
 				const FString Summary = GetEventStringField(Event, TEXT("summary"));
-				const FString Timestamp = GetEventStringField(Event, TEXT("timestampUtc"));
+				const FString Timestamp = GetActivityEventTimestamp(Event);
 				const FString ToolName = GetEventStringDetail(Event, TEXT("toolName"));
 				const bool bIsError = GetEventBoolDetail(Event, TEXT("isError"));
 
@@ -407,7 +481,7 @@ namespace UnrealMcp
 				EventAppendix = TEXT("\n## Event Appendix\n");
 				for (const TSharedPtr<FJsonObject>& Event : Events)
 				{
-					EventAppendix += FString::Printf(TEXT("- `%s` %s\n"), *GetEventStringField(Event, TEXT("eventType")), *GetEventStringField(Event, TEXT("summary")));
+					EventAppendix += FString::Printf(TEXT("- `%s` %s\n"), *GetActivityEventKind(Event), *GetEventStringField(Event, TEXT("summary")));
 				}
 			}
 
@@ -508,8 +582,8 @@ namespace UnrealMcp
 
 	void RecordSkillActivityEvent(const FString& EventType, const FString& Summary, const TSharedPtr<FJsonObject>& Details)
 	{
-		TSharedPtr<FJsonObject> EventObject = MakeShared<FJsonObject>();
-		FString ActivityLogPath;
+		FString ActivitySessionId;
+		FString ActivityGoal;
 		{
 			FScopeLock Lock(&GSkillActivityMutex);
 			if (!GSkillActivityRecording)
@@ -517,21 +591,24 @@ namespace UnrealMcp
 				return;
 			}
 			EnsureActivitySessionLocked();
-			ActivityLogPath = GSkillActivityLastLogPath;
-			EventObject->SetStringField(TEXT("sessionId"), GSkillActivitySessionId);
-			EventObject->SetStringField(TEXT("goal"), GSkillActivityGoal);
+			ActivitySessionId = GSkillActivitySessionId;
+			ActivityGoal = GSkillActivityGoal;
 		}
 
-		EventObject->SetStringField(TEXT("timestampUtc"), FDateTime::UtcNow().ToIso8601());
-		EventObject->SetStringField(TEXT("eventType"), EventType);
-		EventObject->SetStringField(TEXT("summary"), Summary.Left(2000));
-		if (Details.IsValid())
-		{
-			EventObject->SetObjectField(TEXT("details"), Details);
-		}
+		TSharedPtr<FJsonObject> Correlation = MakeShared<FJsonObject>();
+		Correlation->SetStringField(TEXT("parentSessionId"), GetLaunchSessionId());
+
+		FActivityLogEvent ActivityEvent;
+		ActivityEvent.EventKind = EventType;
+		ActivityEvent.Summary = Summary;
+		ActivityEvent.Payload = Details;
+		ActivityEvent.Correlation = Correlation;
+		ActivityEvent.TaskLabel = ActivityGoal;
+		ActivityEvent.LegacyEventType = EventType;
+		ActivityEvent.LegacyGoal = ActivityGoal;
 
 		FString FailureReason;
-		const bool bWrote = AppendActivityJsonLine(ActivityLogPath, EventObject, FailureReason);
+		const bool bWrote = AppendActivityJsonLine(ActivitySessionId, ActivityEvent, FailureReason);
 		FScopeLock Lock(&GSkillActivityMutex);
 		if (bWrote)
 		{
@@ -1025,7 +1102,11 @@ namespace UnrealMcp
 
 				if (Goal.TrimStartAndEnd().IsEmpty() && Events.Num() > 0)
 				{
-					Events[0]->TryGetStringField(TEXT("goal"), Goal);
+					Events[0]->TryGetStringField(TEXT("taskLabel"), Goal);
+					if (Goal.TrimStartAndEnd().IsEmpty())
+					{
+						Events[0]->TryGetStringField(TEXT("goal"), Goal);
+					}
 				}
 				if (Title.TrimStartAndEnd().IsEmpty())
 				{

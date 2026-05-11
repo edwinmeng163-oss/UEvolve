@@ -68,6 +68,25 @@
         "unreal.tool_gap_analyze",
         "unreal.verify_task_outcome"
       ]
+    },
+    {
+      "name": "search_filter_by_source_kind_skill",
+      "type": "search",
+      "query": "self extension skill MCP scaffold workflow",
+      "sourceKinds": [
+        "skill"
+      ],
+      "expectSourceKinds": [
+        "skill"
+      ]
+    },
+    {
+      "name": "search_kind_status_reports_reserved",
+      "type": "search",
+      "query": "knowledge search tool registry",
+      "expectKindStatusContains": [
+        "reserved-not-active"
+      ]
     }
   ]
 }

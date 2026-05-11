@@ -1,0 +1,49 @@
+{
+  "name": "closed_loop_verify_task_outcome_writeback",
+  "description": "A successful verify_task_outcome for an applied self-extension manifest should write one idempotent outcome KnowledgeCard.",
+  "category": "contract_deferred",
+  "expectToolListed": true,
+  "executeTool": false,
+  "expectToolCallError": false,
+  "expectToolCallStructuredFields": {
+    "action": "verify_task_outcome",
+    "passed": true,
+    "failedCheckCount": 0
+  },
+  "expectedContract": {
+    "successGate": "failedCheckCount == 0 and manifest postcheck has descriptorSourceIntegrated, handlerSourceIntegrated, and registryPatchIntegrated true",
+    "writeBackCard": {
+      "sourceKind": "activity-log",
+      "category": "outcome",
+      "sourceId": "outcome_<manifestSessionId>",
+      "cardId": "outcome_<manifestSessionId>",
+      "tagsInclude": [
+        "outcome",
+        "self-extension",
+        "<toolId>"
+      ],
+      "sourcePath": "project-relative manifest path",
+      "confidence": 0.7,
+      "sourceWeight": 0.6
+    },
+    "idempotency": "Calling verify_task_outcome again with the same manifest sessionId must not append a duplicate sourceId.",
+    "failureHandling": "Missing index, duplicate card, or write failure must not fail the verify_task_outcome response."
+  },
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 602,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.verify_task_outcome",
+      "arguments": {
+        "task": "Verify the descriptor-first self-extension tool was applied, built, and exposed in tools/list.",
+        "manifestPath": "Saved/UnrealMcp/ExtensionBackups/<timestamp>_<toolId>/Manifest.json",
+        "expectedTools": [
+          "unreal.example_tool"
+        ],
+        "evidenceText": "mcp_apply_scaffold, mcp_build_editor, and mcp_run_tool_test completed.",
+        "requiredEvidenceText": "mcp_run_tool_test"
+      }
+    }
+  }
+}

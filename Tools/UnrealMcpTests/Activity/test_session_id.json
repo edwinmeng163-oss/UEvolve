@@ -1,0 +1,28 @@
+{
+  "name": "activity_session_id_valid",
+  "description": "Executable smoke test for the launch-session ID exposed by unreal.chat_label_active_task.",
+  "category": "happy_path",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": false,
+  "expectToolCallStructuredFields": {
+    "taskLabel": "",
+    "cleared": true
+  },
+  "expectationNote": "The current fixture runner can assert exact scalar structured fields but not regexes. This test executes the surfaced tool; expectedContract documents the required sessionId regex and same-process stability.",
+  "expectedContract": {
+    "structuredContentField": "sessionId",
+    "formatRegex": "^\\d{8}-\\d{6}-[0-9a-f]{8}$",
+    "stableWithinProcess": true,
+    "resetsOnEditorLaunch": true
+  },
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 201,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.chat_label_active_task",
+      "arguments": {}
+    }
+  }
+}

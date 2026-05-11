@@ -1,0 +1,32 @@
+{
+  "name": "knowledge_search_group_by_kind",
+  "description": "Search can return grouped results by sourceKind and omit the flat results array when requested.",
+  "category": "happy_path",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": false,
+  "expectToolCallStructuredFields": {
+    "action": "knowledge_search",
+    "query": "tool",
+    "groupByKind": true
+  },
+  "expectationNote": "The current fixture runner cannot assert object presence or field absence. expectedContract records that byKind must exist and results must be omitted.",
+  "expectedContract": {
+    "byKindPresent": true,
+    "resultsFieldAbsent": true,
+    "kindStatusPresent": true
+  },
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 503,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.knowledge_search",
+      "arguments": {
+        "query": "tool",
+        "groupByKind": true,
+        "limit": 5
+      }
+    }
+  }
+}

@@ -12,8 +12,8 @@
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Templates/Atomic.h"
+#include "UnrealMcpActivityLog.h"
 #include "UnrealMcpSettings.h"
-#include "UnrealMcpSkillTools.h"
 #include "UnrealMcpToolRegistry.h"
 
 namespace UnrealMcp
@@ -30,6 +30,7 @@ namespace UnrealMcp
 	TSharedPtr<FJsonObject> MakeTextContentObject(const FString& Text);
 	FString JsonObjectToString(const TSharedPtr<FJsonObject>& JsonObject);
 	TSharedPtr<FJsonObject> MakeEmptyObject();
+	TArray<TSharedPtr<FJsonValue>> MakeJsonStringArray(const TArray<FString>& Values);
 	bool TryGetMethodAndId(const FHttpServerRequest& Request, FString& OutMethod, TSharedPtr<FJsonValue>& OutId);
 }
 
@@ -335,19 +336,33 @@ TUniquePtr<FHttpServerResponse> FUnrealMcpModule::HandleToolsCall(const TSharedP
 
 	const TSharedPtr<FJsonObject> EmptyArguments = UnrealMcp::MakeEmptyObject();
 	const FJsonObject& Arguments = ArgumentsObject ? **ArgumentsObject : *EmptyArguments;
+	const FDateTime ToolStartTimeUtc = FDateTime::UtcNow();
 	const FUnrealMcpExecutionResult Result = ExecuteTool(ToolName, Arguments);
 	{
-		const UnrealMcp::FToolPolicy ActivityPolicy = UnrealMcp::GetToolPolicy(ToolName);
-		if (ActivityPolicy.RiskLevel != UnrealMcp::EToolRiskLevel::ReadOnly)
+		TArray<FString> ArgumentKeys;
+		for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Arguments.Values)
 		{
-			TSharedPtr<FJsonObject> ActivityDetails = MakeShared<FJsonObject>();
-			ActivityDetails->SetStringField(TEXT("toolName"), ToolName);
-			ActivityDetails->SetStringField(TEXT("riskLevel"), UnrealMcp::LexToString(ActivityPolicy.RiskLevel));
-			ActivityDetails->SetBoolField(TEXT("isError"), Result.bIsError);
-			ActivityDetails->SetNumberField(TEXT("textLength"), Result.Text.Len());
-			ActivityDetails->SetBoolField(TEXT("hasStructuredContent"), Result.StructuredContent.IsValid());
-			UnrealMcp::RecordSkillActivityEvent(TEXT("mcp_tool_result"), FString::Printf(TEXT("MCP tool %s %s."), *ToolName, Result.bIsError ? TEXT("failed") : TEXT("completed")), ActivityDetails);
+			ArgumentKeys.Add(Pair.Key);
 		}
+		ArgumentKeys.Sort();
+
+		const UnrealMcp::FToolPolicy ActivityPolicy = UnrealMcp::GetToolPolicy(ToolName);
+		TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+		Payload->SetStringField(TEXT("toolName"), ToolName);
+		Payload->SetStringField(TEXT("handlerName"), UnrealMcp::ResolveToolHandlerName(ToolName));
+		Payload->SetStringField(TEXT("riskLevel"), UnrealMcp::LexToString(ActivityPolicy.RiskLevel));
+		Payload->SetArrayField(TEXT("argumentKeys"), UnrealMcp::MakeJsonStringArray(ArgumentKeys));
+		Payload->SetBoolField(TEXT("isError"), Result.bIsError);
+		Payload->SetNumberField(TEXT("textLength"), Result.Text.Len());
+		Payload->SetBoolField(TEXT("hasStructuredContent"), Result.StructuredContent.IsValid());
+		Payload->SetNumberField(TEXT("durationMs"), FMath::Max(0.0, (FDateTime::UtcNow() - ToolStartTimeUtc).GetTotalMilliseconds()));
+
+		UnrealMcp::FActivityLogEvent Event;
+		Event.EventKind = TEXT("tool_call");
+		Event.Summary = FString::Printf(TEXT("Called MCP tool %s: %s."), *ToolName, Result.bIsError ? TEXT("failed") : TEXT("completed")).Left(2000);
+		Event.Payload = Payload;
+		Event.LegacyEventType = FString();
+		UnrealMcp::WriteActivityEvent(Event);
 	}
 
 	return MakeToolResult(Id, Result.Text, Result.StructuredContent, Result.bIsError);

@@ -2,13 +2,16 @@
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
+#include "HAL/CriticalSection.h"
 #include "HAL/FileManager.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "Misc/ScopeLock.h"
 #include "Policies/CondensedJsonPrintPolicy.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
+#include "UnrealMcpKnowledgeBridge.h"
 #include "UnrealMcpToolRegistrar.h"
 #include "UnrealMcpToolRegistry.h"
 
@@ -48,13 +51,34 @@ namespace UnrealMcp
 			FString UpdatedAt;
 		};
 
-		struct FKnowledgeSection
-		{
-			FString Title;
-			FString Path;
-			FString Text;
-			int32 SectionIndex = 0;
-		};
+			struct FKnowledgeSection
+			{
+				FString Title;
+				FString Path;
+				FString Text;
+				int32 SectionIndex = 0;
+			};
+
+			struct FKnowledgeCardCacheState
+			{
+				FString IndexFilePath;
+				int64 FileSize = -1;
+				FDateTime FileTimestamp;
+				TArray<FKnowledgeCard> Cards;
+				bool bValid = false;
+			};
+
+			struct FActivityLogIndexEvent
+			{
+				FString SessionId;
+				FString TaskLabel;
+				FString EventKind;
+				FString Summary;
+				FString SourcePath;
+			};
+
+			FCriticalSection GKnowledgeCardCacheMutex;
+			FKnowledgeCardCacheState GKnowledgeCardCache;
 
 		FString GetKnowledgeIndexRoot()
 		{
@@ -287,11 +311,11 @@ namespace UnrealMcp
 			return 1.0;
 		}
 
-		double ConfidenceForKind(const FString& SourceKind)
-		{
-			if (SourceKind.Equals(TEXT("tool-registry"), ESearchCase::IgnoreCase))
+			double ConfidenceForKind(const FString& SourceKind)
 			{
-				return 0.95;
+				if (SourceKind.Equals(TEXT("tool-registry"), ESearchCase::IgnoreCase))
+				{
+					return 0.95;
 			}
 			if (SourceKind.Equals(TEXT("versioned-doc"), ESearchCase::IgnoreCase))
 			{
@@ -304,9 +328,125 @@ namespace UnrealMcp
 			if (SourceKind.Equals(TEXT("official-docs"), ESearchCase::IgnoreCase))
 			{
 				return 0.82;
+				}
+				return 0.72;
 			}
-			return 0.72;
-		}
+
+			TArray<FString> GetKnowledgeSourceKindEnumValues()
+			{
+				return {
+					TEXT("tool-registry"),
+					TEXT("versioned-doc"),
+					TEXT("official-docs"),
+					TEXT("skill"),
+					TEXT("runtime-memory"),
+					TEXT("activity-log"),
+					TEXT("test-fixture"),
+					TEXT("unknown")
+				};
+			}
+
+			bool TryCanonicalizeKnowledgeSourceKind(const FString& Value, FString& OutKind)
+			{
+				const FString Trimmed = Value.TrimStartAndEnd();
+				for (const FString& AllowedKind : GetKnowledgeSourceKindEnumValues())
+				{
+					if (Trimmed.Equals(AllowedKind, ESearchCase::IgnoreCase))
+					{
+						OutKind = AllowedKind;
+						return true;
+					}
+				}
+				return false;
+			}
+
+			FString MakeAllowedKnowledgeSourceKindsText()
+			{
+				const TArray<FString> AllowedKinds = GetKnowledgeSourceKindEnumValues();
+				return FString::Printf(TEXT("[%s]"), *FString::Join(AllowedKinds, TEXT(", ")));
+			}
+
+			bool ValidateSourceKindFilters(const TArray<FString>& RawFilters, TArray<FString>& OutFilters, FString& OutFailureReason)
+			{
+				OutFilters.Reset();
+				for (const FString& RawFilter : RawFilters)
+				{
+					FString CanonicalKind;
+					if (!TryCanonicalizeKnowledgeSourceKind(RawFilter, CanonicalKind))
+					{
+						OutFailureReason = FString::Printf(
+							TEXT("Invalid sourceKind: %s. Allowed: %s"),
+							*RawFilter,
+							*MakeAllowedKnowledgeSourceKindsText());
+						return false;
+					}
+					OutFilters.AddUnique(CanonicalKind);
+				}
+				return true;
+			}
+
+			bool SourceKindHasActiveIndexer(const FString& SourceKind)
+			{
+				return SourceKind.Equals(TEXT("versioned-doc"), ESearchCase::IgnoreCase)
+					|| SourceKind.Equals(TEXT("official-docs"), ESearchCase::IgnoreCase)
+					|| SourceKind.Equals(TEXT("tool-registry"), ESearchCase::IgnoreCase)
+					|| SourceKind.Equals(TEXT("activity-log"), ESearchCase::IgnoreCase)
+					|| SourceKind.Equals(TEXT("skill"), ESearchCase::IgnoreCase);
+			}
+
+			TSharedPtr<FJsonObject> MakeKindStatusObject(const TArray<FKnowledgeCard>& Cards)
+			{
+				TMap<FString, int32> CountsByKind;
+				const TArray<FString> AllowedKinds = GetKnowledgeSourceKindEnumValues();
+				for (const FString& AllowedKind : AllowedKinds)
+				{
+					CountsByKind.Add(AllowedKind, 0);
+				}
+
+				for (const FKnowledgeCard& Card : Cards)
+				{
+					FString CanonicalKind;
+					if (TryCanonicalizeKnowledgeSourceKind(Card.SourceKind, CanonicalKind))
+					{
+						CountsByKind.FindOrAdd(CanonicalKind)++;
+					}
+					else if (!Card.SourceKind.TrimStartAndEnd().IsEmpty())
+					{
+						CountsByKind.FindOrAdd(Card.SourceKind.TrimStartAndEnd())++;
+					}
+				}
+
+				TSharedPtr<FJsonObject> StatusObject = MakeShared<FJsonObject>();
+				for (const FString& AllowedKind : AllowedKinds)
+				{
+					const int32 Count = CountsByKind.FindRef(AllowedKind);
+					if (Count > 0)
+					{
+						StatusObject->SetStringField(AllowedKind, TEXT("active"));
+					}
+					else if (SourceKindHasActiveIndexer(AllowedKind))
+					{
+						StatusObject->SetStringField(AllowedKind, TEXT("active-empty"));
+					}
+					else
+					{
+						StatusObject->SetStringField(AllowedKind, TEXT("reserved-not-active"));
+					}
+				}
+
+				TArray<FString> CountKeys;
+				CountsByKind.GetKeys(CountKeys);
+				CountKeys.Sort();
+				for (const FString& CountKey : CountKeys)
+				{
+					FString CanonicalKind;
+					if (!TryCanonicalizeKnowledgeSourceKind(CountKey, CanonicalKind) && CountsByKind.FindRef(CountKey) > 0)
+					{
+						StatusObject->SetStringField(CountKey, TEXT("unknown"));
+					}
+				}
+				return StatusObject;
+			}
 
 		void FlushKnowledgeSection(
 			const FString& BaseTitle,
@@ -328,11 +468,11 @@ namespace UnrealMcp
 			OutSections.Add(MoveTemp(Section));
 		}
 
-		TArray<FKnowledgeSection> SplitTextIntoSections(const FString& BaseTitle, const FString& Text)
-		{
-			TArray<FKnowledgeSection> Sections;
-			TArray<FString> Lines;
-			Text.ParseIntoArrayLines(Lines, false);
+			TArray<FKnowledgeSection> SplitTextIntoSections(const FString& BaseTitle, const FString& Text)
+			{
+				TArray<FKnowledgeSection> Sections;
+				TArray<FString> Lines;
+				Text.ParseIntoArrayLines(Lines, false);
 
 			TArray<FString> HeadingStack;
 			TArray<FString> CurrentLines;
@@ -377,9 +517,34 @@ namespace UnrealMcp
 				Section.Path = BaseTitle;
 				Section.Text = Text.TrimStartAndEnd();
 				Sections.Add(MoveTemp(Section));
+				}
+				return Sections;
 			}
-			return Sections;
-		}
+
+			FString ExtractFirstMarkdownHeading(const FString& Text, const FString& FallbackTitle)
+			{
+				TArray<FString> Lines;
+				Text.ParseIntoArrayLines(Lines, false);
+				for (const FString& Line : Lines)
+				{
+					const FString Trimmed = Line.TrimStartAndEnd();
+					int32 HashCount = 0;
+					while (HashCount < Trimmed.Len() && Trimmed[HashCount] == TEXT('#'))
+					{
+						HashCount++;
+					}
+
+					if (HashCount > 0
+						&& HashCount <= 6
+						&& Trimmed.Len() > HashCount
+						&& FChar::IsWhitespace(Trimmed[HashCount]))
+					{
+						const FString Heading = Trimmed.Mid(HashCount).TrimStartAndEnd();
+						return Heading.IsEmpty() ? FallbackTitle : Heading;
+					}
+				}
+				return FallbackTitle;
+			}
 
 		TArray<TSharedPtr<FJsonValue>> StringsToJsonArray(const TArray<FString>& Values)
 		{
@@ -722,11 +887,11 @@ namespace UnrealMcp
 			}
 		}
 
-		void AddToolRegistryCards(int32 MaxChunkChars, int32 OverlapChars, TArray<FKnowledgeCard>& OutCards)
-		{
-			for (const FToolRegistryEntry& Entry : GetToolRegistryEntries())
+			void AddToolRegistryCards(int32 MaxChunkChars, int32 OverlapChars, TArray<FKnowledgeCard>& OutCards)
 			{
-				if (Entry.Exposure == EToolExposure::LegacyHidden)
+				for (const FToolRegistryEntry& Entry : GetToolRegistryEntries())
+				{
+					if (Entry.Exposure == EToolExposure::LegacyHidden)
 				{
 					continue;
 				}
@@ -760,8 +925,295 @@ namespace UnrealMcp
 					MaxChunkChars,
 					OverlapChars,
 					OutCards);
+				}
 			}
-		}
+
+			void AddSkillMarkdownCards(int32 MaxChunkChars, TArray<FKnowledgeCard>& OutCards, int32& OutSkillFileCount)
+			{
+				const FString ProjectDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+				const FString SkillRoot = FPaths::Combine(ProjectDir, TEXT("Tools/UnrealMcpSkills"));
+				if (!FPaths::DirectoryExists(SkillRoot))
+				{
+					return;
+				}
+
+				TArray<FString> SkillFiles;
+				IFileManager::Get().FindFilesRecursive(SkillFiles, *SkillRoot, TEXT("SKILL.md"), true, false);
+				SkillFiles.Sort();
+
+				const FString NowIso = FDateTime::UtcNow().ToIso8601();
+				const int32 SkillMaxChars = FMath::Clamp(MaxChunkChars, 400, DefaultKnowledgeChunkChars);
+				for (const FString& FilePath : SkillFiles)
+				{
+					FString Text;
+					if (!FFileHelper::LoadFileToString(Text, *FilePath))
+					{
+						continue;
+					}
+
+					const FString CleanText = Text.TrimStartAndEnd();
+					if (CleanText.IsEmpty())
+					{
+						continue;
+					}
+
+					OutSkillFileCount++;
+					const FString SkillName = FPaths::GetCleanFilename(FPaths::GetPath(FilePath));
+					const FString Title = ExtractFirstMarkdownHeading(CleanText, SkillName.IsEmpty() ? TEXT("Skill") : SkillName);
+					const FString SourceId = FString::Printf(TEXT("skill_%s"), *SanitizeKnowledgeId(MakeProjectRelativePath(FPaths::GetPath(FilePath))));
+					const FString CardText = CleanText.Left(SkillMaxChars).TrimStartAndEnd();
+					if (CardText.IsEmpty())
+					{
+						continue;
+					}
+
+					FKnowledgeCard Card;
+					Card.CardId = FString::Printf(TEXT("%s:000"), *SanitizeKnowledgeId(SourceId));
+					Card.SourceId = SourceId;
+					Card.Title = Title;
+					Card.SectionTitle = Title;
+					Card.SectionPath = Title;
+					Card.Category = TEXT("skill");
+					Card.Tags.Add(TEXT("skill"));
+					if (!SkillName.IsEmpty())
+					{
+						Card.Tags.Add(SkillName);
+					}
+					Card.SourceKind = TEXT("skill");
+					Card.SourcePath = MakeProjectRelativePath(FilePath);
+					Card.Text = CardText;
+					Card.ChunkIndex = 0;
+					Card.TextLength = Card.Text.Len();
+					Card.SourceWeight = 0.9;
+					Card.Confidence = 0.85;
+					Card.UpdatedAt = NowIso;
+					OutCards.Add(MoveTemp(Card));
+				}
+			}
+
+			FString NormalizeActivityEventKind(const FString& EventKind)
+			{
+				const FString Trimmed = EventKind.TrimStartAndEnd();
+				if (Trimmed.Equals(TEXT("mcp_tool_call"), ESearchCase::IgnoreCase)
+					|| Trimmed.Equals(TEXT("mcp_tool_result"), ESearchCase::IgnoreCase))
+				{
+					return TEXT("tool_call");
+				}
+				return Trimmed.IsEmpty() ? TEXT("unknown") : Trimmed;
+			}
+
+			bool TryParseActivityLogEvent(const FString& Line, const FString& SourcePath, FActivityLogIndexEvent& OutEvent)
+			{
+				TSharedPtr<FJsonObject> Object;
+				if (!LoadJsonObjectFromString(Line, Object) || !Object.IsValid())
+				{
+					return false;
+				}
+
+				FString SessionId;
+				if (!Object->TryGetStringField(TEXT("sessionId"), SessionId) || SessionId.TrimStartAndEnd().IsEmpty())
+				{
+					return false;
+				}
+
+				FString EventKind;
+				if (!Object->TryGetStringField(TEXT("eventKind"), EventKind) || EventKind.TrimStartAndEnd().IsEmpty())
+				{
+					Object->TryGetStringField(TEXT("eventType"), EventKind);
+				}
+
+				FString TaskLabel;
+				if (!Object->TryGetStringField(TEXT("taskLabel"), TaskLabel) || TaskLabel.TrimStartAndEnd().IsEmpty())
+				{
+					Object->TryGetStringField(TEXT("goal"), TaskLabel);
+				}
+
+				FString Summary;
+				Object->TryGetStringField(TEXT("summary"), Summary);
+
+				OutEvent.SessionId = SessionId.TrimStartAndEnd();
+				OutEvent.TaskLabel = TaskLabel.TrimStartAndEnd();
+				OutEvent.EventKind = NormalizeActivityEventKind(EventKind);
+				OutEvent.Summary = Summary.TrimStartAndEnd();
+				OutEvent.SourcePath = MakeProjectRelativePath(SourcePath);
+				return true;
+			}
+
+			FString BuildActivitySpanText(const TArray<FActivityLogIndexEvent>& SpanEvents, int32 MaxChars)
+			{
+				const int32 SafeMaxChars = FMath::Clamp(MaxChars, 400, DefaultKnowledgeChunkChars);
+				FString Text;
+				for (const FActivityLogIndexEvent& Event : SpanEvents)
+				{
+					FString Line = Event.Summary.TrimStartAndEnd();
+					if (Line.IsEmpty())
+					{
+						Line = Event.EventKind;
+					}
+					else if (!Event.EventKind.IsEmpty())
+					{
+						Line = FString::Printf(TEXT("%s: %s"), *Event.EventKind, *Line);
+					}
+
+					if (Line.IsEmpty())
+					{
+						continue;
+					}
+
+					const FString Candidate = Text.IsEmpty() ? Line : Text + TEXT("\n") + Line;
+					if (Candidate.Len() <= SafeMaxChars)
+					{
+						Text = Candidate;
+						continue;
+					}
+
+					if (Text.IsEmpty())
+					{
+						Text = Candidate.Left(SafeMaxChars).TrimStartAndEnd();
+					}
+					break;
+				}
+				return Text.TrimStartAndEnd();
+			}
+
+			TArray<FString> MakeActivitySpanTags(const TArray<FActivityLogIndexEvent>& SpanEvents)
+			{
+				TArray<FString> Tags;
+				for (const FActivityLogIndexEvent& Event : SpanEvents)
+				{
+					if (!Event.EventKind.TrimStartAndEnd().IsEmpty())
+					{
+						Tags.AddUnique(Event.EventKind.TrimStartAndEnd());
+					}
+				}
+				Tags.Sort();
+				return Tags;
+			}
+
+			void EmitActivitySpanCard(
+				const FString& SessionId,
+				const FString& TaskLabel,
+				int32 SpanIndex,
+				const TArray<FActivityLogIndexEvent>& SpanEvents,
+				int32 MaxChunkChars,
+				TArray<FKnowledgeCard>& OutCards)
+			{
+				if (SpanEvents.IsEmpty())
+				{
+					return;
+				}
+
+				const FString Text = BuildActivitySpanText(SpanEvents, FMath::Min(MaxChunkChars, DefaultKnowledgeChunkChars));
+				if (Text.IsEmpty())
+				{
+					return;
+				}
+
+				const bool bHasLabel = !TaskLabel.TrimStartAndEnd().IsEmpty();
+				const FString LabelOrSession = bHasLabel ? TaskLabel.TrimStartAndEnd() : TEXT("unlabeled");
+				const FString CardBaseId = SanitizeKnowledgeId(FString::Printf(
+					TEXT("activity_%s_%s_%d"),
+					*SessionId,
+					*(bHasLabel ? TaskLabel.TrimStartAndEnd() : TEXT("session")),
+					SpanIndex));
+
+				FKnowledgeCard Card;
+				Card.CardId = CardBaseId;
+				Card.SourceId = CardBaseId;
+				Card.Title = bHasLabel
+					? FString::Printf(TEXT("Activity: %s"), *TaskLabel.TrimStartAndEnd())
+					: FString::Printf(TEXT("Activity session %s"), *SessionId);
+				Card.SectionTitle = FString::Printf(TEXT("events × %d"), SpanEvents.Num());
+				Card.SectionPath = FString::Printf(TEXT("%s/%s"), *SessionId, *LabelOrSession);
+				Card.Category = TEXT("activity");
+				Card.Tags = MakeActivitySpanTags(SpanEvents);
+				Card.SourceKind = TEXT("activity-log");
+				Card.SourcePath = SpanEvents[0].SourcePath;
+				Card.Text = Text;
+				Card.ChunkIndex = 0;
+				Card.TextLength = Card.Text.Len();
+				Card.SourceWeight = 0.5;
+				Card.Confidence = 0.6;
+				Card.UpdatedAt = FDateTime::UtcNow().ToIso8601();
+				OutCards.Add(MoveTemp(Card));
+			}
+
+			void AddActivityLogCards(int32 MaxChunkChars, TArray<FKnowledgeCard>& OutCards, int32& OutActivityLogFileCount, int32& OutActivityEventCount)
+			{
+				const FString ActivityRoot = FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UnrealMcp/ActivityLog")));
+				if (!FPaths::DirectoryExists(ActivityRoot))
+				{
+					return;
+				}
+
+				TArray<FString> ActivityFiles;
+				IFileManager::Get().FindFilesRecursive(ActivityFiles, *ActivityRoot, TEXT("*.jsonl"), true, false);
+				ActivityFiles.Sort();
+				OutActivityLogFileCount = ActivityFiles.Num();
+
+				TMap<FString, TArray<FActivityLogIndexEvent>> EventsBySession;
+				for (const FString& ActivityFile : ActivityFiles)
+				{
+					TArray<FString> Lines;
+					if (!FFileHelper::LoadFileToStringArray(Lines, *ActivityFile))
+					{
+						continue;
+					}
+
+					for (const FString& Line : Lines)
+					{
+						if (Line.TrimStartAndEnd().IsEmpty())
+						{
+							continue;
+						}
+
+						FActivityLogIndexEvent Event;
+						if (TryParseActivityLogEvent(Line, ActivityFile, Event))
+						{
+							OutActivityEventCount++;
+							EventsBySession.FindOrAdd(Event.SessionId).Add(MoveTemp(Event));
+						}
+					}
+				}
+
+				TArray<FString> SessionIds;
+				EventsBySession.GetKeys(SessionIds);
+				SessionIds.Sort();
+				for (const FString& SessionId : SessionIds)
+				{
+					const TArray<FActivityLogIndexEvent>* SessionEvents = EventsBySession.Find(SessionId);
+					if (!SessionEvents || SessionEvents->IsEmpty())
+					{
+						continue;
+					}
+
+					TArray<FActivityLogIndexEvent> SpanEvents;
+					FString CurrentLabel;
+					int32 SpanIndex = 0;
+					auto FlushSpan = [&]()
+					{
+						EmitActivitySpanCard(SessionId, CurrentLabel, SpanIndex, SpanEvents, MaxChunkChars, OutCards);
+						SpanEvents.Reset();
+						SpanIndex++;
+					};
+
+					for (const FActivityLogIndexEvent& Event : *SessionEvents)
+					{
+						const FString EventLabel = Event.TaskLabel.TrimStartAndEnd();
+						if (SpanEvents.IsEmpty())
+						{
+							CurrentLabel = EventLabel;
+						}
+						else if (!CurrentLabel.Equals(EventLabel, ESearchCase::CaseSensitive))
+						{
+							FlushSpan();
+							CurrentLabel = EventLabel;
+						}
+						SpanEvents.Add(Event);
+					}
+					FlushSpan();
+				}
+			}
 
 		bool WriteKnowledgeCardsJsonl(const FString& Path, const TArray<FKnowledgeCard>& Cards, FString& OutFailureReason)
 		{
@@ -797,60 +1249,102 @@ namespace UnrealMcp
 				*TextKey.TrimStartAndEnd());
 		}
 
-		void DeduplicateKnowledgeCards(TArray<FKnowledgeCard>& Cards)
-		{
-			TSet<FString> Seen;
-			TArray<FKnowledgeCard> UniqueCards;
-			UniqueCards.Reserve(Cards.Num());
-			for (FKnowledgeCard& Card : Cards)
+			void DeduplicateKnowledgeCards(TArray<FKnowledgeCard>& Cards)
 			{
-				const FString Key = MakeKnowledgeDedupKey(Card);
-				if (Seen.Contains(Key))
+				TSet<FString> Seen;
+				TArray<FKnowledgeCard> UniqueCards;
+				UniqueCards.Reserve(Cards.Num());
+				for (FKnowledgeCard& Card : Cards)
 				{
-					continue;
+					const FString Key = MakeKnowledgeDedupKey(Card);
+					if (Seen.Contains(Key))
+					{
+						continue;
+					}
+
+					Seen.Add(Key);
+					UniqueCards.Add(MoveTemp(Card));
 				}
-
-				Seen.Add(Key);
-				UniqueCards.Add(MoveTemp(Card));
-			}
-			Cards = MoveTemp(UniqueCards);
-		}
-
-		bool LoadKnowledgeCards(const FString& IndexDir, TArray<FKnowledgeCard>& OutCards, FString& OutFailureReason)
-		{
-			const FString CardsPath = FPaths::Combine(IndexDir, TEXT("cards.jsonl"));
-			TArray<FString> Lines;
-			if (!FFileHelper::LoadFileToStringArray(Lines, *CardsPath))
-			{
-				OutFailureReason = FString::Printf(TEXT("Knowledge index not found at '%s'. Run unreal.knowledge_index_refresh first."), *CardsPath);
-				return false;
+				Cards = MoveTemp(UniqueCards);
 			}
 
-			for (const FString& Line : Lines)
+			void InvalidateKnowledgeCardCache()
 			{
-				if (Line.TrimStartAndEnd().IsEmpty())
-				{
-					continue;
-				}
-				TSharedPtr<FJsonObject> Object;
-				if (!LoadJsonObjectFromString(Line, Object))
-				{
-					continue;
-				}
-				FKnowledgeCard Card;
-				if (JsonObjectToCard(Object, Card))
-				{
-					OutCards.Add(MoveTemp(Card));
-				}
+				FScopeLock Lock(&GKnowledgeCardCacheMutex);
+				GKnowledgeCardCache = FKnowledgeCardCacheState();
 			}
 
-			if (OutCards.IsEmpty())
+			bool LoadKnowledgeCards(const FString& IndexDir, TArray<FKnowledgeCard>& OutCards, FString& OutFailureReason)
 			{
-				OutFailureReason = FString::Printf(TEXT("Knowledge index '%s' contains no cards."), *CardsPath);
-				return false;
+				const FString CardsPath = FPaths::Combine(IndexDir, TEXT("cards.jsonl"));
+				const int64 FileSize = IFileManager::Get().FileSize(*CardsPath);
+				if (FileSize < 0)
+				{
+					OutFailureReason = FString::Printf(TEXT("Knowledge index not found at '%s'. Run unreal.knowledge_index_refresh first."), *CardsPath);
+					return false;
+				}
+				const FDateTime FileTimestamp = IFileManager::Get().GetTimeStamp(*CardsPath);
+
+				{
+					FScopeLock Lock(&GKnowledgeCardCacheMutex);
+					if (GKnowledgeCardCache.bValid
+						&& GKnowledgeCardCache.IndexFilePath.Equals(CardsPath, ESearchCase::CaseSensitive)
+						&& GKnowledgeCardCache.FileSize == FileSize
+						&& GKnowledgeCardCache.FileTimestamp == FileTimestamp)
+					{
+						OutCards = GKnowledgeCardCache.Cards;
+						if (OutCards.IsEmpty())
+						{
+							OutFailureReason = FString::Printf(TEXT("Knowledge index '%s' contains no cards."), *CardsPath);
+							return false;
+						}
+						return true;
+					}
+				}
+
+				TArray<FString> Lines;
+				if (!FFileHelper::LoadFileToStringArray(Lines, *CardsPath))
+				{
+					OutFailureReason = FString::Printf(TEXT("Knowledge index not found at '%s'. Run unreal.knowledge_index_refresh first."), *CardsPath);
+					return false;
+				}
+
+				TArray<FKnowledgeCard> LoadedCards;
+				for (const FString& Line : Lines)
+				{
+					if (Line.TrimStartAndEnd().IsEmpty())
+					{
+						continue;
+					}
+					TSharedPtr<FJsonObject> Object;
+					if (!LoadJsonObjectFromString(Line, Object))
+					{
+						continue;
+					}
+					FKnowledgeCard Card;
+					if (JsonObjectToCard(Object, Card))
+					{
+						LoadedCards.Add(MoveTemp(Card));
+					}
+				}
+
+				if (LoadedCards.IsEmpty())
+				{
+					OutFailureReason = FString::Printf(TEXT("Knowledge index '%s' contains no cards."), *CardsPath);
+					return false;
+				}
+
+				{
+					FScopeLock Lock(&GKnowledgeCardCacheMutex);
+					GKnowledgeCardCache.IndexFilePath = CardsPath;
+					GKnowledgeCardCache.FileSize = FileSize;
+					GKnowledgeCardCache.FileTimestamp = FileTimestamp;
+					GKnowledgeCardCache.Cards = LoadedCards;
+					GKnowledgeCardCache.bValid = true;
+				}
+				OutCards = MoveTemp(LoadedCards);
+				return true;
 			}
-			return true;
-		}
 
 		double ScoreKnowledgeCard(const FKnowledgeCard& Card, const FString& Query, const TArray<FString>& QueryTokens)
 		{
@@ -917,11 +1411,11 @@ namespace UnrealMcp
 			return Score * SafeSourceWeight * FMath::Clamp(SafeConfidence, 0.35, 1.0);
 		}
 
-		FString MakeExcerpt(const FString& Text, const FString& Query, const TArray<FString>& QueryTokens, int32 MaxChars)
-		{
-			const int32 SafeMaxChars = FMath::Clamp(MaxChars, 80, 2400);
-			if (Text.Len() <= SafeMaxChars)
+			FString MakeExcerpt(const FString& Text, const FString& Query, const TArray<FString>& QueryTokens, int32 MaxChars)
 			{
+				const int32 SafeMaxChars = FMath::Clamp(MaxChars, 80, 2400);
+				if (Text.Len() <= SafeMaxChars)
+				{
 				return Text;
 			}
 
@@ -943,14 +1437,43 @@ namespace UnrealMcp
 				}
 			}
 
-			const int32 Start = HitIndex == INDEX_NONE ? 0 : FMath::Max(0, HitIndex - SafeMaxChars / 3);
-			return Text.Mid(Start, SafeMaxChars).TrimStartAndEnd();
-		}
+				const int32 Start = HitIndex == INDEX_NONE ? 0 : FMath::Max(0, HitIndex - SafeMaxChars / 3);
+				return Text.Mid(Start, SafeMaxChars).TrimStartAndEnd();
+			}
 
-		bool CategoryAllowed(const FString& Category, const TArray<FString>& Filters)
-		{
-			if (Filters.IsEmpty())
+			TSharedPtr<FJsonObject> MakeKnowledgeSearchResultObject(
+				const FKnowledgeCard& Card,
+				double Score,
+				const FString& Query,
+				const TArray<FString>& QueryTokens,
+				int32 MaxExcerptChars,
+				bool bIncludeText)
 			{
+				TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+				Result->SetStringField(TEXT("cardId"), Card.CardId);
+				Result->SetStringField(TEXT("title"), Card.Title);
+				Result->SetStringField(TEXT("sectionTitle"), Card.SectionTitle);
+				Result->SetStringField(TEXT("sectionPath"), Card.SectionPath);
+				Result->SetStringField(TEXT("category"), Card.Category);
+				Result->SetStringField(TEXT("sourceKind"), Card.SourceKind);
+				Result->SetStringField(TEXT("sourcePath"), Card.SourcePath);
+				Result->SetStringField(TEXT("url"), Card.Url);
+				Result->SetArrayField(TEXT("tags"), StringsToJsonArray(Card.Tags));
+				Result->SetNumberField(TEXT("score"), Score);
+				Result->SetNumberField(TEXT("sourceWeight"), Card.SourceWeight);
+				Result->SetNumberField(TEXT("confidence"), Card.Confidence);
+				Result->SetStringField(TEXT("excerpt"), MakeExcerpt(Card.Text, Query, QueryTokens, MaxExcerptChars));
+				if (bIncludeText)
+				{
+					Result->SetStringField(TEXT("text"), Card.Text);
+				}
+				return Result;
+			}
+
+			bool CategoryAllowed(const FString& Category, const TArray<FString>& Filters)
+			{
+				if (Filters.IsEmpty())
+				{
 				return true;
 			}
 			for (const FString& Filter : Filters)
@@ -959,9 +1482,25 @@ namespace UnrealMcp
 				{
 					return true;
 				}
+				}
+				return false;
 			}
-			return false;
-		}
+
+			bool SourceKindAllowed(const FString& SourceKind, const TArray<FString>& Filters)
+			{
+				if (Filters.IsEmpty())
+				{
+					return true;
+				}
+				for (const FString& Filter : Filters)
+				{
+					if (SourceKind.Equals(Filter, ESearchCase::IgnoreCase))
+					{
+						return true;
+					}
+				}
+				return false;
+			}
 
 		int32 RiskRank(EToolRiskLevel Risk)
 		{
@@ -1178,24 +1717,31 @@ namespace UnrealMcp
 		SourceRoot = ResolveProjectPathForJson(SourceRoot);
 		IndexRoot = ResolveProjectPathForJson(IndexRoot);
 
-		bool bIncludeOfficialDocs = true;
-		bool bIncludeVersionedDocs = true;
-		bool bIncludeToolRegistry = true;
-		bool bSkipLowContent = true;
-		bool bDryRun = false;
-		Arguments.TryGetBoolField(TEXT("includeOfficialDocs"), bIncludeOfficialDocs);
-		Arguments.TryGetBoolField(TEXT("includeVersionedDocs"), bIncludeVersionedDocs);
-		Arguments.TryGetBoolField(TEXT("includeToolRegistry"), bIncludeToolRegistry);
-		Arguments.TryGetBoolField(TEXT("skipLowContent"), bSkipLowContent);
-		Arguments.TryGetBoolField(TEXT("dryRun"), bDryRun);
+			bool bIncludeOfficialDocs = true;
+			bool bIncludeVersionedDocs = true;
+			bool bIncludeToolRegistry = true;
+			bool bIncludeActivityLog = true;
+			bool bIncludeSkills = true;
+			bool bSkipLowContent = true;
+			bool bDryRun = false;
+			Arguments.TryGetBoolField(TEXT("includeOfficialDocs"), bIncludeOfficialDocs);
+			Arguments.TryGetBoolField(TEXT("includeVersionedDocs"), bIncludeVersionedDocs);
+			Arguments.TryGetBoolField(TEXT("includeToolRegistry"), bIncludeToolRegistry);
+			Arguments.TryGetBoolField(TEXT("includeActivityLog"), bIncludeActivityLog);
+			Arguments.TryGetBoolField(TEXT("includeSkills"), bIncludeSkills);
+			Arguments.TryGetBoolField(TEXT("skipLowContent"), bSkipLowContent);
+			Arguments.TryGetBoolField(TEXT("dryRun"), bDryRun);
 
 		const int32 MaxCards = FMath::Clamp(GetPositiveIntArgument(Arguments, TEXT("maxCards"), DefaultKnowledgeMaxCards), 1, 20000);
 		const int32 MaxChunkChars = FMath::Clamp(GetPositiveIntArgument(Arguments, TEXT("maxChunkChars"), DefaultKnowledgeChunkChars), 400, 12000);
 		const int32 OverlapChars = FMath::Clamp(GetPositiveIntArgument(Arguments, TEXT("chunkOverlapChars"), DefaultKnowledgeOverlapChars), 0, MaxChunkChars / 2);
 
-		TArray<FKnowledgeCard> Cards;
-		int32 SkippedRows = 0;
-		TArray<FString> SourceFiles;
+			TArray<FKnowledgeCard> Cards;
+			int32 SkippedRows = 0;
+			int32 ActivityLogFileCount = 0;
+			int32 ActivityEventCount = 0;
+			int32 SkillFileCount = 0;
+			TArray<FString> SourceFiles;
 
 		if (bIncludeOfficialDocs && FPaths::DirectoryExists(SourceRoot))
 		{
@@ -1218,6 +1764,16 @@ namespace UnrealMcp
 		if (bIncludeToolRegistry)
 		{
 			AddToolRegistryCards(MaxChunkChars, OverlapChars, Cards);
+		}
+
+		if (bIncludeSkills)
+		{
+			AddSkillMarkdownCards(MaxChunkChars, Cards, SkillFileCount);
+		}
+
+		if (bIncludeActivityLog)
+		{
+			AddActivityLogCards(MaxChunkChars, Cards, ActivityLogFileCount, ActivityEventCount);
 		}
 
 		DeduplicateKnowledgeCards(Cards);
@@ -1247,10 +1803,13 @@ namespace UnrealMcp
 		StructuredContent->SetStringField(TEXT("indexRoot"), MakeProjectRelativePath(IndexRoot));
 		StructuredContent->SetStringField(TEXT("sourceRoot"), MakeProjectRelativePath(SourceRoot));
 		StructuredContent->SetBoolField(TEXT("dryRun"), bDryRun);
-		StructuredContent->SetNumberField(TEXT("cardCount"), Cards.Num());
-		StructuredContent->SetNumberField(TEXT("sourceDocumentsJsonlCount"), SourceFiles.Num());
-		StructuredContent->SetNumberField(TEXT("skippedRows"), SkippedRows);
-		StructuredContent->SetArrayField(TEXT("sourceDocumentsJsonl"), SourceFileValues);
+			StructuredContent->SetNumberField(TEXT("cardCount"), Cards.Num());
+			StructuredContent->SetNumberField(TEXT("sourceDocumentsJsonlCount"), SourceFiles.Num());
+			StructuredContent->SetNumberField(TEXT("skippedRows"), SkippedRows);
+			StructuredContent->SetNumberField(TEXT("activityLogFileCount"), ActivityLogFileCount);
+			StructuredContent->SetNumberField(TEXT("activityEventCount"), ActivityEventCount);
+			StructuredContent->SetNumberField(TEXT("skillFileCount"), SkillFileCount);
+			StructuredContent->SetArrayField(TEXT("sourceDocumentsJsonl"), SourceFileValues);
 
 		if (bDryRun)
 		{
@@ -1267,18 +1826,24 @@ namespace UnrealMcp
 		{
 			return MakeExecutionResult(FailureReason, StructuredContent, true);
 		}
+		InvalidateKnowledgeCardCache();
 
 		TSharedPtr<FJsonObject> Manifest = MakeShared<FJsonObject>();
 		Manifest->SetStringField(TEXT("schema"), TEXT("UEvolve.KnowledgeIndex.v1"));
 		Manifest->SetStringField(TEXT("indexRoot"), MakeProjectRelativePath(IndexRoot));
 		Manifest->SetStringField(TEXT("sourceRoot"), MakeProjectRelativePath(SourceRoot));
 		Manifest->SetStringField(TEXT("cardsPath"), MakeProjectRelativePath(CardsPath));
-		Manifest->SetNumberField(TEXT("cardCount"), Cards.Num());
-		Manifest->SetNumberField(TEXT("sourceDocumentsJsonlCount"), SourceFiles.Num());
-		Manifest->SetNumberField(TEXT("skippedRows"), SkippedRows);
-		Manifest->SetBoolField(TEXT("includeOfficialDocs"), bIncludeOfficialDocs);
-		Manifest->SetBoolField(TEXT("includeVersionedDocs"), bIncludeVersionedDocs);
-		Manifest->SetBoolField(TEXT("includeToolRegistry"), bIncludeToolRegistry);
+			Manifest->SetNumberField(TEXT("cardCount"), Cards.Num());
+			Manifest->SetNumberField(TEXT("sourceDocumentsJsonlCount"), SourceFiles.Num());
+			Manifest->SetNumberField(TEXT("skippedRows"), SkippedRows);
+			Manifest->SetNumberField(TEXT("activityLogFileCount"), ActivityLogFileCount);
+			Manifest->SetNumberField(TEXT("activityEventCount"), ActivityEventCount);
+			Manifest->SetNumberField(TEXT("skillFileCount"), SkillFileCount);
+			Manifest->SetBoolField(TEXT("includeOfficialDocs"), bIncludeOfficialDocs);
+			Manifest->SetBoolField(TEXT("includeVersionedDocs"), bIncludeVersionedDocs);
+			Manifest->SetBoolField(TEXT("includeToolRegistry"), bIncludeToolRegistry);
+			Manifest->SetBoolField(TEXT("includeActivityLog"), bIncludeActivityLog);
+			Manifest->SetBoolField(TEXT("includeSkills"), bIncludeSkills);
 		Manifest->SetArrayField(TEXT("sourceDocumentsJsonl"), SourceFileValues);
 		if (!WriteJsonObjectToFile(Manifest, ManifestPath, FailureReason))
 		{
@@ -1307,6 +1872,17 @@ namespace UnrealMcp
 
 		TArray<FString> Categories;
 		TryGetStringArrayField(Arguments, TEXT("categories"), Categories);
+		TArray<FString> RawSourceKindFilters;
+		TryGetStringArrayField(Arguments, TEXT("sourceKinds"), RawSourceKindFilters);
+		TArray<FString> SourceKindFilters;
+		FString SourceKindFailureReason;
+		if (!ValidateSourceKindFilters(RawSourceKindFilters, SourceKindFilters, SourceKindFailureReason))
+		{
+			return MakeExecutionResult(SourceKindFailureReason, nullptr, true);
+		}
+
+		bool bGroupByKind = false;
+		Arguments.TryGetBoolField(TEXT("groupByKind"), bGroupByKind);
 		bool bIncludeText = false;
 		Arguments.TryGetBoolField(TEXT("includeText"), bIncludeText);
 		const int32 Limit = FMath::Clamp(GetPositiveIntArgument(Arguments, TEXT("limit"), DefaultKnowledgeSearchLimit), 1, 50);
@@ -1336,6 +1912,10 @@ namespace UnrealMcp
 			{
 				continue;
 			}
+			if (!SourceKindAllowed(Card.SourceKind, SourceKindFilters))
+			{
+				continue;
+			}
 			const double Score = ScoreKnowledgeCard(Card, Query, QueryTokens);
 			if (Score > 0.0)
 			{
@@ -1356,8 +1936,10 @@ namespace UnrealMcp
 		});
 
 		TArray<TSharedPtr<FJsonValue>> ResultValues;
+		TMap<FString, TArray<TSharedPtr<FJsonValue>>> ResultValuesByKind;
 		TSet<FString> AddedSourceGroups;
-		for (int32 Index = 0; Index < ScoredCards.Num() && ResultValues.Num() < Limit; ++Index)
+		int32 ResultCount = 0;
+		for (int32 Index = 0; Index < ScoredCards.Num() && ResultCount < Limit; ++Index)
 		{
 			const FScoredCard& Scored = ScoredCards[Index];
 			const FString SourceGroup = FString::Printf(TEXT("%s|%s"), *Scored.Card.SourceId, *Scored.Card.SectionPath);
@@ -1367,25 +1949,34 @@ namespace UnrealMcp
 			}
 			AddedSourceGroups.Add(SourceGroup);
 
-			TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
-			Result->SetStringField(TEXT("cardId"), Scored.Card.CardId);
-			Result->SetStringField(TEXT("title"), Scored.Card.Title);
-			Result->SetStringField(TEXT("sectionTitle"), Scored.Card.SectionTitle);
-			Result->SetStringField(TEXT("sectionPath"), Scored.Card.SectionPath);
-			Result->SetStringField(TEXT("category"), Scored.Card.Category);
-			Result->SetStringField(TEXT("sourceKind"), Scored.Card.SourceKind);
-			Result->SetStringField(TEXT("sourcePath"), Scored.Card.SourcePath);
-			Result->SetStringField(TEXT("url"), Scored.Card.Url);
-			Result->SetArrayField(TEXT("tags"), StringsToJsonArray(Scored.Card.Tags));
-			Result->SetNumberField(TEXT("score"), Scored.Score);
-			Result->SetNumberField(TEXT("sourceWeight"), Scored.Card.SourceWeight);
-			Result->SetNumberField(TEXT("confidence"), Scored.Card.Confidence);
-			Result->SetStringField(TEXT("excerpt"), MakeExcerpt(Scored.Card.Text, Query, QueryTokens, MaxExcerptChars));
-			if (bIncludeText)
+			TSharedPtr<FJsonObject> Result = MakeKnowledgeSearchResultObject(
+				Scored.Card,
+				Scored.Score,
+				Query,
+				QueryTokens,
+				MaxExcerptChars,
+				bIncludeText);
+			if (bGroupByKind)
 			{
-				Result->SetStringField(TEXT("text"), Scored.Card.Text);
+				ResultValuesByKind.FindOrAdd(Scored.Card.SourceKind).Add(MakeShared<FJsonValueObject>(Result));
 			}
-			ResultValues.Add(MakeShared<FJsonValueObject>(Result));
+			else
+			{
+				ResultValues.Add(MakeShared<FJsonValueObject>(Result));
+			}
+			ResultCount++;
+		}
+
+		TSharedPtr<FJsonObject> ByKindObject = MakeShared<FJsonObject>();
+		if (bGroupByKind)
+		{
+			TArray<FString> KindKeys;
+			ResultValuesByKind.GetKeys(KindKeys);
+			KindKeys.Sort();
+			for (const FString& KindKey : KindKeys)
+			{
+				ByKindObject->SetArrayField(KindKey, ResultValuesByKind.FindRef(KindKey));
+			}
 		}
 
 		TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
@@ -1394,11 +1985,178 @@ namespace UnrealMcp
 		StructuredContent->SetStringField(TEXT("indexRoot"), MakeProjectRelativePath(IndexRoot));
 		StructuredContent->SetNumberField(TEXT("cardCount"), Cards.Num());
 		StructuredContent->SetNumberField(TEXT("matchCount"), ScoredCards.Num());
-		StructuredContent->SetArrayField(TEXT("results"), ResultValues);
+		StructuredContent->SetNumberField(TEXT("resultCount"), ResultCount);
+		StructuredContent->SetBoolField(TEXT("groupByKind"), bGroupByKind);
+		StructuredContent->SetArrayField(TEXT("sourceKinds"), MakeJsonStringArray(SourceKindFilters));
+		StructuredContent->SetObjectField(TEXT("kindStatus"), MakeKindStatusObject(Cards));
+		if (bGroupByKind)
+		{
+			StructuredContent->SetObjectField(TEXT("byKind"), ByKindObject);
+		}
+		else
+		{
+			StructuredContent->SetArrayField(TEXT("results"), ResultValues);
+		}
 		return MakeExecutionResult(
-			FString::Printf(TEXT("Knowledge search returned %d result(s) for '%s'."), ResultValues.Num(), *Query),
+			FString::Printf(TEXT("Knowledge search returned %d result(s) for '%s'."), ResultCount, *Query),
 			StructuredContent,
 			false);
+	}
+
+	TArray<TSharedPtr<FJsonObject>> BuildEvidenceForTask(
+		const FString& TaskQuery,
+		int32 TopN,
+		int32 MaxExcerptChars)
+	{
+		TArray<TSharedPtr<FJsonObject>> Evidence;
+		const FString Query = TaskQuery.TrimStartAndEnd();
+		if (Query.IsEmpty() || TopN <= 0)
+		{
+			return Evidence;
+		}
+
+		TArray<FKnowledgeCard> Cards;
+		FString FailureReason;
+		if (!LoadKnowledgeCards(GetKnowledgeIndexRoot(), Cards, FailureReason))
+		{
+			return Evidence;
+		}
+
+		const TArray<FString> QueryTokens = ExpandSearchTokens(Query);
+		struct FScoredEvidenceCard
+		{
+			FKnowledgeCard Card;
+			double Score = 0.0;
+		};
+		TArray<FScoredEvidenceCard> ScoredCards;
+		for (const FKnowledgeCard& Card : Cards)
+		{
+			const double Score = ScoreKnowledgeCard(Card, Query, QueryTokens);
+			if (Score > 0.0)
+			{
+				FScoredEvidenceCard Scored;
+				Scored.Card = Card;
+				Scored.Score = Score;
+				ScoredCards.Add(MoveTemp(Scored));
+			}
+		}
+
+		ScoredCards.Sort([](const FScoredEvidenceCard& Left, const FScoredEvidenceCard& Right)
+		{
+			if (!FMath::IsNearlyEqual(Left.Score, Right.Score))
+			{
+				return Left.Score > Right.Score;
+			}
+			return Left.Card.Title < Right.Card.Title;
+		});
+
+		TSet<FString> AddedSourceGroups;
+		const int32 SafeTopN = FMath::Clamp(TopN, 1, 20);
+		const int32 SafeMaxExcerptChars = FMath::Clamp(MaxExcerptChars, 80, 600);
+		for (int32 Index = 0; Index < ScoredCards.Num() && Evidence.Num() < SafeTopN; ++Index)
+		{
+			const FScoredEvidenceCard& Scored = ScoredCards[Index];
+			const FString SourceGroup = FString::Printf(TEXT("%s|%s"), *Scored.Card.SourceId, *Scored.Card.SectionPath);
+			if (AddedSourceGroups.Contains(SourceGroup))
+			{
+				continue;
+			}
+			AddedSourceGroups.Add(SourceGroup);
+
+			TSharedPtr<FJsonObject> EvidenceObject = MakeShared<FJsonObject>();
+			EvidenceObject->SetStringField(TEXT("cardId"), Scored.Card.CardId);
+			EvidenceObject->SetStringField(TEXT("sourcePath"), Scored.Card.SourcePath);
+			EvidenceObject->SetStringField(TEXT("sourceKind"), Scored.Card.SourceKind);
+			EvidenceObject->SetStringField(TEXT("excerpt"), MakeExcerpt(Scored.Card.Text, Query, QueryTokens, SafeMaxExcerptChars));
+			EvidenceObject->SetNumberField(TEXT("score"), Scored.Score);
+			EvidenceObject->SetStringField(TEXT("queryUsed"), Query);
+			Evidence.Add(MoveTemp(EvidenceObject));
+		}
+		return Evidence;
+	}
+
+	bool WriteOutcomeKnowledgeCard(
+		const FString& ManifestSessionId,
+		const FString& Title,
+		const FString& Text,
+		const FString& SourcePath,
+		const TArray<FString>& Tags,
+		FString& OutFailureReason)
+	{
+		const FString CleanSessionId = ManifestSessionId.TrimStartAndEnd();
+		if (CleanSessionId.IsEmpty())
+		{
+			OutFailureReason = TEXT("Cannot write outcome card without a manifest sessionId.");
+			return false;
+		}
+
+		const FString SourceId = SanitizeKnowledgeId(FString::Printf(TEXT("outcome_%s"), *CleanSessionId));
+		const FString CardsPath = FPaths::Combine(GetKnowledgeIndexRoot(), TEXT("cards.jsonl"));
+		TArray<FKnowledgeCard> Cards;
+		if (IFileManager::Get().FileSize(*CardsPath) >= 0)
+		{
+			TArray<FString> Lines;
+			if (!FFileHelper::LoadFileToStringArray(Lines, *CardsPath))
+			{
+				OutFailureReason = FString::Printf(TEXT("Failed to read knowledge cards '%s'."), *CardsPath);
+				return false;
+			}
+			for (const FString& Line : Lines)
+			{
+				if (Line.TrimStartAndEnd().IsEmpty())
+				{
+					continue;
+				}
+				TSharedPtr<FJsonObject> Object;
+				FKnowledgeCard ExistingCard;
+				if (LoadJsonObjectFromString(Line, Object) && JsonObjectToCard(Object, ExistingCard))
+				{
+					if (ExistingCard.SourceId.Equals(SourceId, ESearchCase::CaseSensitive))
+					{
+						return true;
+					}
+					Cards.Add(MoveTemp(ExistingCard));
+				}
+			}
+		}
+
+		FKnowledgeCard Card;
+		Card.CardId = SourceId;
+		Card.SourceId = SourceId;
+		Card.Title = Title.TrimStartAndEnd().IsEmpty()
+			? FString::Printf(TEXT("Outcome: %s"), *CleanSessionId)
+			: Title.TrimStartAndEnd();
+		Card.SectionTitle = Card.Title;
+		Card.SectionPath = Card.Title;
+		Card.Category = TEXT("outcome");
+		for (const FString& Tag : Tags)
+		{
+			const FString CleanTag = Tag.TrimStartAndEnd();
+			if (!CleanTag.IsEmpty())
+			{
+				Card.Tags.AddUnique(CleanTag);
+			}
+		}
+		Card.SourceKind = TEXT("activity-log");
+		Card.SourcePath = SourcePath.TrimStartAndEnd().IsEmpty() ? TEXT("Saved/UnrealMcp/LastExtensionApply.json") : SourcePath.TrimStartAndEnd();
+		Card.Text = Text.Left(1800).TrimStartAndEnd();
+		if (Card.Text.IsEmpty())
+		{
+			Card.Text = TEXT("Outcome verified.");
+		}
+		Card.ChunkIndex = 0;
+		Card.TextLength = Card.Text.Len();
+		Card.SourceWeight = 0.6;
+		Card.Confidence = 0.7;
+		Card.UpdatedAt = FDateTime::UtcNow().ToIso8601();
+		Cards.Add(MoveTemp(Card));
+
+		if (!WriteKnowledgeCardsJsonl(CardsPath, Cards, OutFailureReason))
+		{
+			return false;
+		}
+		InvalidateKnowledgeCardCache();
+		return true;
 	}
 
 	FUnrealMcpExecutionResult ToolRecommend(const FJsonObject& Arguments, const TArray<TSharedPtr<FJsonValue>>& ToolsArray)
@@ -1918,6 +2676,11 @@ namespace UnrealMcp
 				SearchArgs->SetStringField(TEXT("query"), Query);
 				SearchArgs->SetNumberField(TEXT("limit"), static_cast<double>(Limit));
 				SearchArgs->SetBoolField(TEXT("includeText"), false);
+				TArray<FString> SearchSourceKinds;
+				if (TryGetStringArrayOrSingle(CaseObject, TEXT("sourceKinds"), SearchSourceKinds))
+				{
+					SearchArgs->SetArrayField(TEXT("sourceKinds"), MakeJsonStringArray(SearchSourceKinds));
+				}
 				Result = KnowledgeSearch(*SearchArgs);
 
 				const TArray<TSharedPtr<FJsonValue>>* Results = nullptr;
@@ -1938,6 +2701,43 @@ namespace UnrealMcp
 					&& !JsonArrayHasAnyStringField(Results, TEXT("sourceKind"), ExpectedSourceKinds))
 				{
 					Failures.Add(TEXT("Expected at least one matching sourceKind."));
+				}
+
+				// Search eval extension keys:
+				// - sourceKinds: forwards the same filter accepted by knowledge_search.
+				// - expectKindStatusContains: requires at least one kindStatus value to match each listed status.
+				TArray<FString> ExpectedKindStatuses;
+				if (TryGetStringArrayOrSingle(CaseObject, TEXT("expectKindStatusContains"), ExpectedKindStatuses))
+				{
+					const TSharedPtr<FJsonObject>* KindStatus = nullptr;
+					if (!Result.StructuredContent.IsValid()
+						|| !Result.StructuredContent->TryGetObjectField(TEXT("kindStatus"), KindStatus)
+						|| !KindStatus
+						|| !(*KindStatus).IsValid())
+					{
+						Failures.Add(TEXT("Expected knowledge_search kindStatus object."));
+					}
+					else
+					{
+						for (const FString& ExpectedStatus : ExpectedKindStatuses)
+						{
+							bool bFoundStatus = false;
+							for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : (*KindStatus)->Values)
+							{
+								if (Pair.Value.IsValid()
+									&& Pair.Value->Type == EJson::String
+									&& Pair.Value->AsString().Equals(ExpectedStatus, ESearchCase::IgnoreCase))
+								{
+									bFoundStatus = true;
+									break;
+								}
+							}
+							if (!bFoundStatus)
+							{
+								Failures.Add(FString::Printf(TEXT("Expected kindStatus to contain status '%s'."), *ExpectedStatus));
+							}
+						}
+					}
 				}
 			}
 			else if (Type.Equals(TEXT("tool_recommend"), ESearchCase::IgnoreCase))

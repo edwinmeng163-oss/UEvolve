@@ -1,0 +1,42 @@
+{
+  "name": "closed_loop_preview_change_plan_evidence_injection",
+  "description": "preview_change_plan should attach RAG evidence[] when the local knowledge index has task-relevant cards.",
+  "category": "contract_deferred",
+  "expectToolListed": true,
+  "executeTool": false,
+  "expectToolCallError": false,
+  "expectToolCallStructuredFields": {
+    "action": "preview_change_plan",
+    "task": "Add a descriptor-first MCP tool for Widget Blueprint inspection with build and test safeguards."
+  },
+  "expectedContract": {
+    "evidenceField": "optional",
+    "whenEvidencePresent": {
+      "type": "array",
+      "minItems": 1,
+      "itemRequiredFields": [
+        "cardId",
+        "sourcePath",
+        "sourceKind",
+        "excerpt",
+        "score",
+        "queryUsed"
+      ],
+      "itemAdditionalProperties": false,
+      "excerptMaxLength": 600,
+      "queryUsedEqualsRequestTask": true
+    },
+    "whenEvidenceAbsent": "Search did not run or the local index was missing or empty."
+  },
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 601,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.preview_change_plan",
+      "arguments": {
+        "task": "Add a descriptor-first MCP tool for Widget Blueprint inspection with build and test safeguards."
+      }
+    }
+  }
+}

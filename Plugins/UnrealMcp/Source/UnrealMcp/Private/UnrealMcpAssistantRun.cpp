@@ -6,6 +6,7 @@
 #include "Interfaces/IHttpResponse.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
+#include "UnrealMcpActivityLog.h"
 #include "UnrealMcpMemoryTools.h"
 #include "UnrealMcpSettings.h"
 
@@ -418,6 +419,39 @@ private:
 		}
 	}
 
+	void EmitChatTurnActivityEvent(const FString& Message, const FString& ResponseId, bool bIsError) const
+	{
+		TArray<FString> SummaryParts;
+		if (!UserPrompt.TrimStartAndEnd().IsEmpty())
+		{
+			SummaryParts.Add(FString::Printf(TEXT("User: %s"), *CollapseForActiveTaskMemory(UserPrompt, 700)));
+		}
+		if (!Message.TrimStartAndEnd().IsEmpty())
+		{
+			SummaryParts.Add(FString::Printf(TEXT("Assistant: %s"), *CollapseForActiveTaskMemory(Message, 1300)));
+		}
+
+		FString Summary = FString::Join(SummaryParts, TEXT(" "));
+		if (Summary.TrimStartAndEnd().IsEmpty())
+		{
+			Summary = bIsError ? TEXT("Assistant turn failed without final text.") : TEXT("Assistant turn completed without final text.");
+		}
+
+		TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
+		Payload->SetStringField(TEXT("responseId"), ResponseId);
+		Payload->SetNumberField(TEXT("toolCallCount"), ToolCallCount);
+		Payload->SetNumberField(TEXT("promptCharCount"), UserPrompt.Len());
+		Payload->SetNumberField(TEXT("responseCharCount"), Message.Len());
+		Payload->SetBoolField(TEXT("wasError"), bIsError);
+
+		UnrealMcp::FActivityLogEvent Event;
+		Event.EventKind = TEXT("chat_turn");
+		Event.Summary = Summary.Left(2000);
+		Event.Payload = Payload;
+		Event.LegacyEventType = FString();
+		UnrealMcp::WriteActivityEvent(Event);
+	}
+
 	void Finish(const FString& Message, const FString& ResponseId, bool bIsError, bool bWasCancelled = false)
 	{
 		{
@@ -432,6 +466,7 @@ private:
 		}
 
 		MaybeRememberTerminalActiveTask(bIsError, bWasCancelled);
+		EmitChatTurnActivityEvent(Message, ResponseId, bIsError);
 
 		if (OnComplete)
 		{
@@ -1301,6 +1336,7 @@ private:
 			}
 
 			AddRecentToolSummary(ToolCall, ToolResult);
+			++ToolCallCount;
 			if (ToolResult.bIsError)
 			{
 				bHadToolError = true;
@@ -1453,6 +1489,7 @@ private:
 	FString AccumulatedAssistantText;
 	TArray<FString> RecentToolSummaries;
 	int32 ToolRoundCount = 0;
+	int32 ToolCallCount = 0;
 	int32 AutoContinuationCount = 0;
 	int32 SteerContinuationCount = 0;
 	static constexpr int32 MaxAutoContinuationCount = 2;

@@ -1,41 +1,46 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://example.local/unreal-mcp/schemas/UnrealMcpExtensionManifest.schema.json",
-  "title": "Unreal MCP Extension Apply Manifest",
-  "description": "Manifest written by unreal.mcp_apply_scaffold after a real source integration.",
+  "$id": "https://example.local/unreal-mcp/schemas/UEvolve.UnrealMcpExtensionManifest.v2.schema.json",
+  "title": "UEvolve Unreal MCP Extension Apply Manifest v2",
+  "description": "Manifest written by unreal.mcp_apply_scaffold after descriptor-first source integration. v2 is the current writer shape; legacy v1 manifests remain readable.",
   "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "action",
-    "schemaVersion",
-    "manifestSchema",
-    "toolName",
-    "toolId",
-    "scaffoldDir",
-    "sourcePath",
-    "backupDirectory",
-    "backupSourcePath",
-    "afterSourcePath",
-    "sourceHashBefore",
-    "sourceHashAfter",
-    "appliedAtUtc",
-    "changes"
+  "additionalProperties": true,
+  "anyOf": [
+    {
+      "$ref": "#/$defs/v2Manifest"
+    },
+    {
+      "$ref": "#/$defs/legacyV1Manifest"
+    }
   ],
   "properties": {
     "action": {
       "const": "mcp_apply_scaffold"
     },
+    "applyMode": {
+      "type": "string",
+      "description": "Apply pipeline used by the scaffold integration.",
+      "enum": [
+        "descriptor_first"
+      ]
+    },
     "schemaVersion": {
       "type": "integer",
-      "const": 1
+      "enum": [
+        1,
+        2
+      ]
     },
     "manifestSchema": {
       "type": "string",
-      "const": "UnrealMcpExtensionManifest.v1"
+      "enum": [
+        "UnrealMcpExtensionManifest.v1",
+        "UnrealMcpExtensionManifest.v2"
+      ]
     },
     "sessionId": {
       "type": "string",
-      "description": "Extension lock session id active during apply. Empty when skipLock was used."
+      "description": "Extension session id active during apply. Empty when skipLock was used."
     },
     "toolName": {
       "type": "string",
@@ -48,22 +53,7 @@
     "scaffoldDir": {
       "type": "string"
     },
-    "sourcePath": {
-      "type": "string"
-    },
     "backupDirectory": {
-      "type": "string"
-    },
-    "backupSourcePath": {
-      "type": "string"
-    },
-    "afterSourcePath": {
-      "type": "string"
-    },
-    "sourceHashBefore": {
-      "type": "string"
-    },
-    "sourceHashAfter": {
       "type": "string"
     },
     "appliedAtUtc": {
@@ -79,17 +69,192 @@
       "minimum": 0
     },
     "conflictPolicy": {
+      "$ref": "#/$defs/conflictPolicy"
+    },
+    "changes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/change"
+      }
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/file"
+      }
+    },
+    "postcheck": {
+      "$ref": "#/$defs/postcheck"
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "cardId",
+          "sourcePath",
+          "sourceKind",
+          "excerpt",
+          "score",
+          "queryUsed"
+        ],
+        "properties": {
+          "cardId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sourcePath": {
+            "type": "string"
+          },
+          "sourceKind": {
+            "type": "string"
+          },
+          "excerpt": {
+            "type": "string",
+            "maxLength": 600
+          },
+          "score": {
+            "type": "number"
+          },
+          "queryUsed": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "sourcePath": {
+      "type": "string",
+      "description": "Legacy v1 single-source manifest field."
+    },
+    "backupSourcePath": {
+      "type": "string",
+      "description": "Legacy v1 backup source snapshot path."
+    },
+    "afterSourcePath": {
+      "type": "string",
+      "description": "Legacy v1 after-apply source snapshot path."
+    },
+    "sourceHashBefore": {
+      "type": "string",
+      "description": "Legacy v1 single-source hash before apply."
+    },
+    "sourceHashAfter": {
+      "type": "string",
+      "description": "Legacy v1 single-source hash after apply."
+    },
+    "rolledBack": {
+      "type": "boolean"
+    },
+    "rolledBackAtUtc": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "$defs": {
+    "v2Manifest": {
       "type": "object",
-      "additionalProperties": false,
+      "additionalProperties": true,
       "required": [
-        "exactSnippetIsIdempotent",
-        "conflictNeedleBlocksApply",
-        "missingAnchorBlocksApply",
-        "unsafeSnippetBlocksApplyByDefault",
-        "conflictDetector"
+        "action",
+        "applyMode",
+        "schemaVersion",
+        "manifestSchema",
+        "sessionId",
+        "toolName",
+        "toolId",
+        "scaffoldDir",
+        "backupDirectory",
+        "appliedAtUtc",
+        "changes",
+        "files",
+        "postcheck"
       ],
       "properties": {
-        "exactSnippetIsIdempotent": {
+        "action": {
+          "const": "mcp_apply_scaffold"
+        },
+        "applyMode": {
+          "const": "descriptor_first"
+        },
+        "schemaVersion": {
+          "const": 2
+        },
+        "manifestSchema": {
+          "const": "UnrealMcpExtensionManifest.v2"
+        },
+        "sessionId": {
+          "type": "string"
+        },
+        "toolName": {
+          "type": "string"
+        },
+        "toolId": {
+          "type": "string"
+        },
+        "scaffoldDir": {
+          "type": "string"
+        },
+        "backupDirectory": {
+          "type": "string"
+        },
+        "appliedAtUtc": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "changes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/change"
+          }
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/file"
+          }
+        },
+        "postcheck": {
+          "$ref": "#/$defs/postcheck"
+        }
+      }
+    },
+    "legacyV1Manifest": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "action",
+        "schemaVersion",
+        "manifestSchema",
+        "toolName",
+        "toolId",
+        "scaffoldDir",
+        "sourcePath",
+        "backupDirectory",
+        "backupSourcePath",
+        "afterSourcePath",
+        "sourceHashBefore",
+        "sourceHashAfter",
+        "appliedAtUtc",
+        "changes"
+      ],
+      "properties": {
+        "action": {
+          "const": "mcp_apply_scaffold"
+        },
+        "schemaVersion": {
+          "const": 1
+        },
+        "manifestSchema": {
+          "const": "UnrealMcpExtensionManifest.v1"
+        }
+      }
+    },
+    "conflictPolicy": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "exactPatchIsIdempotent": {
           "type": "boolean"
         },
         "conflictNeedleBlocksApply": {
@@ -98,7 +263,7 @@
         "missingAnchorBlocksApply": {
           "type": "boolean"
         },
-        "unsafeSnippetBlocksApplyByDefault": {
+        "unsafePatchBlocksApplyByDefault": {
           "type": "boolean"
         },
         "conflictDetector": {
@@ -106,56 +271,105 @@
         }
       }
     },
-    "rolledBack": {
-      "type": "boolean"
+    "change": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "section",
+        "status",
+        "message",
+        "offset",
+        "preview"
+      ],
+      "properties": {
+        "section": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "will_insert",
+            "inserted",
+            "skipped_already_integrated",
+            "skipped_optional_missing",
+            "conflict",
+            "missing_anchor",
+            "unknown"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": -1
+        },
+        "preview": {
+          "type": "string"
+        }
+      }
     },
-    "rolledBackAtUtc": {
-      "type": "string",
-      "format": "date-time"
+    "file": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "sourcePath": {
+          "type": "string"
+        },
+        "relativePath": {
+          "type": "string"
+        },
+        "backupPath": {
+          "type": "string"
+        },
+        "afterPath": {
+          "type": "string"
+        },
+        "hashBefore": {
+          "type": "string"
+        },
+        "hashAfter": {
+          "type": "string"
+        },
+        "changed": {
+          "type": "boolean"
+        },
+        "diff": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
     },
-    "changes": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "section",
-          "status",
-          "message",
-          "offset",
-          "preview"
-        ],
-        "properties": {
-          "section": {
-            "type": "string",
-            "enum": [
-              "AppendToolDefinitions",
-              "ExecuteTool",
-              "ExecuteChatCommand"
-            ]
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "will_insert",
-              "inserted",
-              "skipped_already_integrated",
-              "skipped_optional_missing",
-              "conflict",
-              "missing_anchor",
-              "unknown"
-            ]
-          },
-          "message": {
-            "type": "string"
-          },
-          "offset": {
-            "type": "integer",
-            "minimum": -1
-          },
-          "preview": {
-            "type": "string"
-          }
+    "postcheck": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "mode": {
+          "type": "string"
+        },
+        "descriptorSourceIntegrated": {
+          "type": "boolean"
+        },
+        "handlerSourceIntegrated": {
+          "type": "boolean"
+        },
+        "registryPatchIntegrated": {
+          "type": "boolean"
+        },
+        "descriptorRegisteredInCurrentSession": {
+          "type": "boolean"
+        },
+        "handlerMapEntryInCurrentSession": {
+          "type": "boolean"
+        },
+        "toolListedInCurrentSession": {
+          "type": "boolean"
+        },
+        "requiresBuildRestartForRuntimeVisibility": {
+          "type": "boolean"
+        },
+        "verificationTarget": {
+          "type": "string"
         }
       }
     }

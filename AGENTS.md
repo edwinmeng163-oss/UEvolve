@@ -274,11 +274,19 @@ Self-extension:
 RAG and recommendation:
 
 - `unreal.knowledge_index_refresh`
-- `unreal.knowledge_search`
+- `unreal.knowledge_search`, with optional `sourceKinds[]` filtering over the
+  eight `sourceKind` enum values from `UnrealMcpKnowledgeCard.schema.json`,
+  optional `groupByKind`, and always-returned `kindStatus` map availability
+  (`active`, `active-empty`, `reserved-not-active`)
 - `unreal.tool_recommend`
 - `unreal.tool_gap_analyze`
 - `unreal.workflow_recommend`
 - `unreal.knowledge_eval_run`
+- `unreal.preview_change_plan` and `unreal.verify_task_outcome` auto-attach RAG
+  `evidence[]` from the incoming `task`, including `cardId`, `sourcePath`,
+  `sourceKind`, `excerpt`, `score`, and `queryUsed`
+- Successful `unreal.verify_task_outcome` writes a `sourceKind=activity-log`
+  outcome card to `Saved/UnrealMcp/KnowledgeIndex/cards.jsonl` for future search
 
 Project memory:
 
@@ -289,6 +297,8 @@ Skills:
 - list/read/apply project skills
 - start/stop activity recording
 - inspect activity status
+- `unreal.chat_label_active_task` sets or clears the launch-session task label
+  that subsequent ActivityLog events automatically carry
 - distill activity into skill drafts
 - save/promote skill drafts
 
@@ -315,7 +325,7 @@ Tools/UnrealMcpToolRegistry/schema.json
 Schemas/UnrealMcpToolRegistry.schema.json
 ```
 
-At the time this file was written, the registry contained 114 entries across:
+At the time this file was written, the registry contained 115 entries across:
 
 - actors
 - blueprint
@@ -386,6 +396,15 @@ UnrealMcpToolExecutionGuard.cpp/.h
 
 UnrealMcp*OutcomeVerifier.cpp
   real state verification for actors, Blueprint, Widget, workflow
+
+UnrealMcpSession.h
+  launch-scoped session ID accessor
+
+UnrealMcpActivityLog.h
+  always-on ActivityLog event writer
+
+UnrealMcpKnowledgeBridge.h
+  shared bridge for knowledge-index card writes
 
 UnrealMcpEditorTools.cpp
 UnrealMcpActorTools.cpp
@@ -466,6 +485,7 @@ Versioned inputs:
 ```text
 README.md
 Docs/**
+Docs/KnowledgeRagSources.md
 Plugins/UnrealMcp/README.md
 Tools/UnrealMcpToolRegistry/tools.json
 Tools/UnrealMcpTests/**
@@ -494,6 +514,9 @@ Local downloader:
 ```bash
 python3 Tools/unreal_mcp_fetch_docs.py --max-pages 20
 ```
+
+`Tools/UnrealMcpKnowledge/build_index.py` is the CI/offline parity indexer for
+the same card schema used by in-Editor `unreal.knowledge_index_refresh`.
 
 Run RAG evals from Chat:
 
@@ -538,6 +561,20 @@ skill.<name>.last_apply
 When long work nears a tool-loop limit, the plugin writes `chat.active_task`.
 Future AI should read it, continue with one bounded next step, and verify rather
 than re-reading all history.
+
+ActivityLog launch records live under:
+
+```text
+Saved/UnrealMcp/ActivityLog/<sessionId>.jsonl
+```
+
+`UnrealMcp::GetLaunchSessionId()` mints one per-launch session ID at editor
+startup, shaped `{YYYYMMDD-HHMMSS}-{guid8}`. The always-on writer rotates to
+`<sessionId>.<n>.jsonl` at 10 MB or 5000 entries. It emits `tool_call` for every
+MCP dispatch, `chat_turn` per assistant turn, `manifest_apply` /
+`manifest_dryrun` for self-extension events, plus existing skill events, all
+independent of skill recording. See `Docs/KnowledgeRagSources.md` for the full
+taxonomy.
 
 Treat `Saved/UnrealMcp` as evidence for local continuity only, not as source of
 truth for versioned product behavior.
