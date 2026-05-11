@@ -38,6 +38,20 @@ FORBIDDEN_PATTERNS: list[dict[str, Any]] = [
         "added_in": "5.7",
         "severity": "warning",
     },
+    {
+        "pattern": r'^\s*#include\s+"HAL/Memory\.h"\s*$',
+        "reason": "HAL/Memory.h is 5.7+. Include UnrealMcpEngineCompat.h instead so business code does not carry engine-version shims.",
+        "added_in": "5.7",
+        "severity": "warning",
+        "suppress_when_guarded": True,
+    },
+    {
+        "pattern": r'^\s*#include\s+"Containers/SortedSet\.h"\s*$',
+        "reason": "Containers/SortedSet.h is 5.7+. Include UnrealMcpEngineCompat.h instead so business code does not carry engine-version shims.",
+        "added_in": "5.7",
+        "severity": "warning",
+        "suppress_when_guarded": True,
+    },
 ]
 
 
