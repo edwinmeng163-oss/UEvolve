@@ -52,6 +52,27 @@ FORBIDDEN_PATTERNS: list[dict[str, Any]] = [
         "severity": "warning",
         "suppress_when_guarded": True,
     },
+    {
+        "pattern": r'^\s*#include\s+"Misc/UEOps\.h"\s*$',
+        "reason": "Misc/UEOps.h is 5.7+. Include UnrealMcpEngineCompat.h instead so business code does not carry engine-version shims.",
+        "added_in": "5.7",
+        "severity": "warning",
+        "suppress_when_guarded": True,
+    },
+    {
+        "pattern": r'^\s*#include\s+"Misc/AlignedElement\.h"\s*$',
+        "reason": "Misc/AlignedElement.h is 5.7+. Include UnrealMcpEngineCompat.h instead so business code does not carry engine-version shims.",
+        "added_in": "5.7",
+        "severity": "warning",
+        "suppress_when_guarded": True,
+    },
+    {
+        "pattern": r'^\s*#include\s+"Misc/LinearFunction\.h"\s*$',
+        "reason": "Misc/LinearFunction.h is 5.7+. Include UnrealMcpEngineCompat.h instead so business code does not carry engine-version shims.",
+        "added_in": "5.7",
+        "severity": "warning",
+        "suppress_when_guarded": True,
+    },
 ]
 
 
