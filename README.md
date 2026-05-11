@@ -46,6 +46,7 @@ The repository currently contains:
 - Registry-derived ToolHandlerRegistry metadata so audit, dispatch, and validation share the same handler/category view without source scanning.
 - Tool-specific preflight/postcheck verifiers for Blueprint graph, Widget Blueprint, level actor, project memory, skill, scaffold, and self-extension workflow tools.
 - `Tools/UnrealMcpCodexBridge`, a Bun bridge daemon that spawns Codex App Server and exposes a simple text-streaming WebSocket API for the future UE plugin integration.
+- Multi-engine compatibility discipline: a single `Plugins/UnrealMcp/Source/UnrealMcp/Private/UnrealMcpEngineCompat.h` is the only place in the plugin allowed to contain `#if ENGINE_*_VERSION`; business code uses the bare UE symbols. `Tools/check_ue56_compat.py` enforces this rule, and `Tools/git-hooks/pre-commit` runs the linter plus tool registry validator on every commit (install once via `Tools/install_git_hooks.sh` or `Tools/install_git_hooks.ps1`).
 
 ## Planning Docs
 
@@ -580,9 +581,16 @@ git clone https://github.com/edwinmeng163-oss/UEvolve.git
 cd UEvolve
 git lfs install
 git lfs pull
+# Install the repo-tracked pre-commit hook (one-time; sets core.hooksPath locally).
+# macOS / Linux:
+bash Tools/install_git_hooks.sh
+# Windows PowerShell:
+# powershell -ExecutionPolicy Bypass -File Tools\install_git_hooks.ps1
 ```
 
 If binary assets look very small or fail to load in Unreal, run `git lfs pull` again.
+
+The pre-commit hook runs `python3 Tools/validate_tool_registry.py` and `python3 Tools/check_ue56_compat.py` before each commit; the latter enforces the rule that engine-version shims belong in `UnrealMcpEngineCompat.h` rather than scattered through business code.
 
 ### 3. Install Into An Existing Project
 
