@@ -11,6 +11,8 @@ This repository is an Unreal Engine 5.7 editor-tooling workbench focused on edit
 
 Its main deliverable is the **Unreal MCP** editor plugin under `Plugins/UnrealMcp`. The plugin exposes Unreal Editor operations through a localhost MCP endpoint and an in-editor chat panel. The repository root includes `UEvolve.uproject` as the default local development host, while `Examples/UEvolveExample` remains an optional validation/demo project.
 
+> 📘 **New here?** Start with [`Docs/Release-2026-05.md`](Docs/Release-2026-05.md) — trilingual (中文 · English · 日本語) release notes plus a step-by-step setup guide for macOS, Linux, and Windows, including the multi-provider AI configuration (OpenAI / Kimi / GLM / DeepSeek / Anthropic Claude / Codex) and the Codex Desktop bridge.
+
 ## 中文概览
 
 本项目当前定位为 **面向 Unreal Editor 的 MCP 自扩展工作台**。
