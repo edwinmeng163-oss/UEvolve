@@ -9,9 +9,15 @@
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
+#include "UnrealMcpModule.h"
 #include "UObject/UnrealType.h"
 
 #define LOCTEXT_NAMESPACE "UnrealMcpSettings"
+
+namespace
+{
+static constexpr int32 ProviderBackupSchemaVersion = 1;
+}
 
 const TCHAR* const UUnrealMcpSettings::BackupFileRelativePath = TEXT("UnrealMcp/providers.backup.json");
 UUnrealMcpSettings::UUnrealMcpSettings()
@@ -43,7 +49,7 @@ void UUnrealMcpSettings::WriteProvidersBackup() const
 		return;
 	}
 	TSharedRef<FJsonObject> RootObject = MakeShared<FJsonObject>();
-	RootObject->SetNumberField(TEXT("version"), 1);
+	RootObject->SetNumberField(TEXT("schemaVersion"), ProviderBackupSchemaVersion);
 	RootObject->SetStringField(TEXT("savedAt"), FDateTime::UtcNow().ToIso8601());
 	RootObject->SetStringField(TEXT("activeProviderId"), ActiveProviderId);
 	TArray<TSharedPtr<FJsonValue>> ProviderValues;
@@ -100,10 +106,22 @@ bool UUnrealMcpSettings::LoadProvidersBackup()
 		UE_LOG(LogTemp, Warning, TEXT("[UnrealMcp] Failed to parse AI provider backup '%s'."), *BackupPath);
 		return false;
 	}
-	double Version = 0.0;
-	if (!RootObject->TryGetNumberField(TEXT("version"), Version) || Version != 1.0)
+	double SchemaVersion = 0.0;
+	if (!RootObject->TryGetNumberField(TEXT("schemaVersion"), SchemaVersion) ||
+		SchemaVersion != static_cast<double>(ProviderBackupSchemaVersion))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[UnrealMcp] Ignoring unsupported AI provider backup version in '%s'."), *BackupPath);
+		FString FileSchemaVersion = TEXT("missing");
+		const TSharedPtr<FJsonValue> SchemaVersionValue = RootObject->TryGetField(TEXT("schemaVersion"));
+		if (SchemaVersionValue.IsValid())
+		{
+			FileSchemaVersion = SchemaVersionValue->Type == EJson::Number
+				? FString::SanitizeFloat(SchemaVersionValue->AsNumber())
+				: TEXT("non-numeric");
+		}
+		UE_LOG(LogUnrealMcp, Warning, TEXT("[UnrealMcp] Ignoring AI provider backup '%s' due to schemaVersion mismatch: file=%s expected=%d."),
+			*BackupPath,
+			*FileSchemaVersion,
+			ProviderBackupSchemaVersion);
 		return false;
 	}
 	const TArray<TSharedPtr<FJsonValue>>* ProviderValues = nullptr;
