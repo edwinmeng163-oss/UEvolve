@@ -170,6 +170,12 @@ namespace UnrealMcp
 			return true;
 		}
 
+		if (ToolName == TEXT("unreal.tools.list_exportable"))
+		{
+			OutResult = ListExportableToolPackages(Arguments);
+			return true;
+		}
+
 		if (ToolName == TEXT("unreal.mcp_workbench_status"))
 		{
 			OutResult = WorkbenchStatus(Arguments, ToolsArray);

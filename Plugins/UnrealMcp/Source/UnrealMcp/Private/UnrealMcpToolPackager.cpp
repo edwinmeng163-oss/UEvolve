@@ -29,6 +29,31 @@ namespace UnrealMcp
 			FString Kind;
 		};
 
+		struct FExportableScaffoldInfo
+		{
+			FString ToolName;
+			FString ScaffoldDir;
+			FString SourceKind;
+			bool bExists = false;
+			bool bHasMetadata = false;
+			bool bHasDescriptor = false;
+			bool bHasTests = false;
+			bool bHasRegistryPatch = false;
+			TSharedPtr<FJsonObject> RegistryPatchObject;
+		};
+
+		const FString& ToolPackageKindFull()
+		{
+			static const FString Value = TEXT("full");
+			return Value;
+		}
+
+		const FString& ToolPackageKindRegistryOnly()
+		{
+			static const FString Value = TEXT("registry-only");
+			return Value;
+		}
+
 		FString BytesToUtf8String(const TArray<uint8>& Data)
 		{
 			if (Data.Num() == 0)
@@ -447,6 +472,171 @@ namespace UnrealMcp
 			return true;
 		}
 
+		bool HasDescriptorFirstPatchFragment(const FString& ScaffoldDir)
+		{
+			return FPaths::FileExists(FPaths::Combine(ScaffoldDir, TEXT("ToolRegistryPatch.json")))
+				|| FPaths::FileExists(FPaths::Combine(ScaffoldDir, TEXT("ToolRegistrar.patch.cpp")))
+				|| FPaths::FileExists(FPaths::Combine(ScaffoldDir, TEXT("CategoryHandlerFunction.patch.cpp")));
+		}
+
+		bool HasScaffoldTests(const FString& ScaffoldDir)
+		{
+			if (FPaths::FileExists(FPaths::Combine(ScaffoldDir, TEXT("TestRequest.json"))))
+			{
+				return true;
+			}
+			TArray<FString> TestFiles;
+			IFileManager::Get().FindFilesRecursive(TestFiles, *ScaffoldDir, TEXT("*Test*.json"), true, false);
+			return TestFiles.Num() > 0;
+		}
+
+		TSharedPtr<FJsonObject> LoadRegistryPatchObject(const FString& ScaffoldDir)
+		{
+			TSharedPtr<FJsonObject> RegistryPatchObject;
+			FString FailureReason;
+			if (LoadJsonObjectFromFile(FPaths::Combine(ScaffoldDir, TEXT("ToolRegistryPatch.json")), RegistryPatchObject, FailureReason)
+				&& RegistryPatchObject.IsValid())
+			{
+				return RegistryPatchObject;
+			}
+			return nullptr;
+		}
+
+		FString ReadScaffoldMetadataToolName(const FString& ScaffoldDir)
+		{
+			TSharedPtr<FJsonObject> MetadataObject;
+			FString FailureReason;
+			if (!LoadJsonObjectFromFile(FPaths::Combine(ScaffoldDir, TEXT("ScaffoldMetadata.json")), MetadataObject, FailureReason)
+				|| !MetadataObject.IsValid())
+			{
+				return FString();
+			}
+			FString ToolName;
+			MetadataObject->TryGetStringField(TEXT("toolName"), ToolName);
+			return ToolName.TrimStartAndEnd();
+		}
+
+		FExportableScaffoldInfo MakeScaffoldInfo(const FString& ScaffoldDir, const FString& SourceKind)
+		{
+			FExportableScaffoldInfo Info;
+			Info.ScaffoldDir = FPaths::ConvertRelativePathToFull(ScaffoldDir);
+			FPaths::NormalizeFilename(Info.ScaffoldDir);
+			Info.SourceKind = SourceKind;
+			Info.bExists = FPaths::DirectoryExists(Info.ScaffoldDir);
+			Info.bHasMetadata = FPaths::FileExists(FPaths::Combine(Info.ScaffoldDir, TEXT("ScaffoldMetadata.json")));
+			Info.bHasDescriptor = HasDescriptorFirstPatchFragment(Info.ScaffoldDir);
+			Info.bHasTests = HasScaffoldTests(Info.ScaffoldDir);
+			Info.RegistryPatchObject = LoadRegistryPatchObject(Info.ScaffoldDir);
+			Info.bHasRegistryPatch = Info.RegistryPatchObject.IsValid();
+			Info.ToolName = ReadScaffoldMetadataToolName(Info.ScaffoldDir);
+			if (Info.ToolName.IsEmpty() && Info.RegistryPatchObject.IsValid())
+			{
+				Info.RegistryPatchObject->TryGetStringField(TEXT("name"), Info.ToolName);
+				Info.ToolName = Info.ToolName.TrimStartAndEnd();
+			}
+			if (Info.ToolName.IsEmpty())
+			{
+				Info.ToolName = FString::Printf(TEXT("unreal.%s"), *SanitizeMcpToolIdForPath(FPaths::GetCleanFilename(Info.ScaffoldDir)));
+			}
+			return Info;
+		}
+
+		TSharedPtr<FJsonObject> MakeScaffoldInfoObject(const FExportableScaffoldInfo& Info)
+		{
+			TSharedPtr<FJsonObject> Object = MakeShared<FJsonObject>();
+			Object->SetStringField(TEXT("toolName"), Info.ToolName);
+			Object->SetStringField(TEXT("scaffoldDir"), Info.ScaffoldDir);
+			Object->SetStringField(TEXT("sourceKind"), Info.SourceKind);
+			Object->SetBoolField(TEXT("exists"), Info.bExists);
+			Object->SetBoolField(TEXT("hasMetadata"), Info.bHasMetadata);
+			Object->SetBoolField(TEXT("hasDescriptor"), Info.bHasDescriptor);
+			Object->SetBoolField(TEXT("hasTests"), Info.bHasTests);
+			Object->SetBoolField(TEXT("hasRegistryPatch"), Info.bHasRegistryPatch);
+			return Object;
+		}
+
+		void AddSpecificScaffoldCandidates(const FString& BareName, TArray<FExportableScaffoldInfo>& OutCandidates)
+		{
+			TArray<FString> ProjectRootCandidates;
+			FString ProjectScaffoldRoot;
+			ResolveSharedRepoRoot(TEXT("UnrealMcpToolScaffolds"), {}, ProjectScaffoldRoot, ProjectRootCandidates);
+			if (!ProjectScaffoldRoot.IsEmpty())
+			{
+				OutCandidates.Add(MakeScaffoldInfo(FPaths::Combine(ProjectScaffoldRoot, BareName), TEXT("project")));
+			}
+
+			const FString SavedScaffoldRoot = FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UnrealMcp/TestScaffolds")));
+			OutCandidates.Add(MakeScaffoldInfo(FPaths::Combine(SavedScaffoldRoot, BareName), TEXT("savedTest")));
+		}
+
+		void AddScaffoldInfosFromRoot(const FString& Root, const FString& SourceKind, TArray<FExportableScaffoldInfo>& OutInfos)
+		{
+			if (!FPaths::DirectoryExists(Root))
+			{
+				return;
+			}
+
+			TArray<FString> MetadataFiles;
+			IFileManager::Get().FindFilesRecursive(MetadataFiles, *Root, TEXT("ScaffoldMetadata.json"), true, false);
+			MetadataFiles.Sort();
+			TSet<FString> SeenDirs;
+			for (const FString& MetadataFile : MetadataFiles)
+			{
+				const FString ScaffoldDir = FPaths::GetPath(MetadataFile);
+				if (SeenDirs.Contains(ScaffoldDir))
+				{
+					continue;
+				}
+				SeenDirs.Add(ScaffoldDir);
+				OutInfos.Add(MakeScaffoldInfo(ScaffoldDir, SourceKind));
+			}
+		}
+
+		void FindExportableScaffoldInfos(TArray<FExportableScaffoldInfo>& OutInfos)
+		{
+			OutInfos.Reset();
+
+			TArray<FString> ProjectRootCandidates;
+			FString ProjectScaffoldRoot;
+			ResolveSharedRepoRoot(TEXT("UnrealMcpToolScaffolds"), { TEXT("ScaffoldMetadata.json") }, ProjectScaffoldRoot, ProjectRootCandidates);
+			AddScaffoldInfosFromRoot(ProjectScaffoldRoot, TEXT("project"), OutInfos);
+
+			const FString SavedScaffoldRoot = FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UnrealMcp/TestScaffolds")));
+			AddScaffoldInfosFromRoot(SavedScaffoldRoot, TEXT("savedTest"), OutInfos);
+		}
+
+		bool FindPortableScaffoldForTool(const FString& ToolName, FExportableScaffoldInfo& OutInfo, TArray<TSharedPtr<FJsonValue>>& OutCandidateValues)
+		{
+			TArray<FExportableScaffoldInfo> Candidates;
+			AddSpecificScaffoldCandidates(SanitizeMcpToolIdForPath(ToolName), Candidates);
+
+			bool bHasFallback = false;
+			for (const FExportableScaffoldInfo& Candidate : Candidates)
+			{
+				OutCandidateValues.Add(MakeShared<FJsonValueObject>(MakeScaffoldInfoObject(Candidate)));
+				if (!bHasFallback && Candidate.bExists)
+				{
+					OutInfo = Candidate;
+					bHasFallback = true;
+				}
+				if (Candidate.ToolName.Equals(ToolName, ESearchCase::CaseSensitive)
+					&& Candidate.bHasMetadata
+					&& Candidate.bHasDescriptor)
+				{
+					OutInfo = Candidate;
+					return true;
+				}
+			}
+			return false;
+		}
+
+		FString MakeNoPortableScaffoldError(const FString& ToolName)
+		{
+			return FString::Printf(
+				TEXT("Tool '%s' has no portable scaffold under Tools/UnrealMcpToolScaffolds or Saved/UnrealMcp/TestScaffolds. Only tools you authored via unreal.scaffold_mcp_tool can be exported. Use unreal.tools.list_exportable to see what is shippable."),
+				*ToolName);
+		}
+
 		TSharedPtr<FJsonObject> MakeEntryManifestObject(const FToolPackageEntry& Entry)
 		{
 			TSharedPtr<FJsonObject> Object = MakeShared<FJsonObject>();
@@ -457,7 +647,7 @@ namespace UnrealMcp
 			return Object;
 		}
 
-		TSharedPtr<FJsonObject> BuildManifestObject(const FString& ToolName, const FString& Version, const TArray<FToolPackageEntry>& Entries)
+		TSharedPtr<FJsonObject> BuildManifestObject(const FString& ToolName, const FString& Version, const FString& PackageKind, const TArray<FToolPackageEntry>& Entries)
 		{
 			TArray<TSharedPtr<FJsonValue>> FileValues;
 			for (const FToolPackageEntry& Entry : Entries)
@@ -471,6 +661,7 @@ namespace UnrealMcp
 
 			TSharedPtr<FJsonObject> Manifest = MakeShared<FJsonObject>();
 			Manifest->SetStringField(TEXT("schema"), TEXT("UEvolve.ToolPackage.v1"));
+			Manifest->SetStringField(TEXT("kind"), PackageKind);
 			Manifest->SetStringField(TEXT("toolName"), ToolName);
 			Manifest->SetStringField(TEXT("version"), Version);
 			Manifest->SetStringField(TEXT("created_at"), FDateTime::UtcNow().ToIso8601());
@@ -659,49 +850,104 @@ namespace UnrealMcp
 		FString Version;
 		FString PackagePath;
 		bool bDryRun = true;
+		bool bAllowRegistryOnly = false;
 		Arguments.TryGetStringField(TEXT("toolName"), ToolName);
 		Arguments.TryGetStringField(TEXT("version"), Version);
 		Arguments.TryGetStringField(TEXT("packagePath"), PackagePath);
 		Arguments.TryGetBoolField(TEXT("dryRun"), bDryRun);
+		Arguments.TryGetBoolField(TEXT("allowRegistryOnly"), bAllowRegistryOnly);
 		ToolName = ToolName.TrimStartAndEnd();
 		Version = Version.TrimStartAndEnd();
 		if (ToolName.IsEmpty())
 		{
 			return MakeExecutionResult(TEXT("toolName is required."), nullptr, true);
 		}
-		const FToolRegistryEntry* RegistryEntry = FindToolRegistryEntry(ToolName);
-		if (!RegistryEntry)
-		{
-			return MakeExecutionResult(FString::Printf(TEXT("Tool '%s' is not present in the live ToolRegistry."), *ToolName), nullptr, true);
-		}
 		if (Version.IsEmpty())
 		{
 			Version = FDateTime::UtcNow().ToString(TEXT("%Y%m%d-%H%M%S"));
 		}
 
+		FExportableScaffoldInfo ScaffoldInfo;
+		TArray<TSharedPtr<FJsonValue>> ScaffoldCandidateValues;
+		const bool bScaffoldGatePassed = FindPortableScaffoldForTool(ToolName, ScaffoldInfo, ScaffoldCandidateValues);
+
 		TSharedPtr<FJsonObject> RegistryEntryObject;
+		FString RegistryEntrySource;
 		if (!FindRegistryEntryJson(ToolName, RegistryEntryObject))
 		{
-			RegistryEntryObject = MakeRegistryEntryJson(*RegistryEntry);
+			FString ScaffoldPatchToolName;
+			if (ScaffoldInfo.RegistryPatchObject.IsValid())
+			{
+				ScaffoldInfo.RegistryPatchObject->TryGetStringField(TEXT("name"), ScaffoldPatchToolName);
+				ScaffoldPatchToolName = ScaffoldPatchToolName.TrimStartAndEnd();
+			}
+			if (ScaffoldInfo.RegistryPatchObject.IsValid() && ScaffoldPatchToolName.Equals(ToolName, ESearchCase::CaseSensitive))
+			{
+				RegistryEntryObject = ScaffoldInfo.RegistryPatchObject;
+				RegistryEntrySource = TEXT("scaffoldPatch");
+			}
+			else if (const FToolRegistryEntry* RegistryEntry = FindToolRegistryEntry(ToolName))
+			{
+				RegistryEntryObject = MakeRegistryEntryJson(*RegistryEntry);
+				RegistryEntrySource = TEXT("liveRegistry");
+			}
+		}
+		else
+		{
+			RegistryEntrySource = TEXT("tools.json");
+		}
+
+		const bool bHasRegistryEntry = RegistryEntryObject.IsValid();
+		const bool bPortableScaffold = bScaffoldGatePassed && bHasRegistryEntry;
+		const FString PackageKind = bPortableScaffold ? ToolPackageKindFull() : ToolPackageKindRegistryOnly();
+
+		TSharedPtr<FJsonObject> GateObject = MakeShared<FJsonObject>();
+		GateObject->SetBoolField(TEXT("passed"), bPortableScaffold);
+		GateObject->SetStringField(TEXT("kind"), PackageKind);
+		GateObject->SetBoolField(TEXT("allowRegistryOnly"), bAllowRegistryOnly);
+		GateObject->SetBoolField(TEXT("hasRegistryEntry"), bHasRegistryEntry);
+		GateObject->SetStringField(TEXT("registryEntrySource"), RegistryEntrySource);
+		GateObject->SetObjectField(TEXT("selectedScaffold"), MakeScaffoldInfoObject(ScaffoldInfo));
+		GateObject->SetArrayField(TEXT("candidateScaffolds"), ScaffoldCandidateValues);
+
+		if (!bPortableScaffold && !bAllowRegistryOnly)
+		{
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("action"), TEXT("tools_export_package"));
+			StructuredContent->SetStringField(TEXT("toolName"), ToolName);
+			StructuredContent->SetStringField(TEXT("version"), Version);
+			StructuredContent->SetBoolField(TEXT("dryRun"), bDryRun);
+			StructuredContent->SetBoolField(TEXT("allowRegistryOnly"), bAllowRegistryOnly);
+			StructuredContent->SetStringField(TEXT("kind"), TEXT("refused"));
+			StructuredContent->SetObjectField(TEXT("scaffoldGate"), GateObject);
+			return MakeExecutionResult(MakeNoPortableScaffoldError(ToolName), StructuredContent, true);
+		}
+
+		if (!bHasRegistryEntry)
+		{
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("action"), TEXT("tools_export_package"));
+			StructuredContent->SetStringField(TEXT("toolName"), ToolName);
+			StructuredContent->SetStringField(TEXT("version"), Version);
+			StructuredContent->SetBoolField(TEXT("dryRun"), bDryRun);
+			StructuredContent->SetBoolField(TEXT("allowRegistryOnly"), bAllowRegistryOnly);
+			StructuredContent->SetStringField(TEXT("kind"), PackageKind);
+			StructuredContent->SetObjectField(TEXT("scaffoldGate"), GateObject);
+			return MakeExecutionResult(FString::Printf(TEXT("Tool '%s' has no ToolRegistry entry to package."), *ToolName), StructuredContent, true);
 		}
 
 		TArray<FToolPackageEntry> Entries;
 		AddPackageEntry(Entries, TEXT("registry/tool.json"), Utf8StringToBytes(JsonObjectToString(RegistryEntryObject) + TEXT("\n")), TEXT("registry"));
 
-		FString ScaffoldDir;
+		if (bPortableScaffold)
+		{
+			AddDirectoryPackageEntries(Entries, ScaffoldInfo.ScaffoldDir, TEXT("scaffold"), TEXT("scaffold"));
+		}
 		FString FailureReason;
-		if (!ResolveOptionalScaffoldDir(Arguments, ToolName, ScaffoldDir, FailureReason))
-		{
-			return MakeExecutionResult(FailureReason, nullptr, true);
-		}
-		if (FPaths::DirectoryExists(ScaffoldDir))
-		{
-			AddDirectoryPackageEntries(Entries, ScaffoldDir, TEXT("scaffold"), TEXT("scaffold"));
-		}
 		AddMatchingTestEntries(Entries, ToolName);
 		AddDocsEntry(Entries, RegistryEntryObject);
 
-		TSharedPtr<FJsonObject> Manifest = BuildManifestObject(ToolName, Version, Entries);
+		TSharedPtr<FJsonObject> Manifest = BuildManifestObject(ToolName, Version, PackageKind, Entries);
 		AddPackageEntry(Entries, TEXT("manifest.json"), Utf8StringToBytes(JsonObjectToString(Manifest) + TEXT("\n")), TEXT("manifest"));
 
 		if (PackagePath.TrimStartAndEnd().IsEmpty())
@@ -725,16 +971,23 @@ namespace UnrealMcp
 		StructuredContent->SetStringField(TEXT("toolName"), ToolName);
 		StructuredContent->SetStringField(TEXT("version"), Version);
 		StructuredContent->SetBoolField(TEXT("dryRun"), bDryRun);
+		StructuredContent->SetBoolField(TEXT("allowRegistryOnly"), bAllowRegistryOnly);
+		StructuredContent->SetStringField(TEXT("kind"), PackageKind);
 		StructuredContent->SetStringField(TEXT("packagePath"), PackagePath);
-		StructuredContent->SetStringField(TEXT("scaffoldDir"), ScaffoldDir);
-		StructuredContent->SetBoolField(TEXT("scaffoldIncluded"), FPaths::DirectoryExists(ScaffoldDir));
+		StructuredContent->SetStringField(TEXT("scaffoldDir"), bPortableScaffold ? ScaffoldInfo.ScaffoldDir : FString());
+		StructuredContent->SetBoolField(TEXT("scaffoldIncluded"), bPortableScaffold);
+		StructuredContent->SetObjectField(TEXT("scaffoldGate"), GateObject);
 		StructuredContent->SetObjectField(TEXT("manifestPreview"), Manifest);
 		StructuredContent->SetArrayField(TEXT("entries"), EntryValues);
 		StructuredContent->SetNumberField(TEXT("entryCount"), Entries.Num());
+		if (!bPortableScaffold)
+		{
+			StructuredContent->SetStringField(TEXT("warning"), TEXT("Registry-only expert mode: this package does not contain portable handler implementation patches."));
+		}
 
 		if (bDryRun)
 		{
-			return MakeExecutionResult(FString::Printf(TEXT("Dry run: would export tool package for '%s' with %d entries."), *ToolName, Entries.Num()), StructuredContent, false);
+			return MakeExecutionResult(FString::Printf(TEXT("Dry run: would export %s tool package for '%s' with %d entries."), *PackageKind, *ToolName, Entries.Num()), StructuredContent, false);
 		}
 
 		if (!WriteZipPackage(PackagePath, Entries, FailureReason))
@@ -742,7 +995,43 @@ namespace UnrealMcp
 			return MakeExecutionResult(FailureReason, StructuredContent, true);
 		}
 		StructuredContent->SetObjectField(TEXT("packageFile"), MakeFileInfoObject(PackagePath));
-		return MakeExecutionResult(FString::Printf(TEXT("Exported tool package for '%s' to %s."), *ToolName, *PackagePath), StructuredContent, false);
+		return MakeExecutionResult(FString::Printf(TEXT("Exported %s tool package for '%s' to %s."), *PackageKind, *ToolName, *PackagePath), StructuredContent, false);
+	}
+
+	FUnrealMcpExecutionResult ListExportableToolPackages(const FJsonObject& Arguments)
+	{
+		(void)Arguments;
+		TArray<FExportableScaffoldInfo> ScaffoldInfos;
+		FindExportableScaffoldInfos(ScaffoldInfos);
+		ScaffoldInfos.Sort([](const FExportableScaffoldInfo& Left, const FExportableScaffoldInfo& Right)
+		{
+			if (Left.SourceKind != Right.SourceKind)
+			{
+				return Left.SourceKind < Right.SourceKind;
+			}
+			return Left.ToolName < Right.ToolName;
+		});
+
+		TArray<TSharedPtr<FJsonValue>> ItemValues;
+		for (const FExportableScaffoldInfo& Info : ScaffoldInfos)
+		{
+			if (!Info.bHasMetadata)
+			{
+				continue;
+			}
+			ItemValues.Add(MakeShared<FJsonValueObject>(MakeScaffoldInfoObject(Info)));
+		}
+
+		TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+		StructuredContent->SetStringField(TEXT("action"), TEXT("tools_list_exportable"));
+		StructuredContent->SetArrayField(TEXT("items"), ItemValues);
+		StructuredContent->SetNumberField(TEXT("itemCount"), ItemValues.Num());
+		if (ItemValues.Num() > 0 && ItemValues[0].IsValid() && ItemValues[0]->Type == EJson::Object)
+		{
+			StructuredContent->SetObjectField(TEXT("firstItem"), ItemValues[0]->AsObject());
+		}
+
+		return MakeExecutionResult(FString::Printf(TEXT("Found %d scaffold-backed tools that can be exported."), ItemValues.Num()), StructuredContent, false);
 	}
 
 	FUnrealMcpExecutionResult ImportToolPackage(const FJsonObject& Arguments)
@@ -750,9 +1039,11 @@ namespace UnrealMcp
 		FString RequestedPackagePath;
 		bool bDryRun = true;
 		bool bOverwriteScaffold = false;
+		bool bAcceptRegistryOnly = false;
 		Arguments.TryGetStringField(TEXT("packagePath"), RequestedPackagePath);
 		Arguments.TryGetBoolField(TEXT("dryRun"), bDryRun);
 		Arguments.TryGetBoolField(TEXT("overwriteScaffold"), bOverwriteScaffold);
+		Arguments.TryGetBoolField(TEXT("acceptRegistryOnly"), bAcceptRegistryOnly);
 
 		FString PackagePath;
 		FString FailureReason;
@@ -796,6 +1087,9 @@ namespace UnrealMcp
 
 		FString ToolName;
 		Manifest->TryGetStringField(TEXT("toolName"), ToolName);
+		FString PackageKind = ToolPackageKindFull();
+		Manifest->TryGetStringField(TEXT("kind"), PackageKind);
+		PackageKind = PackageKind.TrimStartAndEnd().IsEmpty() ? ToolPackageKindFull() : PackageKind.TrimStartAndEnd();
 		FString RegistryToolName;
 		RegistryEntry->TryGetStringField(TEXT("name"), RegistryToolName);
 		if (ToolName.IsEmpty() || !ToolName.Equals(RegistryToolName, ESearchCase::CaseSensitive))
@@ -857,7 +1151,9 @@ namespace UnrealMcp
 		StructuredContent->SetStringField(TEXT("action"), TEXT("tools_import_package"));
 		StructuredContent->SetStringField(TEXT("packagePath"), PackagePath);
 		StructuredContent->SetStringField(TEXT("toolName"), ToolName);
+		StructuredContent->SetStringField(TEXT("kind"), PackageKind);
 		StructuredContent->SetBoolField(TEXT("dryRun"), bDryRun);
+		StructuredContent->SetBoolField(TEXT("acceptRegistryOnly"), bAcceptRegistryOnly);
 		StructuredContent->SetBoolField(TEXT("duplicateRegistryEntry"), bDuplicateRegistryEntry);
 		StructuredContent->SetStringField(TEXT("registryPath"), RegistryPath);
 		StructuredContent->SetStringField(TEXT("scaffoldRoot"), ScaffoldRoot);
@@ -867,6 +1163,18 @@ namespace UnrealMcp
 		StructuredContent->SetArrayField(TEXT("importPlan"), PlanValues);
 		StructuredContent->SetArrayField(TEXT("registryRootCandidates"), MakeSharedRepoRootCandidateValues(RegistryRootCandidates, { TEXT("tools.json") }));
 		StructuredContent->SetArrayField(TEXT("testRootCandidates"), MakeSharedRepoRootCandidateValues(TestRootCandidates, { TEXT("*.json") }));
+
+		const bool bRegistryOnlyPackage = PackageKind.Equals(ToolPackageKindRegistryOnly(), ESearchCase::IgnoreCase);
+		const FString RegistryOnlyMessage = TEXT("Package is registry-only: it only contains a registry entry whose handler is not portable across machines. Re-run with acceptRegistryOnly=true only when the handler already exists locally.");
+		if (bRegistryOnlyPackage && !bAcceptRegistryOnly)
+		{
+			StructuredContent->SetStringField(TEXT("warning"), RegistryOnlyMessage);
+			StructuredContent->SetBoolField(TEXT("registryOnlyImportRefused"), !bDryRun);
+			if (!bDryRun)
+			{
+				return MakeExecutionResult(RegistryOnlyMessage, StructuredContent, true);
+			}
+		}
 
 		if (bDryRun)
 		{

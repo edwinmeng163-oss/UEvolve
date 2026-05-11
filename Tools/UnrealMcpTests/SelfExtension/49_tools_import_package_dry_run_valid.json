@@ -1,6 +1,6 @@
 {
   "name": "tools_import_package_dry_run_valid",
-  "description": "Import package dry run validates the freshly exported fake-scaffold package without mutating the registry.",
+  "description": "Import package dry run validates the freshly exported scaffold-backed package without mutating the registry.",
   "category": "happy_path",
   "expectToolListed": true,
   "executeTool": true,
@@ -8,7 +8,8 @@
   "expectToolCallStructuredFields": {
     "action": "tools_import_package",
     "dryRun": true,
-    "toolName": "unreal.skill_list"
+    "toolName": "unreal.configure_fps_settings",
+    "kind": "full"
   },
   "request": {
     "jsonrpc": "2.0",
@@ -17,7 +18,7 @@
     "params": {
       "name": "unreal.tools.import_package",
       "arguments": {
-        "packagePath": "Saved/UnrealMcp/Packages/unreal.skill_list-phase2-test.zip",
+        "packagePath": "Saved/UnrealMcp/Packages/unreal.configure_fps_settings-phase2-test.zip",
         "dryRun": true,
         "skipLock": true
       }

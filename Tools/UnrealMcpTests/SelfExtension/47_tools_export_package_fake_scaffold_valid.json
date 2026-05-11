@@ -1,6 +1,6 @@
 {
-  "name": "tools_export_package_fake_scaffold_valid",
-  "description": "Export package writes a deterministic zip that includes a fake scaffold fixture.",
+  "name": "tools_export_package_scaffold_valid",
+  "description": "Export package writes a deterministic zip that includes a portable scaffold.",
   "category": "happy_path",
   "expectToolListed": true,
   "executeTool": true,
@@ -8,7 +8,8 @@
   "expectToolCallStructuredFields": {
     "action": "tools_export_package",
     "dryRun": false,
-    "toolName": "unreal.skill_list",
+    "toolName": "unreal.configure_fps_settings",
+    "kind": "full",
     "scaffoldIncluded": true
   },
   "request": {
@@ -18,10 +19,9 @@
     "params": {
       "name": "unreal.tools.export_package",
       "arguments": {
-        "toolName": "unreal.skill_list",
+        "toolName": "unreal.configure_fps_settings",
         "version": "phase2-test",
-        "packagePath": "Saved/UnrealMcp/Packages/unreal.skill_list-phase2-test.zip",
-        "scaffoldDir": "Tools/UnrealMcpTests/Fixtures/PackageFakeScaffold",
+        "packagePath": "Saved/UnrealMcp/Packages/unreal.configure_fps_settings-phase2-test.zip",
         "dryRun": false
       }
     }

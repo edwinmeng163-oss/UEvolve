@@ -1365,8 +1365,29 @@
       "testCoverage": "category",
       "owner": "UEvolve Core",
       "docsPath": "Docs/SelfExtensionPipeline.md#tool-sharing",
-      "reason": "Exports a live ToolRegistry entry plus optional scaffold, tests, and docs into a hashed package under Saved/UnrealMcp/Packages.",
+      "reason": "Exports only scaffold-backed portable tools by default; expert allowRegistryOnly mode emits non-portable registry-only packages.",
       "notes": "Tool sharing package export."
+    },
+    {
+      "name": "unreal.tools.list_exportable",
+      "category": "self-extension",
+      "handlerName": "unreal.tools.list_exportable",
+      "exposure": "visible",
+      "riskLevel": "read_only",
+      "requiresWrite": false,
+      "requiresBuild": false,
+      "requiresExternalProcess": false,
+      "requiresRestart": false,
+      "requiresProjectMemory": false,
+      "requiresLock": false,
+      "dryRunSupport": false,
+      "preflightSupport": false,
+      "postcheckSupport": false,
+      "testCoverage": "category",
+      "owner": "UEvolve Core",
+      "docsPath": "Docs/SelfExtensionPipeline.md#tool-sharing",
+      "reason": "Lists scaffold-backed MCP tools that can be exported as portable packages.",
+      "notes": "Tool sharing package picker helper."
     },
     {
       "name": "unreal.tools.import_package",
@@ -1386,7 +1407,7 @@
       "testCoverage": "category",
       "owner": "UEvolve Core",
       "docsPath": "Docs/SelfExtensionPipeline.md#tool-sharing",
-      "reason": "Validates a tool package manifest before importing registry, scaffold, and test assets under the self-extension lock.",
+      "reason": "Validates a tool package manifest before importing registry, scaffold, and test assets; refuses registry-only packages unless explicitly accepted.",
       "notes": "Tool sharing package import."
     },
     {

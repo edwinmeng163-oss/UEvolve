@@ -208,12 +208,13 @@ namespace UnrealMcp
 
 			{
 				TSharedPtr<FJsonObject> Properties = MakeShared<FJsonObject>();
-				Properties->SetObjectField(TEXT("toolName"), MakeStringProperty(TEXT("Live MCP tool name to export into a portable package."), FString()));
+				Properties->SetObjectField(TEXT("toolName"), MakeStringProperty(TEXT("MCP tool name to export. Portable exports require a matching scaffold under Tools/UnrealMcpToolScaffolds or Saved/UnrealMcp/TestScaffolds."), FString()));
 				Properties->SetObjectField(TEXT("version"), MakeStringProperty(TEXT("Optional package version suffix. Defaults to a UTC timestamp."), FString()));
 				Properties->SetObjectField(TEXT("packagePath"), MakeStringProperty(TEXT("Optional project-relative package zip path. Defaults to Saved/UnrealMcp/Packages/<toolName>-<version>.zip."), FString()));
-				Properties->SetObjectField(TEXT("scaffoldDir"), MakeStringProperty(TEXT("Optional project-relative scaffold directory to bundle instead of the default tool scaffold path."), FString()));
-				Properties->SetObjectField(TEXT("outputRoot"), MakeStringProperty(TEXT("Project-relative scaffold root used when scaffoldDir is empty."), TEXT("Tools/UnrealMcpToolScaffolds")));
+				Properties->SetObjectField(TEXT("scaffoldDir"), MakeStringProperty(TEXT("Deprecated compatibility field. Portable exports resolve the reviewed scaffold roots automatically."), FString()));
+				Properties->SetObjectField(TEXT("outputRoot"), MakeStringProperty(TEXT("Deprecated compatibility field. Portable exports resolve Tools/UnrealMcpToolScaffolds and Saved/UnrealMcp/TestScaffolds automatically."), TEXT("Tools/UnrealMcpToolScaffolds")));
 				Properties->SetObjectField(TEXT("dryRun"), MakeBoolProperty(TEXT("Preview package manifest and entries without writing the zip."), true));
+				Properties->SetObjectField(TEXT("allowRegistryOnly"), MakeBoolProperty(TEXT("Expert mode: allow exporting a registry-only package when no portable scaffold exists. Import refuses this package unless acceptRegistryOnly=true."), false));
 				TArray<TSharedPtr<FJsonValue>> Required;
 				Required.Add(MakeShared<FJsonValueString>(TEXT("toolName")));
 				TSharedPtr<FJsonObject> Schema = MakeObjectSchema();
@@ -223,7 +224,7 @@ namespace UnrealMcp
 				FUnrealMcpToolDescriptor Descriptor = MakeDescriptor(
 					TEXT("unreal.tools.export_package"),
 					TEXT("Export Tool Package"),
-					TEXT("Exports a live MCP tool registry entry plus optional scaffold, tests, and docs into a portable zip package with a hashed manifest."),
+					TEXT("Exports a scaffold-backed MCP tool into a portable zip package with a hashed manifest. Expert mode allowRegistryOnly=true emits a registry-only package that is not portable and is refused by import unless explicitly accepted."),
 					TEXT("self-extension"),
 					TEXT("UnrealMcpToolPackager.cpp"),
 					EUnrealMcpToolRisk::Medium);
@@ -238,10 +239,28 @@ namespace UnrealMcp
 			}
 
 			{
+				TSharedPtr<FJsonObject> Schema = MakeObjectSchema();
+				Schema->SetObjectField(TEXT("properties"), MakeShared<FJsonObject>());
+
+				FUnrealMcpToolDescriptor Descriptor = MakeDescriptor(
+					TEXT("unreal.tools.list_exportable"),
+					TEXT("List Exportable Tools"),
+					TEXT("Lists scaffold-backed MCP tools under Tools/UnrealMcpToolScaffolds and Saved/UnrealMcp/TestScaffolds that can be exported as portable tool packages."),
+					TEXT("self-extension"),
+					TEXT("UnrealMcpToolPackager.cpp"),
+					EUnrealMcpToolRisk::ReadOnly);
+				Descriptor.TestCoverage = EUnrealMcpToolTestCoverage::Category;
+				Descriptor.DocsPath = TEXT("Docs/SelfExtensionPipeline.md#tool-sharing");
+				Descriptor.Reason = TEXT("Descriptor: read-only package picker helper for scaffold-backed user-generated tools.");
+				Registrar.Add(Descriptor, Schema);
+			}
+
+			{
 				TSharedPtr<FJsonObject> Properties = MakeShared<FJsonObject>();
 				Properties->SetObjectField(TEXT("packagePath"), MakeStringProperty(TEXT("Project-relative or absolute tool package zip path."), FString()));
 				Properties->SetObjectField(TEXT("dryRun"), MakeBoolProperty(TEXT("Validate and preview the import plan without mutating registry, scaffold, or test files."), true));
 				Properties->SetObjectField(TEXT("overwriteScaffold"), MakeBoolProperty(TEXT("Allow scaffold files from the package to overwrite existing scaffold files."), false));
+				Properties->SetObjectField(TEXT("acceptRegistryOnly"), MakeBoolProperty(TEXT("Expert mode: allow importing a registry-only package whose handler implementation must already exist locally."), false));
 				Properties->SetObjectField(TEXT("skipLock"), MakeBoolProperty(TEXT("Testing-only escape hatch for in-process test execution; normal Chat use should leave this false."), false));
 				TArray<TSharedPtr<FJsonValue>> Required;
 				Required.Add(MakeShared<FJsonValueString>(TEXT("packagePath")));

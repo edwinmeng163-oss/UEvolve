@@ -1,0 +1,23 @@
+{
+  "name": "tools_list_exportable_valid",
+  "description": "List exportable tools returns the committed configure_fps_settings scaffold.",
+  "category": "happy_path",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": false,
+  "expectToolCallStructuredFields": {
+    "action": "tools_list_exportable",
+    "firstItem.toolName": "unreal.configure_fps_settings",
+    "firstItem.sourceKind": "project",
+    "firstItem.hasDescriptor": true
+  },
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 455,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.tools.list_exportable",
+      "arguments": {}
+    }
+  }
+}

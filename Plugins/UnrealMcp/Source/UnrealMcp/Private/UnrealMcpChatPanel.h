@@ -44,6 +44,15 @@ struct FUnrealMcpSkillOption
 	FString Path;
 };
 
+struct FUnrealMcpExportableToolOption
+{
+	FString ToolName;
+	FString ScaffoldDir;
+	FString SourceKind;
+	bool bHasDescriptor = false;
+	bool bHasTests = false;
+};
+
 class SUnrealMcpChatPanel final : public SCompoundWidget
 {
 public:
@@ -84,6 +93,7 @@ private:
 	void RefreshSkillOptions(bool bAppendResult);
 	TSharedRef<SWidget> MakeSkillComboOption(TSharedPtr<FUnrealMcpSkillOption> SkillOption) const;
 	TSharedRef<SWidget> MakeSkillApplyModeComboOption(TSharedPtr<FString> ApplyMode) const;
+	TSharedRef<SWidget> MakeExportableToolComboOption(TSharedPtr<FUnrealMcpExportableToolOption> ToolOption) const;
 	FText GetSelectedSkillText() const;
 	FText GetSelectedSkillDescriptionText() const;
 	FText GetSelectedSkillApplyModeText() const;
@@ -91,7 +101,7 @@ private:
 	FString GetSelectedSkillApplyMode() const;
 	FString GetSkillTaskOrFallback() const;
 	FString BuildSkillAskPrompt(const FString& SkillName, const FString& Task) const;
-	bool ShowExportToolPackageDialog(FString& OutToolName, bool& bOutDryRun);
+	bool ShowExportToolPackageDialog(const TArray<TSharedPtr<FUnrealMcpExportableToolOption>>& ExportableTools, FString& OutToolName, bool& bOutDryRun);
 	bool ShowImportToolPackageDialog(FString& OutPackagePath, bool& bOutDryRun);
 	FString BuildToolPackageSummary(const FString& ToolName, const FUnrealMcpExecutionResult& Result) const;
 	void AppendToolExecutionResult(const FString& ToolName, const FJsonObject& Arguments, const FUnrealMcpExecutionResult& Result);

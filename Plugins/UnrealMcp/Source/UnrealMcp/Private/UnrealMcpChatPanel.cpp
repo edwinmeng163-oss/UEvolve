@@ -90,6 +90,11 @@ namespace UnrealMcpChat
 		return FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UnrealMcp"), TEXT("Packages"));
 	}
 
+	FString FormatExportableToolOption(const FUnrealMcpExportableToolOption& Option)
+	{
+		return FString::Printf(TEXT("%s [%s] %s"), *Option.ToolName, *Option.SourceKind, *Option.ScaffoldDir);
+	}
+
 	const FAiProviderConfig* FindProviderById(const UUnrealMcpSettings& Settings, const FString& ProviderId)
 	{
 		for (const FAiProviderConfig& Provider : Settings.Providers)
@@ -1130,7 +1135,7 @@ void SUnrealMcpChatPanel::Construct(const FArguments& InArgs, FUnrealMcpModule* 
 						[
 							SNew(SButton)
 							.Text(LOCTEXT("ExportToolPackageButton", "Export Tool Package"))
-							.ToolTipText(LOCTEXT("ExportToolPackageTooltip", "Call unreal.tools.export_package for a registry tool and show the package manifest."))
+							.ToolTipText(LOCTEXT("ExportToolPackageTooltip", "Pick a scaffold-backed tool with unreal.tools.list_exportable, then call unreal.tools.export_package and show the package manifest."))
 							.IsEnabled_Lambda([this]()
 							{
 								return !bAssistantRequestInFlight;
@@ -1525,9 +1530,48 @@ FReply SUnrealMcpChatPanel::HandleExportToolPackageClicked()
 		return FReply::Handled();
 	}
 
+	TSharedPtr<FJsonObject> ListArguments = MakeShared<FJsonObject>();
+	const FUnrealMcpExecutionResult ListResult = OwnerModule->ExecuteToolFromEditorUI(TEXT("unreal.tools.list_exportable"), *ListArguments);
+	if (ListResult.bIsError || !ListResult.StructuredContent.IsValid())
+	{
+		AppendToolExecutionResult(TEXT("unreal.tools.list_exportable"), *ListArguments, ListResult);
+		AppendMessage(EUnrealMcpChatEntryType::System, TEXT("Unreal MCP Tool Package"), ListResult.Text, true);
+		return FReply::Handled();
+	}
+
+	TArray<TSharedPtr<FUnrealMcpExportableToolOption>> ExportableTools;
+	const TArray<TSharedPtr<FJsonValue>>* Items = nullptr;
+	if (ListResult.StructuredContent->TryGetArrayField(TEXT("items"), Items) && Items)
+	{
+		for (const TSharedPtr<FJsonValue>& ItemValue : *Items)
+		{
+			const TSharedPtr<FJsonObject> ItemObject = ItemValue.IsValid() && ItemValue->Type == EJson::Object ? ItemValue->AsObject() : nullptr;
+			if (!ItemObject.IsValid())
+			{
+				continue;
+			}
+			TSharedPtr<FUnrealMcpExportableToolOption> Option = MakeShared<FUnrealMcpExportableToolOption>();
+			ItemObject->TryGetStringField(TEXT("toolName"), Option->ToolName);
+			ItemObject->TryGetStringField(TEXT("scaffoldDir"), Option->ScaffoldDir);
+			ItemObject->TryGetStringField(TEXT("sourceKind"), Option->SourceKind);
+			ItemObject->TryGetBoolField(TEXT("hasDescriptor"), Option->bHasDescriptor);
+			ItemObject->TryGetBoolField(TEXT("hasTests"), Option->bHasTests);
+			if (!Option->ToolName.TrimStartAndEnd().IsEmpty())
+			{
+				ExportableTools.Add(Option);
+			}
+		}
+	}
+
+	if (ExportableTools.Num() == 0)
+	{
+		AppendMessage(EUnrealMcpChatEntryType::System, TEXT("Unreal MCP Tool Package"), TEXT("No tools to export. Generate one with unreal.scaffold_mcp_tool first."));
+		return FReply::Handled();
+	}
+
 	FString ToolName;
 	bool bDryRun = true;
-	if (!ShowExportToolPackageDialog(ToolName, bDryRun))
+	if (!ShowExportToolPackageDialog(ExportableTools, ToolName, bDryRun))
 	{
 		return FReply::Handled();
 	}
@@ -2088,6 +2132,31 @@ TSharedRef<SWidget> SUnrealMcpChatPanel::MakeSkillComboOption(TSharedPtr<FUnreal
 		];
 }
 
+TSharedRef<SWidget> SUnrealMcpChatPanel::MakeExportableToolComboOption(TSharedPtr<FUnrealMcpExportableToolOption> ToolOption) const
+{
+	if (!ToolOption.IsValid())
+	{
+		return SNew(STextBlock).Text(LOCTEXT("ExportableToolNone", "No exportable tools"));
+	}
+
+	return SNew(SVerticalBox)
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		[
+			SNew(STextBlock)
+			.Font(FAppStyle::GetFontStyle("NormalFontBold"))
+			.Text(FText::FromString(FString::Printf(TEXT("%s [%s]"), *ToolOption->ToolName, *ToolOption->SourceKind)))
+		]
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		[
+			SNew(STextBlock)
+			.AutoWrapText(true)
+			.Font(FAppStyle::GetFontStyle("SmallFont"))
+			.Text(FText::FromString(ToolOption->ScaffoldDir))
+		];
+}
+
 TSharedRef<SWidget> SUnrealMcpChatPanel::MakeSkillApplyModeComboOption(TSharedPtr<FString> ApplyMode) const
 {
 	return SNew(STextBlock)
@@ -2148,15 +2217,15 @@ FString SUnrealMcpChatPanel::BuildSkillAskPrompt(const FString& SkillName, const
 		*Task);
 }
 
-bool SUnrealMcpChatPanel::ShowExportToolPackageDialog(FString& OutToolName, bool& bOutDryRun)
+bool SUnrealMcpChatPanel::ShowExportToolPackageDialog(const TArray<TSharedPtr<FUnrealMcpExportableToolOption>>& ExportableTools, FString& OutToolName, bool& bOutDryRun)
 {
 	bool bAccepted = false;
-	TSharedPtr<SEditableTextBox> ToolNameTextBox;
+	TSharedPtr<FUnrealMcpExportableToolOption> SelectedTool = ExportableTools.Num() > 0 ? ExportableTools[0] : TSharedPtr<FUnrealMcpExportableToolOption>();
 	TSharedPtr<SCheckBox> DryRunCheckBox;
 
 	TSharedRef<SWindow> Window = SNew(SWindow)
 		.Title(LOCTEXT("ExportToolPackageDialogTitle", "Export Tool Package"))
-		.ClientSize(FVector2D(460.0f, 170.0f))
+		.ClientSize(FVector2D(680.0f, 190.0f))
 		.SupportsMaximize(false)
 		.SupportsMinimize(false);
 
@@ -2171,16 +2240,28 @@ bool SUnrealMcpChatPanel::ShowExportToolPackageDialog(FString& OutToolName, bool
 			.Padding(0.0f, 0.0f, 0.0f, 8.0f)
 			[
 				SNew(STextBlock)
-				.Text(LOCTEXT("ExportToolPackageToolNameLabel", "Tool name"))
+				.Text(LOCTEXT("ExportToolPackageToolNameLabel", "Exportable tools"))
 				.Font(FAppStyle::GetFontStyle("SmallFont"))
 			]
 			+ SVerticalBox::Slot()
 			.AutoHeight()
 			.Padding(0.0f, 0.0f, 0.0f, 10.0f)
 			[
-				SAssignNew(ToolNameTextBox, SEditableTextBox)
-				.HintText(LOCTEXT("ExportToolPackageToolNameHint", "unreal.skill_list"))
-				.SelectAllTextWhenFocused(true)
+				SNew(SComboBox<TSharedPtr<FUnrealMcpExportableToolOption>>)
+				.OptionsSource(&ExportableTools)
+				.InitiallySelectedItem(SelectedTool)
+				.OnGenerateWidget(this, &SUnrealMcpChatPanel::MakeExportableToolComboOption)
+				.OnSelectionChanged_Lambda([&SelectedTool](TSharedPtr<FUnrealMcpExportableToolOption> ToolOption, ESelectInfo::Type)
+				{
+					SelectedTool = ToolOption;
+				})
+				[
+					SNew(STextBlock)
+					.Text_Lambda([&SelectedTool]()
+					{
+						return FText::FromString(SelectedTool.IsValid() ? UnrealMcpChat::FormatExportableToolOption(*SelectedTool) : TEXT("No exportable tools"));
+					})
+				]
 			]
 			+ SVerticalBox::Slot()
 			.AutoHeight()
@@ -2229,7 +2310,7 @@ bool SUnrealMcpChatPanel::ShowExportToolPackageDialog(FString& OutToolName, bool
 		return false;
 	}
 
-	OutToolName = ToolNameTextBox.IsValid() ? ToolNameTextBox->GetText().ToString().TrimStartAndEnd() : FString();
+	OutToolName = SelectedTool.IsValid() ? SelectedTool->ToolName.TrimStartAndEnd() : FString();
 	bOutDryRun = DryRunCheckBox.IsValid() && DryRunCheckBox->IsChecked();
 	return true;
 }
@@ -2380,6 +2461,8 @@ FString SUnrealMcpChatPanel::BuildToolPackageSummary(const FString& ToolName, co
 	StructuredContent->TryGetStringField(TEXT("packagePath"), PackagePath);
 	FString PackagedToolName;
 	StructuredContent->TryGetStringField(TEXT("toolName"), PackagedToolName);
+	FString PackageKind;
+	StructuredContent->TryGetStringField(TEXT("kind"), PackageKind);
 	bool bDryRun = true;
 	StructuredContent->TryGetBoolField(TEXT("dryRun"), bDryRun);
 
@@ -2400,10 +2483,11 @@ FString SUnrealMcpChatPanel::BuildToolPackageSummary(const FString& ToolName, co
 			}
 		}
 		return FString::Printf(
-			TEXT("%s\nTool: %s\nPackage: %s\nManifest: version %s, %d file hashes, %.0f package entries."),
+			TEXT("%s\nTool: %s\nPackage: %s\nKind: %s\nManifest: version %s, %d file hashes, %.0f package entries."),
 			*Result.Text,
 			*PackagedToolName,
 			*PackagePath,
+			*PackageKind,
 			*Version,
 			ManifestFileCount,
 			EntryCount);
@@ -2421,10 +2505,11 @@ FString SUnrealMcpChatPanel::BuildToolPackageSummary(const FString& ToolName, co
 	bool bDuplicateRegistryEntry = false;
 	StructuredContent->TryGetBoolField(TEXT("duplicateRegistryEntry"), bDuplicateRegistryEntry);
 	return FString::Printf(
-		TEXT("%s\nTool: %s\nPackage: %s\nImport plan: %.0f entries, %d validated hashes, duplicate registry entry: %s, dry run: %s."),
+		TEXT("%s\nTool: %s\nPackage: %s\nKind: %s\nImport plan: %.0f entries, %d validated hashes, duplicate registry entry: %s, dry run: %s."),
 		*Result.Text,
 		*PackagedToolName,
 		*PackagePath,
+		*PackageKind,
 		PlanCount,
 		ValidatedCount,
 		bDuplicateRegistryEntry ? TEXT("yes") : TEXT("no"),
