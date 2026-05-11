@@ -121,6 +121,18 @@ namespace UnrealMcpChat
 		return FString::Printf(TEXT("%s (%s)"), *DisplayName, *ProviderKindShortName(Provider.Kind));
 	}
 
+#if PLATFORM_WINDOWS
+	bool IsCodexCliUnsupportedOnThisPlatform(const FAiProviderConfig& Provider)
+	{
+		return Provider.Kind == EAiProviderKind::Codex;
+	}
+
+	FText CodexCliUnsupportedOnWindowsTooltip()
+	{
+		return LOCTEXT("CodexCliUnsupportedOnWindowsTooltip", "Codex CLI is macOS/Linux only - use CodexAppServer on Windows.");
+	}
+#endif
+
 	FLinearColor GetBorderColor(const FUnrealMcpChatEntry& Entry)
 	{
 		switch (Entry.Type)
@@ -929,6 +941,8 @@ void SUnrealMcpChatPanel::Construct(const FArguments& InArgs, FUnrealMcpModule* 
 								.OnGenerateWidget_Lambda([this](TSharedPtr<FString> ProviderId)
 								{
 									FString Label = ProviderId.IsValid() ? *ProviderId : TEXT("<provider>");
+									bool bIsDisabled = false;
+									FText TooltipText = FText::GetEmpty();
 									if (const UUnrealMcpSettings* Settings = GetDefault<UUnrealMcpSettings>())
 									{
 										if (ProviderId.IsValid())
@@ -936,10 +950,28 @@ void SUnrealMcpChatPanel::Construct(const FArguments& InArgs, FUnrealMcpModule* 
 											if (const FAiProviderConfig* Provider = UnrealMcpChat::FindProviderById(*Settings, *ProviderId))
 											{
 												Label = UnrealMcpChat::FormatProviderLabel(*Provider);
+#if PLATFORM_WINDOWS
+												if (UnrealMcpChat::IsCodexCliUnsupportedOnThisPlatform(*Provider))
+												{
+													bIsDisabled = true;
+													TooltipText = UnrealMcpChat::CodexCliUnsupportedOnWindowsTooltip();
+													Label += TEXT(" (Windows unsupported)");
+												}
+#endif
 											}
 										}
 									}
-									return SNew(STextBlock).Text(FText::FromString(Label));
+									return SNew(SBorder)
+										.BorderImage(FAppStyle::GetBrush("NoBorder"))
+										.Padding(FMargin(2.0f, 1.0f))
+										.ToolTipText(TooltipText)
+										[
+											SNew(STextBlock)
+											.Text(FText::FromString(Label))
+											.ColorAndOpacity(bIsDisabled
+												? FSlateColor(FLinearColor(0.45f, 0.45f, 0.45f, 1.0f))
+												: FSlateColor::UseForeground())
+										];
 								})
 								.OnSelectionChanged(this, &SUnrealMcpChatPanel::HandleProviderSelectionChanged)
 								.ToolTipText_Lambda([this]()
@@ -1703,6 +1735,23 @@ void SUnrealMcpChatPanel::HandlePresetClicked(FString CommandText)
 void SUnrealMcpChatPanel::HandleProviderSelectionChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo)
 {
 	if (!NewSelection.IsValid()) { return; }
+#if PLATFORM_WINDOWS
+	if (SelectInfo != ESelectInfo::Direct)
+	{
+		if (const UUnrealMcpSettings* Settings = GetDefault<UUnrealMcpSettings>())
+		{
+			if (const FAiProviderConfig* Provider = UnrealMcpChat::FindProviderById(*Settings, *NewSelection))
+			{
+				if (UnrealMcpChat::IsCodexCliUnsupportedOnThisPlatform(*Provider))
+				{
+					if (ProviderComboBox.IsValid()) { ProviderComboBox->SetSelectedItem(SelectedProviderId); }
+					AppendMessage(EUnrealMcpChatEntryType::System, TEXT("Unreal MCP"), UnrealMcpChat::CodexCliUnsupportedOnWindowsTooltip().ToString());
+					return;
+				}
+			}
+		}
+	}
+#endif
 	SelectedProviderId = NewSelection;
 	if (SelectInfo != ESelectInfo::Direct) { SetActiveProviderById(*NewSelection); }
 }

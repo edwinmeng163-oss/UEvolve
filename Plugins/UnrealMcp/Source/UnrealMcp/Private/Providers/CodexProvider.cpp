@@ -17,6 +17,15 @@ namespace
 	const TCHAR* ForcedCodexModel = TEXT("gpt-5.5");
 	const TCHAR* ForcedCodexReasoning = TEXT("xhigh");
 	const TCHAR* ForcedCodexSandbox = TEXT("workspace-write");
+#if PLATFORM_WINDOWS
+	const TCHAR* CodexCliWindowsUnsupportedMessage = TEXT("Codex CLI provider is not supported on Windows. Use the CodexAppServer (Codex Desktop bridge) provider instead. See Docs/Release-2026-05.md.");
+
+	void ReportCodexCliWindowsUnsupported(FString& OutError)
+	{
+		OutError = CodexCliWindowsUnsupportedMessage;
+		UE_LOG(LogUnrealMcp, Warning, TEXT("%s"), CodexCliWindowsUnsupportedMessage);
+	}
+#endif
 
 	bool ContainsDangerousShellCharacters(const FString& Value, FString& OutFailureReason)
 	{
@@ -480,6 +489,12 @@ namespace
 
 		static bool ValidateCodexConfig(const FAiProviderConfig& InConfig, TArray<FString>& OutFilteredExtraArgs, FString& OutError)
 		{
+#if PLATFORM_WINDOWS
+			static_cast<void>(InConfig);
+			static_cast<void>(OutFilteredExtraArgs);
+			ReportCodexCliWindowsUnsupported(OutError);
+			return false;
+#else
 			const FString ProviderId = UnrealMcp::Providers::ProviderIdForError(InConfig);
 			const FString BinaryPath = InConfig.CodexBinaryPath.TrimStartAndEnd();
 			if (BinaryPath.IsEmpty())
@@ -507,6 +522,7 @@ namespace
 			}
 
 			return true;
+#endif
 		}
 
 	private:
