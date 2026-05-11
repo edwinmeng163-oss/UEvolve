@@ -31,6 +31,7 @@ namespace UnrealMcp
 {
 	FString NormalizeEndpointPath(const FString& EndpointPath);
 	FUnrealMcpExecutionResult MakeExecutionResult(const FString& Text, const TSharedPtr<FJsonObject>& StructuredContent, bool bIsError);
+	FUnrealMcpExecutionResult ExecuteEditorEngineVersion();
 	int32 GetPositiveIntArgument(const FJsonObject& Arguments, const FString& FieldName, int32 DefaultValue);
 	TArray<FAssetData> GetSelectedAssets();
 	TSharedPtr<FJsonObject> MakeAssetObject(const FAssetData& Asset);
@@ -1011,6 +1012,12 @@ namespace UnrealMcp
 		if (ToolName == TEXT("unreal.editor_status"))
 		{
 			OutResult = ExecuteEditorStatus();
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.editor.engine_version"))
+		{
+			OutResult = ExecuteEditorEngineVersion();
 			return true;
 		}
 

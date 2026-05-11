@@ -217,6 +217,7 @@ unreviewed scaffold drafts unless the user explicitly asks.
 Editor and inspection:
 
 - `unreal.editor_status`
+- `unreal.editor.engine_version`
 - `unreal.tail_log`
 - `unreal.map_check`
 - map, asset, selected asset, actor, and selected actor listing
@@ -340,7 +341,7 @@ Tools/UnrealMcpToolRegistry/schema.json
 Schemas/UnrealMcpToolRegistry.schema.json
 ```
 
-At the time this file was written, the registry contained 117 entries across:
+At the time this file was written, the registry contained 119 entries across:
 
 - actors
 - blueprint

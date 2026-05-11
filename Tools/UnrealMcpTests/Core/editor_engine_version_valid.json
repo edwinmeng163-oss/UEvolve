@@ -1,0 +1,17 @@
+{
+  "name": "editor_engine_version_valid",
+  "description": "Core happy-path smoke test for the editor engine version tool.",
+  "category": "happy_path",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": false,
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 5,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.editor.engine_version",
+      "arguments": {}
+    }
+  }
+}

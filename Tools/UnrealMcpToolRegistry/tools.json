@@ -2480,6 +2480,27 @@
       "docsPath": "README.md#tool-coverage",
       "reason": "Explicit registry: low-risk launch-session label setter for ActivityLog task labels.",
       "notes": ""
+    },
+    {
+      "name": "unreal.editor.engine_version",
+      "category": "editor",
+      "handlerName": "unreal.editor.engine_version",
+      "exposure": "visible",
+      "riskLevel": "read_only",
+      "requiresWrite": false,
+      "requiresBuild": false,
+      "requiresExternalProcess": false,
+      "requiresRestart": false,
+      "requiresProjectMemory": false,
+      "requiresLock": false,
+      "dryRunSupport": false,
+      "preflightSupport": false,
+      "postcheckSupport": false,
+      "testCoverage": "core",
+      "owner": "UEvolve Core",
+      "docsPath": "README.md#tool-coverage",
+      "reason": "Explicit registry: read-only editor engine version inspection for version-aware tool planning.",
+      "notes": ""
     }
   ]
 }

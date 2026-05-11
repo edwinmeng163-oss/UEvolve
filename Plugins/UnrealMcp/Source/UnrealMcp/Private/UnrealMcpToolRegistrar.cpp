@@ -54,6 +54,15 @@ namespace UnrealMcp
 
 			Registrar.Add(
 				MakeDescriptor(
+					TEXT("unreal.editor.engine_version"),
+					TEXT("Editor Engine Version"),
+					TEXT("Returns the running Unreal Editor engine version as structured major, minor, patch, and version_string fields."),
+					TEXT("editor"),
+					TEXT("UnrealMcpEditorEngineVersionTool.cpp")),
+				MakeObjectSchema());
+
+			Registrar.Add(
+				MakeDescriptor(
 					TEXT("unreal.list_maps"),
 					TEXT("List Maps"),
 					TEXT("Lists all map assets under /Game."),
