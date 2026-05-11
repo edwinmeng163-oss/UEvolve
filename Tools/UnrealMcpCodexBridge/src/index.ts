@@ -71,6 +71,7 @@ const started = await codex.request("thread/start", {
 });
 threadId = started.thread.id;
 health = { state: "ready" };
+console.log(`Registered MCP server '${child.mcpRegistration.name}' with Codex; the model is instructed to use it via mcpServer/tool/call.`);
 
 const bridge = createBridgeServer({
   port,
@@ -150,7 +151,9 @@ function extractFinalText(turn: any): string {
   return (turn?.items ?? []).filter((item: any) => item.type === "agentMessage").map((item: any) => item.text).join("");
 }
 function developerInstructions(mcpName: string): string {
-  return `You are an AI assistant embedded inside the Unreal Editor through a bridge. Use the ${mcpName} MCP server's tools to inspect and mutate the project. Prefer the smallest safe set of tool calls, inspect before concluding for read-only questions, act directly for clear modification requests, and avoid destructive actions unless explicitly asked. Do not attempt to write files outside MCP tool calls or run shell commands; those paths are disabled.`;
+  return `You are running through the UEvolve Codex Desktop bridge. Reasoning is on; produce concise answers and prefer one safe MCP tool call over many.
+The registered Unreal MCP server is ${mcpName}. For ANY action that inspects or modifies the Unreal project, call the MCP server ${mcpName} via mcpServer/tool/call. Do NOT use shell commands, curl, or HTTP requests because those are denied by policy.
+Do not attempt to edit files or run commands directly. Do not attempt to write files outside MCP tool calls or run shell commands; those paths are disabled. Avoid destructive actions unless explicitly asked.`;
 }
 function formatSpawnArgs(args: string[]): string {
   return args.map((arg) => (arg.includes("bearer_token=") ? arg.replace(/bearer_token=.*/, 'bearer_token="<redacted>"') : arg)).join(" ");

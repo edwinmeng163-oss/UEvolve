@@ -877,7 +877,9 @@ void SUnrealMcpChatPanel::Construct(const FArguments& InArgs, FUnrealMcpModule* 
 							SNew(SHorizontalBox)
 							.Visibility_Lambda([this]()
 							{
-								return ProviderOptionIds.Num() == 0 ? EVisibility::Visible : EVisibility::Collapsed;
+								const UUnrealMcpSettings* Settings = GetDefault<UUnrealMcpSettings>();
+								const bool bHasConfiguredProvider = Settings ? Settings->Providers.Num() > 0 : ProviderOptionIds.Num() > 0;
+								return bHasConfiguredProvider ? EVisibility::Collapsed : EVisibility::Visible;
 							})
 							+ SHorizontalBox::Slot()
 							.AutoWidth()

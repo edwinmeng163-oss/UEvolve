@@ -74,6 +74,7 @@ Expected startup output:
 
 ```text
 Codex binary: /opt/homebrew/bin/codex
+Registered MCP server 'unrealmcp' with Codex; the model is instructed to use it via mcpServer/tool/call.
 UEvolve Codex Bridge listening at ws://127.0.0.1:8766/uevolve
 Codex app-server transport=unix endpoint=/tmp/uevolve-codex-bridge-<id>/codex.sock
 Codex defaults model=gpt-5.5 effort=xhigh approvalPolicy=reject log=/tmp/uevolve-codex-bridge-<pid>.log
@@ -175,6 +176,9 @@ codex app-server --listen <unix-or-ws-endpoint> -c mcp_servers.unrealmcp.url="ht
 That makes Codex see the Unreal tool inventory, including tools such as
 `unreal.editor_status`, `unreal.execute_python`, `unreal.spawn_actor`, and the
 self-extension `unreal.mcp_*` tools exposed by the editor.
+The bridge thread instructions direct Codex to call this registered MCP server
+through native `mcpServer/tool/call` routing instead of shell commands, `curl`,
+or direct HTTP requests.
 
 Override the registration with:
 

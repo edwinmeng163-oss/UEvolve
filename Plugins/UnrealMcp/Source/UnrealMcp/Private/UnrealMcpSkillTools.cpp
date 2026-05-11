@@ -134,9 +134,69 @@ namespace UnrealMcp
 			return FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UnrealMcp/SkillDrafts")));
 		}
 
+		FString NormalizeFullPath(const FString& Path)
+		{
+			FString FullPath = FPaths::ConvertRelativePathToFull(Path);
+			FPaths::NormalizeFilename(FullPath);
+			FPaths::CollapseRelativeDirectories(FullPath);
+			return FullPath;
+		}
+
+		FString GetProjectLocalSkillRoot()
+		{
+			return NormalizeFullPath(FPaths::Combine(FPaths::ProjectDir(), TEXT("Tools/UnrealMcpSkills")));
+		}
+
+		void AddUniqueSkillRoot(TArray<FString>& Roots, const FString& Candidate)
+		{
+			for (const FString& Existing : Roots)
+			{
+				if (Existing.Equals(Candidate, ESearchCase::IgnoreCase))
+				{
+					return;
+				}
+			}
+			Roots.Add(Candidate);
+		}
+
+		TArray<FString> GetDefaultProjectSkillRoots()
+		{
+			TArray<FString> Roots;
+			const FString ProjectLocalRoot = GetProjectLocalSkillRoot();
+			Roots.Add(ProjectLocalRoot);
+
+			FString AncestorDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+			FPaths::NormalizeDirectoryName(AncestorDir);
+			FPaths::CollapseRelativeDirectories(AncestorDir);
+			for (int32 ParentIndex = 0; ParentIndex < 4; ++ParentIndex)
+			{
+				const FString ParentDir = FPaths::GetPath(AncestorDir);
+				if (ParentDir.IsEmpty() || ParentDir.Equals(AncestorDir, ESearchCase::CaseSensitive))
+				{
+					break;
+				}
+				AncestorDir = ParentDir;
+				const FString CandidateRoot = NormalizeFullPath(FPaths::Combine(AncestorDir, TEXT("Tools/UnrealMcpSkills")));
+				if (!CandidateRoot.Equals(ProjectLocalRoot, ESearchCase::IgnoreCase) && FPaths::DirectoryExists(CandidateRoot))
+				{
+					AddUniqueSkillRoot(Roots, CandidateRoot);
+				}
+			}
+
+			return Roots;
+		}
+
 		FString GetProjectSkillRoot()
 		{
-			return FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectDir(), TEXT("Tools/UnrealMcpSkills")));
+			const TArray<FString> Roots = GetDefaultProjectSkillRoots();
+			for (const FString& Root : Roots)
+			{
+				if (FPaths::DirectoryExists(Root))
+				{
+					return Root;
+				}
+			}
+			return Roots.Num() > 0 ? Roots[0] : GetProjectLocalSkillRoot();
 		}
 
 		FString GetSkillPromotionBackupRoot()
@@ -648,10 +708,10 @@ namespace UnrealMcp
 		}
 	}
 
-			FString GetDefaultProjectSkillRoot()
-			{
-				return FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectDir(), TEXT("Tools/UnrealMcpSkills")));
-			}
+		FString GetDefaultProjectSkillRoot()
+		{
+			return GetProjectLocalSkillRoot();
+		}
 
 		FString SkillNameFromPath(const FString& SkillPath)
 		{
@@ -775,16 +835,26 @@ namespace UnrealMcp
 
 			TArray<FString> Roots;
 			TryGetStringArrayField(Arguments, TEXT("roots"), Roots);
-			if (Roots.Num() == 0)
+			const bool bUseDefaultRoots = Roots.Num() == 0;
+			if (bUseDefaultRoots)
 			{
-				Roots.Add(TEXT("Tools/UnrealMcpSkills"));
+				Roots = GetDefaultProjectSkillRoots();
 			}
 
 			TArray<FString> SkillPaths;
 			for (const FString& Root : Roots)
 			{
 				FString ResolvedRoot;
-				if (ResolveProjectPathInsideProject(Root, ResolvedRoot, OutFailureReason))
+				if (bUseDefaultRoots)
+				{
+					ResolvedRoot = Root;
+				}
+				else if (!ResolveProjectPathInsideProject(Root, ResolvedRoot, OutFailureReason))
+				{
+					continue;
+				}
+
+				if (!ResolvedRoot.IsEmpty())
 				{
 					CollectSkillPathsFromRoot(ResolvedRoot, SkillPaths);
 				}
@@ -807,9 +877,10 @@ namespace UnrealMcp
 		{
 			TArray<FString> Roots;
 			TryGetStringArrayField(Arguments, TEXT("roots"), Roots);
-			if (Roots.Num() == 0)
+			const bool bUseDefaultRoots = Roots.Num() == 0;
+			if (bUseDefaultRoots)
 			{
-				Roots.Add(TEXT("Tools/UnrealMcpSkills"));
+				Roots = GetDefaultProjectSkillRoots();
 			}
 			FString NameFilter;
 			bool bIncludeText = false;
@@ -825,7 +896,11 @@ namespace UnrealMcp
 			for (const FString& Root : Roots)
 			{
 				FString ResolvedRoot;
-				if (!ResolveProjectPathInsideProject(Root, ResolvedRoot, FailureReason))
+				if (bUseDefaultRoots)
+				{
+					ResolvedRoot = Root;
+				}
+				else if (!ResolveProjectPathInsideProject(Root, ResolvedRoot, FailureReason))
 				{
 					return MakeExecutionResult(FailureReason, nullptr, true);
 				}
