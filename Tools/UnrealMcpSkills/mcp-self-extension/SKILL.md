@@ -55,28 +55,60 @@ hand.
 
 ## Canonical workflow
 
-- Start with `unreal.tool_recommend` to prove no existing tool, workflow, or
-  recipe already covers the user's task.
-- Use `unreal.knowledge_search` when project docs, tests, skills, or local RAG
-  evidence could change the design. If the index is missing, refresh it with
-  `unreal.knowledge_index_refresh` and retry.
-- Run `unreal.preview_change_plan` before source or asset mutation, and keep the plan bounded to the evidence found.
-- If a real MCP capability gap remains, run `unreal.scaffold_mcp_tool` to
-  create a project-local descriptor-first scaffold draft.
-- Validate the draft with `unreal.mcp_validate_cpp_patch` and
-  `unreal.mcp_validate_tool_schema`.
-- Prefer `unreal.mcp_extension_pipeline` for apply, build, fixture test, and
-  manifest creation under
-  `Saved/UnrealMcp/ExtensionBackups/<timestamp>_<toolId>/Manifest.json`.
-- Use the stepwise path, `unreal.mcp_apply_scaffold` ->
-  `unreal.mcp_build_editor` -> `unreal.mcp_run_tool_test`, only when the task
-  needs finer control.
-- After the manifest is written, restart the editor before expecting new C++
-  tools to appear in `tools/list`; a build produces the binary but does not
-  hot-swap the running module.
-- Finish with `unreal.verify_task_outcome`, then record restart handoff or
-  next steps with `unreal.project_memory_write` or
-  `unreal.project_memory_edit`.
+**Think first, act second**. The order below moves from understanding to
+information gathering to gap decision to action; each step has a specific
+existing tool. Scaffold creation is a first-class outcome when the gap
+analyzer says so, not a fallback.
+
+1. **Understand the requirement.** Restate the user's goal in your own
+   words: acceptance criteria, target assets/source, risk class. If
+   anything is unclear, ask before tool selection.
+2. **Plan the change.** Run `unreal.preview_change_plan` to size the
+   intended mutation and capture an explicit risk class. The preview is
+   read-only and is the early gate that anchors everything that follows.
+3. **Research existing knowledge.** Run `unreal.knowledge_search` on the
+   task domain. If it reports a missing index, run
+   `unreal.knowledge_index_refresh` and retry. Read the returned cards
+   before deciding.
+4. **Inventory capabilities and decide the gap.** Run
+   `unreal.tool_recommend` and `unreal.tool_gap_analyze`. The gap analyzer
+   returns one of `use_existing_tool`, `compose_existing_tools`, or
+   `scaffold_new_tool`; treat that as the decision, not as advice.
+5. **Self-extension audit (when the task touches the MCP plugin itself).**
+   Run `unreal.mcp_tool_audit` and/or `unreal.mcp_workbench_status` to
+   understand registry health, current scaffolds, and any pending
+   manifests before mutating tool source.
+6. **Compose existing tools when possible.** If `tool_gap_analyze` says
+   `compose_existing_tools`, use `unreal.workflow_recommend` for the
+   composition shape. If you want to probe a composition without
+   side effects, call `unreal.workflow_run` with `dryRun=true` AND
+   `writeMemory=false`; the default `writeMemory=true` writes
+   `chat.active_task` even in dry-run, which is not what a probe wants.
+7. **Scaffold a new tool when the gap analyzer says so.** Run
+   `unreal.scaffold_mcp_tool` to produce a project-local descriptor-first
+   draft under `<ProjectDir>/Tools/UnrealMcpToolScaffolds/<toolId>/`. This
+   is the first-class path when `scaffold_new_tool` is the decision.
+8. **Validate the draft.** Run `unreal.mcp_validate_cpp_patch` and
+   `unreal.mcp_validate_tool_schema`. Repair patches or schema before
+   moving on.
+9. **Re-preview if scope changed.** If the concrete scaffold raises the
+   risk class or touches more files than the step 2 preview anticipated,
+   re-run `unreal.preview_change_plan` so the gate reflects reality.
+10. **Apply, build, test.** `unreal.mcp_extension_pipeline` is preferred
+    and orchestrates the full gate: preview, validation, generated test,
+    dry-run apply, before-snapshot, apply, build, test suite,
+    after-snapshot, diff, and outcome verification. The stepwise path
+    (`unreal.mcp_apply_scaffold` -> `unreal.mcp_build_editor` ->
+    `unreal.mcp_run_tool_test`) exists when finer control is needed; use
+    it only with `dryRun=true` for apply first.
+11. **Restart, confirm, hand off.** After the pipeline's manifest lands,
+    restart the editor and confirm the new tool appears in `tools/list`.
+    Re-run `unreal.mcp_tool_audit` and the generated or category test.
+    Run `unreal.knowledge_eval_run` only when the change touched docs,
+    ToolRegistry metadata, search scoring, or recommendation behavior.
+    Finish with `unreal.verify_task_outcome`, then record restart handoff
+    or next steps with `unreal.project_memory_write` or
+    `unreal.project_memory_edit`.
 
 ## Cross-developer transfer
 
