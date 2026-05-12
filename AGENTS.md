@@ -218,6 +218,7 @@ Editor and inspection:
 
 - `unreal.editor_status`
 - `unreal.editor.engine_version`
+- `unreal.configure_fps_settings`
 - `unreal.tail_log`
 - `unreal.map_check`
 - map, asset, selected asset, actor, and selected actor listing
@@ -341,7 +342,7 @@ Tools/UnrealMcpToolRegistry/schema.json
 Schemas/UnrealMcpToolRegistry.schema.json
 ```
 
-At the time this file was written, the registry contained 119 entries across:
+At the time this file was written, the registry contained 120 entries across:
 
 - actors
 - blueprint

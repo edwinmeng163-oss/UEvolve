@@ -1,0 +1,42 @@
+{
+  "name": "configure_fps_settings_valid",
+  "description": "Core happy-path dry-run smoke test for the configure FPS settings tool.",
+  "category": "happy_path",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": false,
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.configure_fps_settings",
+      "arguments": {
+        "pawnBlueprintPath": "/Game/MCP_Playable/BP_MazeThirdPersonPawn",
+        "gameModeBlueprintPath": "/Game/MCP_Playable/BP_MazeGameMode",
+        "applyToCurrentLevel": true,
+        "configureGameModeDefaultPawn": true,
+        "createOrMovePlayerStart": true,
+        "playerStartLabel": "Maze_PlayerStart_Front",
+        "x": 0,
+        "y": -1200,
+        "z": 190,
+        "pitch": 0,
+        "yaw": 90,
+        "roll": 0,
+        "cameraFov": 90,
+        "cameraHeight": 72,
+        "walkSpeed": 650,
+        "acceleration": 4096,
+        "deceleration": 4096,
+        "capsuleRadius": 42,
+        "capsuleHalfHeight": 96,
+        "useControllerRotationYaw": true,
+        "orientRotationToMovement": false,
+        "compileSave": true,
+        "saveLevel": false,
+        "dryRun": true
+      }
+    }
+  }
+}
