@@ -107,6 +107,74 @@ follow this narration rule:
 - Cleanup invariant: at end of task, `pgrep -fl /UnrealEditor` must return
   nothing. If it doesn't, that's a SMOKE failure regardless of other markers.
 
+## Self-extension workflow (when adding new MCP tools)
+
+When the task asks for a new MCP tool, NEVER hand-edit these files:
+
+- `Plugins/UnrealMcp/Source/UnrealMcp/Private/UnrealMcp*Tools.cpp`
+  (category dispatcher + handler functions live here; they are populated by
+  the toolchain on apply, not by hand)
+- `Plugins/UnrealMcp/Source/UnrealMcp/Private/UnrealMcpToolRegistrar.cpp`
+  (descriptor entries; same as above)
+- `Tools/UnrealMcpToolRegistry/tools.json`
+  (registry; same as above; the mirror at
+  `Plugins/UnrealMcp/Resources/ToolRegistry/tools.json` is a symlink)
+- `Tools/UnrealMcpTests/Core/*.json`
+  (test fixtures for new tools are created by the toolchain, not hand-written
+  to match a hand-merged handler)
+
+The canonical workflow is:
+
+1. `unreal.scaffold_mcp_tool` -- produces a scaffold dir under
+   `Tools/UnrealMcpToolScaffolds/<toolId>/` with ScaffoldMetadata.json,
+   ToolRegistryPatch.json, four `.patch.cpp` fragments, TestRequest.json,
+   and human-readable docs. The scaffold dir is local-only (gitignored);
+   cross-developer transfer happens via `unreal.tools.export_package` later.
+2. Validate: `unreal.mcp_validate_cpp_patch` + `unreal.mcp_validate_tool_schema`.
+3. Apply + build + test in one orchestrated call:
+   `unreal.mcp_extension_pipeline` (preferred) or step-by-step
+   `unreal.mcp_apply_scaffold` -> `unreal.mcp_build_editor` -> `unreal.mcp_run_tool_test`.
+   The pipeline writes a manifest under
+   `Saved/UnrealMcp/ExtensionBackups/<timestamp>_<toolId>/Manifest.json`
+   with backup snapshots, per-file hashes, and rollback metadata.
+4. Reviewer (Claude as PM) reviews `git status` AFTER the pipeline runs and
+   commits the staged changes; commit message names the toolId.
+5. If cross-developer transfer is needed, `unreal.tools.export_package`
+   produces a zip including scaffold + tests + docs + registry entry +
+   SHA-256 manifest. The output zip lives under
+   `Saved/UnrealMcp/Packages/<toolName>-<version>.zip` (gitignored); transfer
+   is by file sharing, not by committing the zip into the repo.
+
+**Scaffold location is PROJECT-LOCAL by design** (CATEGORY B per the original
+architecture; see recovered prompt 2026-05-12 02:45). Scaffolds land at
+`<ProjectDir>/Tools/UnrealMcpToolScaffolds/<toolId>/` where `<ProjectDir>` is
+whichever `.uproject` the editor was launched against:
+
+- Editor on `UEvolve.uproject` (dev mode): `<ProjectDir>` = repo root, so
+  scaffold lands at `<repoRoot>/Tools/UnrealMcpToolScaffolds/`.
+- Editor on `Examples/UEvolveExample57/UEvolveExample57.uproject`:
+  `<ProjectDir>` = example project, so scaffold lands at
+  `Examples/UEvolveExample57/Tools/UnrealMcpToolScaffolds/`.
+
+Do NOT route the scaffold writer through `UnrealMcpSharedPathResolver` to walk
+up to the repo root. That resolver is for CATEGORY A (skills / tests /
+knowledge), not CATEGORY B (scaffolds, `Saved/UnrealMcp/*`, `SkillDrafts`).
+Walking up breaks the per-project draft isolation that lets each editor
+session iterate on its own scaffold drafts.
+
+Hand-merging a scaffold's `.patch.cpp` content into the main module DOES NOT
+create a manifest. The tool will run, but the toolchain cannot roll it back,
+the inspect tools cannot see its applied state, and any future `apply` or
+`import_package` on the same toolId will conflict. PMs and codex agents have
+repeatedly done this by accident; this section exists to stop it.
+
+Out-of-band exception: if the task is to build a brand-new category
+dispatcher (i.e. adding `UnrealMcpFooTools.cpp` for a category that does
+not yet exist), manual edits to the category file are unavoidable. Flag
+this explicitly in the task brief, and after landing, create retroactive
+rollback snapshots via `unreal.mcp_backup_project_state` so the toolchain
+has a baseline.
+
 ## Final report (always required at the end of the task)
 
 1. Full unified diff of your changes (one fenced block per file).
