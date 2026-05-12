@@ -244,7 +244,7 @@ Blueprint tools:
 
 - create Blueprint class
 - compile one Blueprint or all Blueprints in a path
-- add variables/functions/event/call/branch/foreach nodes
+- add variables/functions/event/input-axis/call/branch/foreach nodes
 - connect pins
 - set pin defaults
 - arrange graph
@@ -342,7 +342,7 @@ Tools/UnrealMcpToolRegistry/schema.json
 Schemas/UnrealMcpToolRegistry.schema.json
 ```
 
-At the time this file was written, the registry contained 120 entries across:
+At the time this file was written, the registry contained 121 entries across:
 
 - actors
 - blueprint

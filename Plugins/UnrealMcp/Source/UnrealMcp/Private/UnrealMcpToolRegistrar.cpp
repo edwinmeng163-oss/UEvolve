@@ -173,6 +173,45 @@ namespace UnrealMcp
 						EUnrealMcpToolRisk::ReadOnly),
 					Schema);
 			}
+
+			{
+				TSharedPtr<FJsonObject> Properties = MakeShared<FJsonObject>();
+				Properties->SetObjectField(TEXT("blueprintPath"), MakeStringProperty(TEXT("Blueprint asset path to edit, for example /Game/MCP/FPS/Blueprints/BP_MCP_FPSCharacter."), FString()));
+				Properties->SetObjectField(TEXT("graphName"), MakeStringProperty(TEXT("Target graph name. Defaults to EventGraph."), TEXT("EventGraph")));
+				Properties->SetObjectField(TEXT("axisName"), MakeStringProperty(TEXT("Legacy input axis mapping name, for example MoveForward, MoveRight, Turn, or LookUp."), FString()));
+				Properties->SetObjectField(TEXT("x"), MakeNumberProperty(TEXT("Graph X position for the new node."), 0.0));
+				Properties->SetObjectField(TEXT("y"), MakeNumberProperty(TEXT("Graph Y position for the new node."), 0.0));
+				Properties->SetObjectField(TEXT("consumeInput"), MakeBoolProperty(TEXT("Whether the input event consumes input when the node supports it."), false));
+				Properties->SetObjectField(TEXT("executeWhenPaused"), MakeBoolProperty(TEXT("Whether the input event should execute while paused when the node supports it."), false));
+				Properties->SetObjectField(TEXT("overrideParentBinding"), MakeBoolProperty(TEXT("Whether to override parent class input binding when the node supports it."), false));
+				Properties->SetObjectField(TEXT("dryRun"), MakeBoolProperty(TEXT("Preview the target graph/node plan without mutating the Blueprint."), false));
+
+				TArray<TSharedPtr<FJsonValue>> Required;
+				Required.Add(MakeShared<FJsonValueString>(TEXT("blueprintPath")));
+				Required.Add(MakeShared<FJsonValueString>(TEXT("axisName")));
+
+				TSharedPtr<FJsonObject> Schema = MakeObjectSchema();
+				Schema->SetObjectField(TEXT("properties"), Properties);
+				Schema->SetArrayField(TEXT("required"), Required);
+
+				FUnrealMcpToolDescriptor Descriptor = MakeDescriptor(
+					TEXT("unreal.bp_add_input_axis_event_node"),
+					TEXT("Add Blueprint Input Axis Event Node"),
+					TEXT("Adds a true K2 InputAxisEvent node for a named legacy input axis to a Blueprint graph and returns the node GUID and pins for later graph wiring."),
+					TEXT("blueprint"),
+					TEXT("UnrealMcpBlueprintTools.cpp"),
+					EUnrealMcpToolRisk::Medium);
+				Descriptor.bRequiresWrite = true;
+				Descriptor.bRequiresBuild = false;
+				Descriptor.bRequiresExternalProcess = false;
+				Descriptor.bRequiresRestart = false;
+				Descriptor.bRequiresProjectMemory = false;
+				Descriptor.bRequiresLock = false;
+				Descriptor.bDryRunSupport = true;
+				Descriptor.bPreflightSupport = true;
+				Descriptor.bPostcheckSupport = true;
+				Registrar.Add(Descriptor, Schema);
+			}
 		}
 
 		void RegisterWidgetInspectorMcpToolDescriptors(FUnrealMcpToolRegistrar& Registrar)
