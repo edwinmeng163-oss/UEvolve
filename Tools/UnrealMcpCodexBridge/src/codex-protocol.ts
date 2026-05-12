@@ -186,6 +186,7 @@ export async function startCodexAppServer(
   const configOverrides: ConfigOverrides = {};
   if (mcpRegistration.enabled) {
     configOverrides[`mcp_servers.${mcpRegistration.name}.url`] = tomlString(mcpRegistration.url);
+    configOverrides[`mcp_servers.${mcpRegistration.name}.transport`] = tomlString("streamable-http");
     const bearer = process.env.UEVOLVE_MCP_BEARER;
     if (bearer) configOverrides[`mcp_servers.${mcpRegistration.name}.bearer_token`] = tomlString(bearer);
   }
