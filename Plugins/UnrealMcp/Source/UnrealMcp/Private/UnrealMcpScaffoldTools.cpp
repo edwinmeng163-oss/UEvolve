@@ -2,7 +2,6 @@
 
 #include "UnrealMcpMemoryTools.h"
 #include "UnrealMcpModule.h"
-#include "UnrealMcpSharedPathResolver.h"
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -936,25 +935,6 @@ namespace UnrealMcp
 		if (OutputRoot.IsEmpty())
 		{
 			OutputRoot = TEXT("Tools/UnrealMcpToolScaffolds");
-		}
-
-		FString NormalizedOutputRoot = OutputRoot;
-		FPaths::NormalizeFilename(NormalizedOutputRoot);
-		if (FPaths::IsRelative(NormalizedOutputRoot))
-		{
-			FString ToolsSubpath = NormalizedOutputRoot;
-			ToolsSubpath.RemoveFromStart(TEXT("./"));
-			ToolsSubpath.RemoveFromStart(TEXT("Tools/"));
-			if (ToolsSubpath == TEXT("UnrealMcpToolScaffolds")
-				|| ToolsSubpath.StartsWith(TEXT("UnrealMcpToolScaffolds/")))
-			{
-				TArray<FString> CandidateRoots;
-				ResolveSharedRepoRoot(ToolsSubpath, { TEXT("ScaffoldMetadata.json") }, OutDirectory, CandidateRoots);
-				if (!OutDirectory.IsEmpty())
-				{
-					return true;
-				}
-			}
 		}
 
 		FString ProjectDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
