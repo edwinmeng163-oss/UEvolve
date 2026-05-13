@@ -820,12 +820,14 @@ namespace UnrealMcp
 			{
 				return false;
 			}
+
 			const TArray<TSharedPtr<FJsonValue>>* Tools = nullptr;
 			if (!OutRegistryObject->TryGetArrayField(TEXT("tools"), Tools) || !Tools)
 			{
 				OutFailureReason = FString::Printf(TEXT("ToolRegistry '%s' is missing tools[]."), *RegistryPath);
 				return false;
 			}
+
 			FString NewName;
 			NewEntry->TryGetStringField(TEXT("name"), NewName);
 			for (const TSharedPtr<FJsonValue>& ToolValue : *Tools)
@@ -841,6 +843,15 @@ namespace UnrealMcp
 				}
 			}
 			return true;
+		}
+
+		FString MakeRegistryNotInitializedMessage()
+		{
+			return TEXT("unreal.tools.import_package requires a writable `Tools/UnrealMcpToolRegistry/tools.json` at the project root. Drop-in plugin installs do not provision this.\n")
+				TEXT("To enable tool-package import:\n")
+				TEXT("1. Copy `<UE>/Engine/Plugins/UnrealMcp/Resources/ToolRegistry/tools.json` (or the plugin's `Resources/ToolRegistry/tools.json`) into `<YourProject>/Tools/UnrealMcpToolRegistry/tools.json`.\n")
+				TEXT("2. Add `Tools/UnrealMcpToolRegistry/` to your project's gitignore allowlist if you want to track imports in your project's git.\n")
+				TEXT("3. Retry the import.");
 		}
 	}
 
@@ -1101,6 +1112,21 @@ namespace UnrealMcp
 		FString RegistryRoot;
 		ResolveSharedRepoRoot(TEXT("UnrealMcpToolRegistry"), { TEXT("tools.json") }, RegistryRoot, RegistryRootCandidates);
 		const FString RegistryPath = FPaths::Combine(RegistryRoot, TEXT("tools.json"));
+
+		if (!FPaths::FileExists(RegistryPath))
+		{
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("action"), TEXT("tools_import_package"));
+			StructuredContent->SetStringField(TEXT("packagePath"), PackagePath);
+			StructuredContent->SetStringField(TEXT("toolName"), ToolName);
+			StructuredContent->SetStringField(TEXT("kind"), PackageKind);
+			StructuredContent->SetBoolField(TEXT("dryRun"), bDryRun);
+			StructuredContent->SetBoolField(TEXT("acceptRegistryOnly"), bAcceptRegistryOnly);
+			StructuredContent->SetStringField(TEXT("registryPath"), RegistryPath);
+			StructuredContent->SetStringField(TEXT("errorCode"), TEXT("REGISTRY_NOT_INITIALIZED"));
+			StructuredContent->SetArrayField(TEXT("registryRootCandidates"), MakeSharedRepoRootCandidateValues(RegistryRootCandidates, { TEXT("tools.json") }));
+			return MakeExecutionResult(MakeRegistryNotInitializedMessage(), StructuredContent, true);
+		}
 
 		TSharedPtr<FJsonObject> RegistryObject;
 		bool bDuplicateRegistryEntry = false;

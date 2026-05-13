@@ -188,6 +188,13 @@ After copying, close Unreal Editor and build the target project. For example:
 
 The MCP endpoint only responds after Unreal Editor opens that target project and successfully loads this plugin. It is not a standalone background service.
 
+## Drop-in install limitations
+
+A source-only drop-in under `<YourProject>/Plugins/UnrealMcp/` can run editor MCP tools, but it does not provision project-root `Tools/` content.
+`unreal.tools.import_package` requires a writable `<YourProject>/Tools/UnrealMcpToolRegistry/tools.json`; copy the plugin `Resources/ToolRegistry/tools.json` there before importing reviewed tool packages.
+Workbench `Run Core Tests` and `Run RAG Evals` are disabled until `Tools/UnrealMcpTests/Core/` and `Tools/UnrealMcpKnowledge/Evals/` exist with JSON cases.
+Use the full install workflow above when you need package import, local test suites, RAG evals, shared skills, docs, and schemas.
+
 ## AI Assistant
 
 The chat panel can also call an LLM through the OpenAI Responses API and let it drive the same Unreal MCP tools that the HTTP server exposes.

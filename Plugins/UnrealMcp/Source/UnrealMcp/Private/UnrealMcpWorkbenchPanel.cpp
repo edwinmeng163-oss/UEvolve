@@ -3,11 +3,14 @@
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "HAL/PlatformApplicationMisc.h"
+#include "Misc/Paths.h"
 #include "Policies/PrettyJsonPrintPolicy.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
 #include "Styling/AppStyle.h"
 #include "UnrealMcpModule.h"
+#include "UnrealMcpSelfExtensionInternal.h"
+#include "UnrealMcpSharedPathResolver.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SBox.h"
@@ -92,11 +95,47 @@ namespace UnrealMcpWorkbench
 		}
 		return Text.Left(MaxChars) + TEXT("\n... truncated ...");
 	}
+
+	bool HasImmediateJsonFiles(const FString& Directory)
+	{
+		TArray<FString> JsonFiles;
+		UnrealMcp::FindImmediateChildren(Directory, TEXT("*.json"), true, false, JsonFiles);
+		return JsonFiles.Num() > 0;
+	}
+
+	bool AreCoreTestsAvailable()
+	{
+		TSharedPtr<FJsonObject> Arguments = MakeEmptyObject();
+		Arguments->SetBoolField(TEXT("__allowDefaultTestFixtureRoot"), true);
+
+		FString TestsDirectory;
+		FString ScaffoldDirectory;
+		FString ToolName;
+		FString FailureReason;
+		TArray<FString> CandidateRoots;
+		if (!UnrealMcp::ResolveMcpTestsDirectory(*Arguments, TestsDirectory, ScaffoldDirectory, ToolName, FailureReason, &CandidateRoots))
+		{
+			return false;
+		}
+
+		return FPaths::GetCleanFilename(TestsDirectory).Equals(TEXT("Core"), ESearchCase::IgnoreCase)
+			&& HasImmediateJsonFiles(TestsDirectory);
+	}
+
+	bool AreKnowledgeEvalsAvailable()
+	{
+		TArray<FString> EvalPathCandidates;
+		FString EvalPath;
+		return UnrealMcp::ResolveSharedRepoRoot(TEXT("UnrealMcpKnowledge/Evals"), { TEXT("*.json") }, EvalPath, EvalPathCandidates)
+			&& UnrealMcp::SharedRepoRootHasAny(EvalPath, { TEXT("*.json") });
+	}
 }
 
 void SUnrealMcpWorkbenchPanel::Construct(const FArguments& InArgs, FUnrealMcpModule* InOwnerModule)
 {
 	OwnerModule = InOwnerModule;
+	const bool bCoreTestsAvailable = UnrealMcpWorkbench::AreCoreTestsAvailable();
+	const bool bKnowledgeEvalsAvailable = UnrealMcpWorkbench::AreKnowledgeEvalsAvailable();
 
 	ChildSlot
 	[
@@ -146,7 +185,14 @@ void SUnrealMcpWorkbenchPanel::Construct(const FArguments& InArgs, FUnrealMcpMod
 				.Padding(0.0f, 0.0f, 6.0f, 0.0f)
 				[
 					SNew(SButton)
-					.Text(LOCTEXT("RunCoreTests", "Run Core Tests"))
+					.Text(bCoreTestsAvailable ? LOCTEXT("RunCoreTests", "Run Core Tests") : LOCTEXT("RunCoreTestsUnavailable", "Run Core Tests (unavailable)"))
+					.ToolTipText(bCoreTestsAvailable
+						? LOCTEXT("RunCoreTestsTooltip", "Run versioned local core MCP regression tests.")
+						: LOCTEXT("RunCoreTestsUnavailableTooltip", "This action requires `Tools/UnrealMcpTests/Core/` in the project. Drop-in plugin installs do not include these. See `Plugins/UnrealMcp/README.md` for the full-workbench install."))
+					.IsEnabled_Lambda([bCoreTestsAvailable]()
+					{
+						return bCoreTestsAvailable;
+					})
 					.OnClicked(this, &SUnrealMcpWorkbenchPanel::HandleCoreTestsClicked)
 				]
 				+ SHorizontalBox::Slot()
@@ -243,8 +289,14 @@ void SUnrealMcpWorkbenchPanel::Construct(const FArguments& InArgs, FUnrealMcpMod
 					.AutoWidth()
 					[
 						SNew(SButton)
-						.Text(LOCTEXT("RunKnowledgeEvals", "Run RAG Evals"))
-						.ToolTipText(LOCTEXT("RunKnowledgeEvalsTooltip", "Run versioned local RAG regression cases."))
+						.Text(bKnowledgeEvalsAvailable ? LOCTEXT("RunKnowledgeEvals", "Run RAG Evals") : LOCTEXT("RunKnowledgeEvalsUnavailable", "Run RAG Evals (unavailable)"))
+						.ToolTipText(bKnowledgeEvalsAvailable
+							? LOCTEXT("RunKnowledgeEvalsTooltip", "Run versioned local RAG regression cases.")
+							: LOCTEXT("RunKnowledgeEvalsUnavailableTooltip", "This action requires `Tools/UnrealMcpKnowledge/Evals/` in the project. Drop-in plugin installs do not include these. See `Plugins/UnrealMcp/README.md` for the full-workbench install."))
+						.IsEnabled_Lambda([bKnowledgeEvalsAvailable]()
+						{
+							return bKnowledgeEvalsAvailable;
+						})
 						.OnClicked(this, &SUnrealMcpWorkbenchPanel::HandleKnowledgeEvalClicked)
 					]
 				]
@@ -325,7 +377,7 @@ FReply SUnrealMcpWorkbenchPanel::HandleAuditClicked()
 FReply SUnrealMcpWorkbenchPanel::HandleCoreTestsClicked()
 {
 	TSharedPtr<FJsonObject> Arguments = UnrealMcpWorkbench::MakeEmptyObject();
-	Arguments->SetStringField(TEXT("testsDir"), TEXT("Tools/UnrealMcpTests/Core"));
+	Arguments->SetBoolField(TEXT("__allowDefaultTestFixtureRoot"), true);
 	Arguments->SetBoolField(TEXT("readProjectMemory"), false);
 	Arguments->SetBoolField(TEXT("writeProjectMemory"), false);
 	RunToolAndDisplay(TEXT("unreal.mcp_run_test_suite"), Arguments);
@@ -425,7 +477,6 @@ FReply SUnrealMcpWorkbenchPanel::HandleToolRecommendClicked()
 FReply SUnrealMcpWorkbenchPanel::HandleKnowledgeEvalClicked()
 {
 	TSharedPtr<FJsonObject> Arguments = UnrealMcpWorkbench::MakeEmptyObject();
-	Arguments->SetStringField(TEXT("evalPath"), TEXT("Tools/UnrealMcpKnowledge/Evals"));
 	Arguments->SetBoolField(TEXT("refreshIndex"), false);
 	Arguments->SetBoolField(TEXT("includeDetails"), false);
 	Arguments->SetNumberField(TEXT("limit"), 6.0);
