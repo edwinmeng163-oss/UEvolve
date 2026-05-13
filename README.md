@@ -13,22 +13,88 @@ Its main deliverable is the **Unreal MCP** editor plugin under `Plugins/UnrealMc
 
 > 📘 **New here?** Start with [`Docs/Release-2026-05.md`](Docs/Release-2026-05.md) — trilingual (中文 · English · 日本語) release notes plus a step-by-step setup guide for macOS, Linux, and Windows, including the multi-provider AI configuration (OpenAI / Kimi / GLM / DeepSeek / Anthropic Claude / Codex) and the Codex Desktop bridge.
 
+## English Overview
+
+UEvolve is an Unreal Editor 5.6 / 5.7 MCP self-extension workbench.
+
+It is more than a plain wrapper that lets AI call Unreal Editor tools.
+UEvolve productizes the act of adding new MCP capabilities under safety rails:
+audit, dry run, backup manifest, UBT compile, fixture suite, rollback, project
+memory, and supervisor recovery.
+
+Current core capabilities:
+
+- Local MCP server inside Unreal Editor, plus `Window > Unreal MCP Chat`.
+- `Window > Unreal MCP Workbench` aggregates status, audit, core tests, pipeline, and lock state.
+- 121 registered MCP tools across actors, blueprint, editor, memory, scaffold, self-extension, skills, and widget categories.
+- Multi-provider chat through OpenAI Responses, OpenAI Chat Compat for Kimi/GLM/DeepSeek/Qwen/Ollama, Anthropic Claude, Codex CLI, and the Codex Desktop bridge.
+- Descriptor-first self-extension pipeline: scaffolds, patch validation, apply with backup manifest, UBT build, fixture test, and rollback to manifest.
+- Tool export/import packages for cross-developer transfer through `Saved/UnrealMcp/Packages/*.zip`.
+- Local RAG with a Knowledge index and Knowledge cards under `Saved/UnrealMcp/KnowledgeIndex/`.
+- Multi-engine and cross-platform discipline for UE 5.6.1 and UE 5.7.4 on macOS and Windows.
+
+Packaging stance: the macOS UE 5.6 and UE 5.7 builds are green today, and
+pilot package work is still in progress. Today's intended target is a Mac
+UE 5.6 + UE 5.7 dual-engine drop-in plugin, with Windows and other engine
+variants following as collaborators verify them.
+
+For a quick start, read `Docs/Release-2026-05.md`, then `AGENTS.md`, then the
+Deployment section later in this README.
+
 ## 中文概览
 
-本项目当前定位为 **面向 Unreal Editor 的 MCP 自扩展工作台**。
+UEvolve 是一个面向 Unreal Editor 5.6 / 5.7 的 MCP 自扩展工作台。
 
-它不只是让 AI 调用 Unreal Editor 工具，而是尝试把“新增 MCP 能力”本身产品化：AI 可以在安全审计、dry run、备份、编译、测试、回滚、长期记忆和外部 supervisor 的保护下，为当前项目持续扩展新的编辑器自动化工具。
+它不只是让 AI 调用 Unreal Editor 工具的普通 wrapper。
+UEvolve 试图把“新增 MCP 能力”本身产品化，并用安全护栏保护这件事：
+audit、dry run、备份 manifest、UBT 编译、fixture 测试套件、rollback、
+project memory 和 supervisor 恢复链路。
 
-当前重点：
+当前核心能力：
 
 - 在 Unreal Editor 内运行本地 MCP server，并提供 `Window > Unreal MCP Chat` 对话入口。
-- 通过 `Window > Unreal MCP Workbench` 提供轻量自扩展控制台，聚合状态、审计、核心测试、pipeline、lock 等能力。
-- 支持项目检查、地图/资产查询、PIE 控制、日志读取、Map Check、Python/Console 执行等基础编辑器自动化。
-- 支持 Blueprint 图编辑、UMG Widget 编辑、玩法系统脚手架、MCP 工具脚手架和项目本地 `.skill` 工作流。
-- 自扩展链路包含 schema 校验、patch 片段校验、dry-run diff、备份 manifest、UBT 编译、测试套件、rollback、project memory 和 supervisor 重启恢复。
-- Skill 蒸馏链路会记录高层 Editor/Chat/MCP 活动到本地 JSONL，并把一次任务/session 总结成可审查的 `SKILL.md` 草稿，确认后再 promote 到项目技能库。
-- 引入多人协作保护：CODEOWNERS、工具命名规范、Manifest schema、extension session lock、ToolRegistry 风险元数据和冲突检测规则。
-- 仓库根目录提供 `UEvolve.uproject` 作为统一的本地开发入口；`Examples/UEvolveExample`（UE 5.6.1）和 `Examples/UEvolveExample57`（UE 5.7.4）是两个可选的示例工程，按你装的引擎版本选一个。
+- `Window > Unreal MCP Workbench` 聚合 status、audit、core tests、pipeline 和 lock 状态。
+- 已注册 121 个 MCP tools，覆盖 actors、blueprint、editor、memory、scaffold、self-extension、skills、widget 分类。
+- 多 provider Chat：OpenAI Responses、OpenAI Chat Compat for Kimi/GLM/DeepSeek/Qwen/Ollama、Anthropic Claude、Codex CLI 和 Codex Desktop bridge。
+- descriptor-first 自扩展 pipeline：scaffold、patch validation、带备份 manifest 的 apply、UBT build、fixture test，以及 rollback to manifest。
+- 通过 `Saved/UnrealMcp/Packages/*.zip` 导出/导入工具包，支持跨开发者传递。
+- 本地 RAG：Knowledge index 和 Knowledge cards 位于 `Saved/UnrealMcp/KnowledgeIndex/`。
+- 面向 UE 5.6.1 与 UE 5.7.4、macOS 与 Windows 的多引擎和跨平台兼容纪律。
+
+当前打包状态：macOS UE 5.6 和 UE 5.7 构建今天已通过，pilot package
+仍在进行中。今天的目标是先交付 Mac UE 5.6 + UE 5.7 双引擎 drop-in
+plugin；Windows 和其他引擎版本会在协作者验证后继续跟进。
+
+快速开始请先阅读 `Docs/Release-2026-05.md`，再读 `AGENTS.md`，然后参考本
+README 后面的 Deployment 部分。
+
+## 日本語概要
+
+UEvolve は Unreal Editor 5.6 / 5.7 向けの MCP self-extension workbench です。
+
+これは AI に Unreal Editor tools を呼び出させるだけの plain wrapper ではありません。
+UEvolve は新しい MCP capabilities を追加する行為そのものを製品化し、
+audit、dry run、backup manifest、UBT compile、fixture suite、rollback、
+project memory、supervisor recovery という安全レールの下で扱います。
+
+現在の中核機能:
+
+- Unreal Editor 内で local MCP server を動かし、`Window > Unreal MCP Chat` を提供します。
+- `Window > Unreal MCP Workbench` が status、audit、core tests、pipeline、lock state を集約します。
+- actors、blueprint、editor、memory、scaffold、self-extension、skills、widget カテゴリにまたがる 121 個の MCP tools を登録済みです。
+- OpenAI Responses、Kimi/GLM/DeepSeek/Qwen/Ollama 向け OpenAI Chat Compat、Anthropic Claude、Codex CLI、Codex Desktop bridge による multi-provider chat に対応します。
+- descriptor-first self-extension pipeline: scaffolds、patch validation、backup manifest 付き apply、UBT build、fixture test、rollback to manifest を扱います。
+- `Saved/UnrealMcp/Packages/*.zip` の tool export/import packages により、開発者間で転送できます。
+- `Saved/UnrealMcp/KnowledgeIndex/` 配下の Knowledge index と Knowledge cards による local RAG を備えています。
+- UE 5.6.1 と UE 5.7.4、macOS と Windows に向けた multi-engine / cross-platform 互換性の規律を保ちます。
+
+現在の packaging stance: macOS の UE 5.6 と UE 5.7 builds は今日 green で、
+pilot package 作業は進行中です。現時点の対象は Mac UE 5.6 + UE 5.7
+dual-engine drop-in plugin であり、Windows と他の engine variants は
+協力者による検証後に続きます。
+
+quick start には `Docs/Release-2026-05.md`、続いて `AGENTS.md`、さらにこの
+README 後半の Deployment section を参照してください。
 
 ## Current Status
 
