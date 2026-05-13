@@ -43,7 +43,9 @@ function Invoke-PythonScript {
         if ($null -eq $command) {
             continue
         }
-        & $command.Source $ScriptPath
+        # Merge stderr into stdout so PowerShell's Stop-on-stderr policy doesn't
+        # wrap legitimate validator messages as NativeCommandError records.
+        & $command.Source $ScriptPath 2>&1 | ForEach-Object { Write-Host $_ }
         if ($LASTEXITCODE -eq 0) {
             return $true
         }

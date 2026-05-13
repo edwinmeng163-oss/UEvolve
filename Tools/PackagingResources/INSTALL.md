@@ -60,7 +60,7 @@ On first editor launch, Unreal Build Tool compiles the plugin against your local
 
 ### Not In This Pilot
 
-Windows packaging is now available in preview via `Tools/package_plugin.ps1` — runtime verification on Windows hardware is pending Stage 2. UE 5.8 support comes after upstream Epic 5.8 transport stabilises. Linux is untested.
+Windows packaging via `Tools/package_plugin.ps1` is verified on UE 5.7.4 / Win64 (Stage 2 end-to-end: build PASS, headless smoke PASS, `tools/list` count = 111). UE 5.8 support comes after upstream Epic 5.8 transport stabilises. Linux is untested.
 
 ### Help
 
@@ -145,7 +145,7 @@ Windows PowerShell：
 
 ### 本次 Pilot 不包含
 
-Windows 打包现在可通过 `Tools/package_plugin.ps1` 预览使用，Windows 硬件上的运行时验证仍等待 Stage 2。UE 5.8 支持会在上游 Epic 5.8 transport 稳定后提供。Linux 尚未测试。
+Windows 打包通过 `Tools/package_plugin.ps1` 已在 UE 5.7.4 / Win64 上验证（Stage 2 端到端：build PASS、headless smoke PASS、`tools/list` count = 111）。UE 5.8 支持会在上游 Epic 5.8 transport 稳定后提供。Linux 尚未测试。
 
 ### 获取帮助
 
@@ -230,7 +230,7 @@ Windows PowerShell:
 
 ### この Pilot に含まれないもの
 
-Windows パッケージングは `Tools/package_plugin.ps1` でプレビュー利用できます。Windows 実機でのランタイム検証は Stage 2 待ちです。UE 5.8 サポートは upstream Epic 5.8 transport の安定後に対応します。Linux は未検証です。
+Windows パッケージングは `Tools/package_plugin.ps1` により UE 5.7.4 / Win64 で検証済みです（Stage 2 end-to-end: build PASS、headless smoke PASS、`tools/list` count = 111）。UE 5.8 サポートは upstream Epic 5.8 transport の安定後に対応します。Linux は未検証です。
 
 ### ヘルプ
 
