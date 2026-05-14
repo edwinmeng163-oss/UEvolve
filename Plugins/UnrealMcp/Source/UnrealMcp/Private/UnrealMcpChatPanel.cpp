@@ -20,6 +20,7 @@
 #include "Styling/AppStyle.h"
 #include "UnrealMcpModule.h"
 #include "UnrealMcpSettings.h"
+#include "UnrealMcpToolRegistry.h"
 #include "Widgets/Images/SThrobber.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SCheckBox.h"
@@ -170,6 +171,13 @@ namespace UnrealMcpChat
 		}
 	}
 
+	FLinearColor GetToolStripeColor(const FUnrealMcpChatEntry& Entry)
+	{
+		return Entry.bToolRequiresWrite
+			? FLinearColor(0.85f, 0.65f, 0.0f, 1.0f)
+			: FLinearColor(1.0f, 1.0f, 0.7f, 1.0f);
+	}
+
 	FString EntryTypeToString(EUnrealMcpChatEntryType Type)
 	{
 		switch (Type)
@@ -223,6 +231,11 @@ namespace UnrealMcpChat
 
 		Lines.Add(Header);
 
+		if (!Entry.ToolSummary.IsEmpty())
+		{
+			Lines.Add(Entry.ToolSummary);
+		}
+
 		if (!Entry.Body.IsEmpty())
 		{
 			Lines.Add(Entry.Body);
@@ -235,6 +248,194 @@ namespace UnrealMcpChat
 		}
 
 		return FString::Join(Lines, TEXT("\n"));
+	}
+
+	FString ToolRiskLevelToChatString(UnrealMcp::EToolRiskLevel RiskLevel)
+	{
+		if (RiskLevel == UnrealMcp::EToolRiskLevel::ReadOnly)
+		{
+			return TEXT("readOnly");
+		}
+		return UnrealMcp::LexToString(RiskLevel);
+	}
+
+	void ApplyToolPolicyMetadata(FUnrealMcpChatEntry& Entry)
+	{
+		const bool bHasRegistryEntry = UnrealMcp::FindToolRegistryEntry(Entry.Title) != nullptr;
+		const UnrealMcp::FToolPolicy Policy = UnrealMcp::GetToolPolicy(Entry.Title);
+		Entry.bToolRequiresWrite = bHasRegistryEntry ? Policy.bRequiresWrite : false;
+		Entry.ToolRiskLevel = bHasRegistryEntry ? ToolRiskLevelToChatString(Policy.RiskLevel) : TEXT("readOnly");
+		Entry.ToolCategory = bHasRegistryEntry ? Policy.Category : FString();
+	}
+
+	TSharedPtr<FJsonObject> ParseJsonObjectString(const FString& JsonText)
+	{
+		TSharedPtr<FJsonObject> Object;
+		const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonText);
+		if (FJsonSerializer::Deserialize(Reader, Object) && Object.IsValid())
+		{
+			return Object;
+		}
+		return nullptr;
+	}
+
+	FString JsonValueToSummaryString(const TSharedPtr<FJsonValue>& Value)
+	{
+		if (!Value.IsValid())
+		{
+			return TEXT("(unknown)");
+		}
+
+		switch (Value->Type)
+		{
+		case EJson::String:
+			return Value->AsString();
+		case EJson::Number:
+			return FString::SanitizeFloat(Value->AsNumber());
+		case EJson::Boolean:
+			return Value->AsBool() ? TEXT("true") : TEXT("false");
+		case EJson::Object:
+			{
+				FString Output;
+				const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Output);
+				FJsonSerializer::Serialize(Value->AsObject().ToSharedRef(), Writer);
+				Output.ReplaceInline(TEXT("\n"), TEXT(" "));
+				return Output;
+			}
+		case EJson::Array:
+			{
+				FString Output;
+				const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Output);
+				FJsonSerializer::Serialize(Value->AsArray(), Writer);
+				Output.ReplaceInline(TEXT("\n"), TEXT(" "));
+				return Output;
+			}
+		case EJson::Null:
+		default:
+			return TEXT("(unknown)");
+		}
+	}
+
+	bool TryResolveSummaryToken(
+		const FString& Token,
+		const TSharedPtr<FJsonObject>& ArgumentsObject,
+		const TSharedPtr<FJsonObject>& ResultObject,
+		FString& OutValue)
+	{
+		TSharedPtr<FJsonObject> CurrentObject;
+		FString FieldPath;
+		if (Token.StartsWith(TEXT("args.")))
+		{
+			CurrentObject = ArgumentsObject;
+			FieldPath = Token.RightChop(5);
+		}
+		else if (Token.StartsWith(TEXT("result.")))
+		{
+			CurrentObject = ResultObject;
+			FieldPath = Token.RightChop(7);
+		}
+		else
+		{
+			return false;
+		}
+
+		if (!CurrentObject.IsValid() || FieldPath.IsEmpty())
+		{
+			return false;
+		}
+
+		TArray<FString> Fields;
+		FieldPath.ParseIntoArray(Fields, TEXT("."), true);
+		if (Fields.Num() == 0)
+		{
+			return false;
+		}
+
+		for (int32 Index = 0; Index < Fields.Num(); ++Index)
+		{
+			const TSharedPtr<FJsonValue>* ValuePtr = CurrentObject->Values.Find(Fields[Index]);
+			if (!ValuePtr || !ValuePtr->IsValid())
+			{
+				return false;
+			}
+			const TSharedPtr<FJsonValue> Value = *ValuePtr;
+
+			if (Index == Fields.Num() - 1)
+			{
+				OutValue = JsonValueToSummaryString(Value);
+				return true;
+			}
+
+			if (Value->Type != EJson::Object || !Value->AsObject().IsValid())
+			{
+				return false;
+			}
+			CurrentObject = Value->AsObject();
+		}
+
+		return false;
+	}
+
+	FString InterpolateToolSummary(
+		const FString& SummaryTemplate,
+		const TSharedPtr<FJsonObject>& ArgumentsObject,
+		const TSharedPtr<FJsonObject>& ResultObject)
+	{
+		FString Output;
+		int32 SearchIndex = 0;
+		while (SearchIndex < SummaryTemplate.Len())
+		{
+			const int32 OpenIndex = SummaryTemplate.Find(TEXT("{"), ESearchCase::CaseSensitive, ESearchDir::FromStart, SearchIndex);
+			if (OpenIndex == INDEX_NONE)
+			{
+				Output += SummaryTemplate.Mid(SearchIndex);
+				break;
+			}
+
+			Output += SummaryTemplate.Mid(SearchIndex, OpenIndex - SearchIndex);
+			const int32 CloseIndex = SummaryTemplate.Find(TEXT("}"), ESearchCase::CaseSensitive, ESearchDir::FromStart, OpenIndex + 1);
+			if (CloseIndex == INDEX_NONE)
+			{
+				Output += SummaryTemplate.Mid(OpenIndex);
+				break;
+			}
+
+			FString Replacement;
+			const FString Token = SummaryTemplate.Mid(OpenIndex + 1, CloseIndex - OpenIndex - 1).TrimStartAndEnd();
+			Output += TryResolveSummaryToken(Token, ArgumentsObject, ResultObject, Replacement) ? Replacement : TEXT("(unknown)");
+			SearchIndex = CloseIndex + 1;
+		}
+
+		return Output.TrimStartAndEnd();
+	}
+
+	void UpdateToolSummaryFromTemplate(
+		FUnrealMcpChatEntry& Entry,
+		const FString& ArgumentsJson,
+		const TSharedPtr<FJsonObject>& ResultObject)
+	{
+		Entry.ToolSummary.Reset();
+		const UnrealMcp::FToolPolicy Policy = UnrealMcp::GetToolPolicy(Entry.Title);
+		if (Policy.SummaryTemplate.IsEmpty())
+		{
+			return;
+		}
+
+		Entry.ToolSummary = InterpolateToolSummary(
+			Policy.SummaryTemplate,
+			ParseJsonObjectString(ArgumentsJson),
+			ResultObject);
+		Entry.ToolSummary.ReplaceInline(TEXT("\r"), TEXT(" "));
+		Entry.ToolSummary.ReplaceInline(TEXT("\n"), TEXT(" "));
+		Entry.ToolSummary = Entry.ToolSummary.TrimStartAndEnd();
+		while (Entry.ToolSummary.Contains(TEXT("  ")))
+		{
+			Entry.ToolSummary.ReplaceInline(TEXT("  "), TEXT(" "));
+		}
+		if (Entry.ToolSummary.Len() > 240)
+		{
+			Entry.ToolSummary = Entry.ToolSummary.Left(237) + TEXT("...");
+		}
 	}
 
 	FString GetToolStatusIcon(const FUnrealMcpChatEntry& Entry)
@@ -2608,6 +2809,8 @@ void SUnrealMcpChatPanel::UpdateToolEntryWithResult(
 			*UnrealMcpChat::JsonObjectToPrettyString(Result.StructuredContent));
 	}
 
+	UnrealMcpChat::UpdateToolSummaryFromTemplate(*Entry, ArgumentsJson, Result.StructuredContent);
+
 	InvalidateEntryWidgets();
 	if (Entry->Type == EUnrealMcpChatEntryType::Tool)
 	{
@@ -2801,6 +3004,7 @@ void SUnrealMcpChatPanel::StartAssistantRequest(const FString& UserPrompt)
 							(*ExistingEntry)->Body = Event.Text;
 							(*ExistingEntry)->bIsPending = false;
 							(*ExistingEntry)->bIsError = Event.bIsError;
+							UnrealMcpChat::UpdateToolSummaryFromTemplate(**ExistingEntry, (*ExistingEntry)->Details, nullptr);
 							if (!Event.bIsError && Event.ToolName.Equals(TEXT("unreal.tail_log"), ESearchCase::CaseSensitive))
 							{
 								PinnedThis->LastLogText = Event.Text;
@@ -2817,6 +3021,7 @@ void SUnrealMcpChatPanel::StartAssistantRequest(const FString& UserPrompt)
 								ToolEntry->Body = Event.Text;
 								ToolEntry->bIsPending = false;
 								ToolEntry->bIsError = Event.bIsError;
+								UnrealMcpChat::UpdateToolSummaryFromTemplate(*ToolEntry, Event.ToolArgumentsJson, nullptr);
 								if (!Event.bIsError && Event.ToolName.Equals(TEXT("unreal.tail_log"), ESearchCase::CaseSensitive))
 								{
 									PinnedThis->LastLogText = Event.Text;
@@ -2926,6 +3131,7 @@ TSharedPtr<FUnrealMcpChatEntry> SUnrealMcpChatPanel::AppendToolCard(const FStrin
 	Entry->ToolCallId = ToolCallId;
 	Entry->Body = TEXT("Running...");
 	Entry->bIsPending = true;
+	UnrealMcpChat::ApplyToolPolicyMetadata(*Entry);
 
 	Entries.Add(Entry);
 	if (!ToolCallId.IsEmpty())
@@ -3032,93 +3238,136 @@ TSharedRef<SWidget> SUnrealMcpChatPanel::BuildEntryWidget(const TSharedPtr<FUnre
 				})
 				.Padding(10.0f)
 				[
-					SNew(SExpandableArea)
-					.InitiallyCollapsed(!Entry->bToolCardExpanded)
-					.OnAreaExpansionChanged(FOnBooleanValueChanged::CreateLambda([Entry](bool bIsExpanded)
-					{
-						Entry->bToolCardExpanded = bIsExpanded;
-					}))
-					.HeaderContent()
+					SNew(SHorizontalBox)
+					+ SHorizontalBox::Slot()
+					.AutoWidth()
+					.VAlign(VAlign_Fill)
 					[
-						SNew(SHorizontalBox)
-						+ SHorizontalBox::Slot()
-						.FillWidth(1.0f)
-						.VAlign(VAlign_Center)
-						[
-							SNew(STextBlock)
-							.Font(FAppStyle::GetFontStyle("NormalFontBold"))
-							.ColorAndOpacity_Lambda([Entry]()
-							{
-								return UnrealMcpChat::GetEntryTitleColor(*Entry);
-							})
-							.Text_Lambda([Entry]()
-							{
-								return FText::FromString(UnrealMcpChat::BuildEntryTitleText(*Entry));
-							})
-						]
-						+ SHorizontalBox::Slot()
-						.AutoWidth()
-						.VAlign(VAlign_Center)
-						.Padding(6.0f, 0.0f, 0.0f, 0.0f)
-						[
-							SNew(SButton)
-							.ContentPadding(FMargin(4.0f, 1.0f))
-							.ToolTipText(LOCTEXT("CopyEntryTooltip", "Copy this entry."))
-							.Text(LOCTEXT("CopyEntryIcon", "📋"))
-							.OnClicked_Lambda([this, Entry]()
-							{
-								return HandleEntryCopyClicked(Entry);
-							})
-						]
-					]
-					.BodyContent()
-					[
-						SNew(SVerticalBox)
-						+ SVerticalBox::Slot()
-						.AutoHeight()
-						.Padding(0.0f, 6.0f, 0.0f, 0.0f)
-						[
-							UnrealMcpChat::MakeSelectableReadOnlyText(
-								TAttribute<FText>::Create(TAttribute<FText>::FGetter::CreateLambda([Entry]()
-								{
-									if (Entry->Body.IsEmpty() && Entry->bIsPending)
-									{
-										return FText::FromString(TEXT("Running..."));
-									}
-
-									return FText::FromString(Entry->Body);
-								})),
-								FAppStyle::GetFontStyle("NormalFont"))
-						]
-						+ SVerticalBox::Slot()
-						.AutoHeight()
-						.Padding(0.0f, 8.0f, 0.0f, 0.0f)
+						SNew(SBorder)
+						.BorderImage(FAppStyle::GetBrush("WhiteBrush"))
+						.BorderBackgroundColor_Lambda([Entry]()
+						{
+							return UnrealMcpChat::GetToolStripeColor(*Entry);
+						})
+						.Padding(0.0f)
 						[
 							SNew(SBox)
-							.Visibility_Lambda([Entry]()
-							{
-								return Entry->Details.IsEmpty() ? EVisibility::Collapsed : EVisibility::Visible;
-							})
+							.WidthOverride(5.0f)
+						]
+					]
+					+ SHorizontalBox::Slot()
+					.FillWidth(1.0f)
+					.Padding(8.0f, 0.0f, 0.0f, 0.0f)
+					[
+						SNew(SExpandableArea)
+						.InitiallyCollapsed(!Entry->bToolCardExpanded)
+						.OnAreaExpansionChanged(FOnBooleanValueChanged::CreateLambda([Entry](bool bIsExpanded)
+						{
+							Entry->bToolCardExpanded = bIsExpanded;
+						}))
+						.HeaderContent()
+						[
+							SNew(SVerticalBox)
+							+ SVerticalBox::Slot()
+							.AutoHeight()
 							[
-								SNew(SVerticalBox)
-								+ SVerticalBox::Slot()
-								.AutoHeight()
+								SNew(SHorizontalBox)
+								+ SHorizontalBox::Slot()
+								.FillWidth(1.0f)
+								.VAlign(VAlign_Center)
 								[
 									SNew(STextBlock)
-									.Font(FAppStyle::GetFontStyle("SmallFont"))
-									.ColorAndOpacity(FLinearColor(0.78f, 0.80f, 0.84f, 1.0f))
-									.Text(LOCTEXT("DetailsLabel", "Details"))
+									.Font(FAppStyle::GetFontStyle("NormalFontBold"))
+									.ColorAndOpacity_Lambda([Entry]()
+									{
+										return UnrealMcpChat::GetEntryTitleColor(*Entry);
+									})
+									.Text_Lambda([Entry]()
+									{
+										return FText::FromString(UnrealMcpChat::BuildEntryTitleText(*Entry));
+									})
 								]
-								+ SVerticalBox::Slot()
-								.AutoHeight()
-								.Padding(0.0f, 3.0f, 0.0f, 0.0f)
+								+ SHorizontalBox::Slot()
+								.AutoWidth()
+								.VAlign(VAlign_Center)
+								.Padding(6.0f, 0.0f, 0.0f, 0.0f)
 								[
-									UnrealMcpChat::MakeSelectableReadOnlyText(
-										TAttribute<FText>::Create(TAttribute<FText>::FGetter::CreateLambda([Entry]()
+									SNew(SButton)
+									.ContentPadding(FMargin(4.0f, 1.0f))
+									.ToolTipText(LOCTEXT("CopyEntryTooltip", "Copy this entry."))
+									.Text(LOCTEXT("CopyEntryIcon", "📋"))
+									.OnClicked_Lambda([this, Entry]()
+									{
+										return HandleEntryCopyClicked(Entry);
+									})
+								]
+							]
+							+ SVerticalBox::Slot()
+							.AutoHeight()
+							.Padding(0.0f, 4.0f, 0.0f, 0.0f)
+							[
+								SNew(STextBlock)
+								.Visibility_Lambda([Entry]()
+								{
+									return Entry->ToolSummary.IsEmpty() ? EVisibility::Collapsed : EVisibility::Visible;
+								})
+								.Font(FAppStyle::GetFontStyle("NormalFontBold"))
+								.ColorAndOpacity(FLinearColor(0.98f, 0.92f, 0.70f, 1.0f))
+								.Text_Lambda([Entry]()
+								{
+									return FText::FromString(Entry->ToolSummary);
+								})
+							]
+						]
+						.BodyContent()
+						[
+							SNew(SVerticalBox)
+							+ SVerticalBox::Slot()
+							.AutoHeight()
+							.Padding(0.0f, 6.0f, 0.0f, 0.0f)
+							[
+								UnrealMcpChat::MakeSelectableReadOnlyText(
+									TAttribute<FText>::Create(TAttribute<FText>::FGetter::CreateLambda([Entry]()
+									{
+										if (Entry->Body.IsEmpty() && Entry->bIsPending)
 										{
-											return FText::FromString(Entry->Details);
-										})),
-										FAppStyle::GetFontStyle("SmallFont"))
+											return FText::FromString(TEXT("Running..."));
+										}
+
+										return FText::FromString(Entry->Body);
+									})),
+									FAppStyle::GetFontStyle("NormalFont"))
+							]
+							+ SVerticalBox::Slot()
+							.AutoHeight()
+							.Padding(0.0f, 8.0f, 0.0f, 0.0f)
+							[
+								SNew(SBox)
+								.Visibility_Lambda([Entry]()
+								{
+									return Entry->Details.IsEmpty() ? EVisibility::Collapsed : EVisibility::Visible;
+								})
+								[
+									SNew(SVerticalBox)
+									+ SVerticalBox::Slot()
+									.AutoHeight()
+									[
+										SNew(STextBlock)
+										.Font(FAppStyle::GetFontStyle("SmallFont"))
+										.ColorAndOpacity(FLinearColor(0.78f, 0.80f, 0.84f, 1.0f))
+										.Text(LOCTEXT("DetailsLabel", "Details"))
+									]
+									+ SVerticalBox::Slot()
+									.AutoHeight()
+									.Padding(0.0f, 3.0f, 0.0f, 0.0f)
+									[
+										UnrealMcpChat::MakeSelectableReadOnlyText(
+											TAttribute<FText>::Create(TAttribute<FText>::FGetter::CreateLambda([Entry]()
+											{
+												return FText::FromString(Entry->Details);
+											})),
+											FAppStyle::GetFontStyle("SmallFont"))
+									]
 								]
 							]
 						]
@@ -3887,6 +4136,15 @@ void SUnrealMcpChatPanel::LoadHistory()
 		EntryObject->TryGetStringField(TEXT("tool_call_id"), Entry->ToolCallId);
 		EntryObject->TryGetBoolField(TEXT("is_error"), Entry->bIsError);
 		EntryObject->TryGetBoolField(TEXT("is_pending"), Entry->bIsPending);
+		const bool bLoadedToolRequiresWrite = EntryObject->TryGetBoolField(TEXT("tool_requires_write"), Entry->bToolRequiresWrite);
+		const bool bLoadedToolRiskLevel = EntryObject->TryGetStringField(TEXT("tool_risk_level"), Entry->ToolRiskLevel);
+		const bool bLoadedToolCategory = EntryObject->TryGetStringField(TEXT("tool_category"), Entry->ToolCategory);
+		EntryObject->TryGetStringField(TEXT("tool_summary"), Entry->ToolSummary);
+		if (Entry->Type == EUnrealMcpChatEntryType::Tool
+			&& (!bLoadedToolRequiresWrite || !bLoadedToolRiskLevel || !bLoadedToolCategory))
+		{
+			UnrealMcpChat::ApplyToolPolicyMetadata(*Entry);
+		}
 
 		Entries.Add(Entry);
 		AddEntryWidget(Entry);
@@ -3919,6 +4177,10 @@ void SUnrealMcpChatPanel::SaveHistory() const
 		EntryObject->SetStringField(TEXT("tool_call_id"), Entry->ToolCallId);
 		EntryObject->SetBoolField(TEXT("is_error"), Entry->bIsError);
 		EntryObject->SetBoolField(TEXT("is_pending"), Entry->bIsPending);
+		EntryObject->SetBoolField(TEXT("tool_requires_write"), Entry->bToolRequiresWrite);
+		EntryObject->SetStringField(TEXT("tool_risk_level"), Entry->ToolRiskLevel);
+		EntryObject->SetStringField(TEXT("tool_category"), Entry->ToolCategory);
+		EntryObject->SetStringField(TEXT("tool_summary"), Entry->ToolSummary);
 		EntriesArray.Add(MakeShared<FJsonValueObject>(EntryObject));
 	}
 

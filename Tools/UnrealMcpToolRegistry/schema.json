@@ -136,6 +136,10 @@
             "type": "string",
             "minLength": 1
           },
+          "summaryTemplate": {
+            "type": "string",
+            "description": "Human-readable template interpolating {args.*} and {result.*} fields for the Chat panel tool card header."
+          },
           "notes": {
             "type": "string"
           }

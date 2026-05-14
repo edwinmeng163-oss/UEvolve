@@ -34,6 +34,10 @@ struct FUnrealMcpChatEntry
 	bool bIsError = false;
 	bool bIsPending = false;
 	bool bToolCardExpanded = false;
+	bool bToolRequiresWrite = false;
+	FString ToolRiskLevel;
+	FString ToolCategory;
+	FString ToolSummary;
 };
 
 struct FUnrealMcpSkillOption

@@ -203,6 +203,7 @@ namespace UnrealMcp
 			Entry.Exposure = Exposure;
 			Entry.Notes = Notes;
 			Entry.Policy = Policy;
+			Entry.Policy.Category = Category;
 			Entry.bLoadedFromExplicitRegistry = false;
 			Entry.bLoadedFromDescriptor = false;
 			return Entry;
@@ -218,6 +219,7 @@ namespace UnrealMcp
 			Entry.Notes = Descriptor.Notes;
 			Entry.bLoadedFromExplicitRegistry = false;
 			Entry.bLoadedFromDescriptor = true;
+			Entry.Policy.Category = Entry.Category;
 			Entry.Policy.RiskLevel = ConvertDescriptorRisk(Descriptor.RiskLevel);
 			Entry.Policy.bRequiresWrite = Descriptor.bRequiresWrite;
 			Entry.Policy.bRequiresBuild = Descriptor.bRequiresBuild;
@@ -356,10 +358,12 @@ namespace UnrealMcp
 				Entry.Policy.bDryRunSupport = GetBoolFieldOrDefault(ToolObject, TEXT("dryRunSupport"));
 				Entry.Policy.bPreflightSupport = GetBoolFieldOrDefault(ToolObject, TEXT("preflightSupport"));
 				Entry.Policy.bPostcheckSupport = GetBoolFieldOrDefault(ToolObject, TEXT("postcheckSupport"));
+				Entry.Policy.Category = Entry.Category;
 				Entry.Policy.TestCoverage = GetStringFieldOrDefault(ToolObject, TEXT("testCoverage"), TEXT("missing"));
 				Entry.Policy.Owner = GetStringFieldOrDefault(ToolObject, TEXT("owner"), TEXT("Unowned"));
 				Entry.Policy.DocsPath = GetStringFieldOrDefault(ToolObject, TEXT("docsPath"));
 				Entry.Policy.Reason = GetStringFieldOrDefault(ToolObject, TEXT("reason"), TEXT("Explicit registry policy."));
+				Entry.Policy.SummaryTemplate = GetStringFieldOrDefault(ToolObject, TEXT("summaryTemplate"));
 
 				LoadedEntries.Add(MoveTemp(Entry));
 			}
@@ -489,6 +493,7 @@ namespace UnrealMcp
 		FToolPolicy Policy;
 		Policy.RiskLevel = EToolRiskLevel::Medium;
 		Policy.bRequiresWrite = true;
+		Policy.Category = TEXT("unregistered");
 		Policy.TestCoverage = TEXT("missing");
 		Policy.Owner = TEXT("Unregistered");
 		Policy.DocsPath = TEXT("");
@@ -510,10 +515,12 @@ namespace UnrealMcp
 		PolicyObject->SetBoolField(TEXT("dryRunSupport"), Policy.bDryRunSupport);
 		PolicyObject->SetBoolField(TEXT("preflightSupport"), Policy.bPreflightSupport);
 		PolicyObject->SetBoolField(TEXT("postcheckSupport"), Policy.bPostcheckSupport);
+		PolicyObject->SetStringField(TEXT("category"), Policy.Category);
 		PolicyObject->SetStringField(TEXT("testCoverage"), Policy.TestCoverage);
 		PolicyObject->SetStringField(TEXT("owner"), Policy.Owner);
 		PolicyObject->SetStringField(TEXT("docsPath"), Policy.DocsPath);
 		PolicyObject->SetStringField(TEXT("reason"), Policy.Reason);
+		PolicyObject->SetStringField(TEXT("summaryTemplate"), Policy.SummaryTemplate);
 		PolicyObject->SetBoolField(TEXT("explicitRegistryEntry"), HasExplicitToolRegistryEntry(ToolName));
 		if (const FToolRegistryEntry* Entry = FindToolRegistryEntry(ToolName))
 		{

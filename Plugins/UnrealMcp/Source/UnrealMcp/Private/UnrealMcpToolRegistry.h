@@ -34,10 +34,12 @@ namespace UnrealMcp
 		bool bDryRunSupport = false;
 		bool bPreflightSupport = false;
 		bool bPostcheckSupport = false;
+		FString Category;
 		FString TestCoverage;
 		FString Owner;
 		FString DocsPath;
 		FString Reason;
+		FString SummaryTemplate;
 	};
 
 	struct FToolRegistryEntry

@@ -127,6 +127,7 @@
       "owner": "UEvolve Core",
       "docsPath": "README.md#tool-coverage",
       "reason": "Explicit registry: blueprint tool with controlled write or workflow side effects.",
+      "summaryTemplate": "Added function call node {args.functionName} to {args.blueprintPath}",
       "notes": ""
     },
     {
@@ -232,6 +233,7 @@
       "owner": "UEvolve Core",
       "docsPath": "README.md#tool-coverage",
       "reason": "Explicit registry: blueprint tool with controlled write or workflow side effects.",
+      "summaryTemplate": "Compiled and saved {args.blueprintPath}",
       "notes": ""
     },
     {
@@ -274,6 +276,7 @@
       "owner": "UEvolve Core",
       "docsPath": "README.md#tool-coverage",
       "reason": "Explicit registry: blueprint tool with controlled write or workflow side effects.",
+      "summaryTemplate": "Connected pin {args.fromPin} -> {args.toPin} in {args.blueprintPath}",
       "notes": ""
     },
     {
@@ -463,6 +466,7 @@
       "owner": "UEvolve Core",
       "docsPath": "README.md#tool-coverage",
       "reason": "Explicit registry: Blueprint write tool with automated disposable sandbox category coverage.",
+      "summaryTemplate": "Created Blueprint class at {args.assetPath}",
       "notes": ""
     },
     {
@@ -547,6 +551,7 @@
       "owner": "UEvolve Core",
       "docsPath": "README.md#tool-coverage",
       "reason": "Explicit registry: can execute dynamic code or orchestrate source/build/restart self-extension.",
+      "summaryTemplate": "Executed Python command: {args.command}",
       "notes": ""
     },
     {
@@ -904,6 +909,7 @@
       "owner": "UEvolve Core",
       "docsPath": "README.md#tool-coverage",
       "reason": "Explicit registry: high-impact write/build/rollback/destructive editor operation.",
+      "summaryTemplate": "Processed scaffold {args.toolName} (dry run: {args.dryRun})",
       "notes": ""
     },
     {
@@ -1597,6 +1603,7 @@
       "owner": "UEvolve Core",
       "docsPath": "README.md#tool-coverage",
       "reason": "Explicit registry: memory tool with controlled write or workflow side effects.",
+      "summaryTemplate": "Wrote project memory entry {args.key}",
       "notes": ""
     },
     {
@@ -1702,6 +1709,7 @@
       "owner": "UEvolve Core",
       "docsPath": "README.md#tool-coverage",
       "reason": "Explicit registry: low-risk editor session operation.",
+      "summaryTemplate": "Saved dirty packages (maps={args.saveMaps}, assets={args.saveAssets})",
       "notes": ""
     },
     {
@@ -2122,6 +2130,7 @@
       "owner": "UEvolve Core",
       "docsPath": "README.md#tool-coverage",
       "reason": "Explicit registry: actors tool with controlled write or workflow side effects.",
+      "summaryTemplate": "Spawned actor {args.label} from {args.classPath} at ({args.x}, {args.y}, {args.z})",
       "notes": "AI-facing fixed-schema wrapper routed to the legacy handler."
     },
     {
@@ -2311,6 +2320,7 @@
       "owner": "UEvolve Core",
       "docsPath": "README.md#tool-coverage",
       "reason": "Explicit registry: Widget write tool with automated disposable sandbox category coverage.",
+      "summaryTemplate": "Added widget {args.widgetName} ({args.widgetClass}) to {args.widgetBlueprintPath}",
       "notes": ""
     },
     {
