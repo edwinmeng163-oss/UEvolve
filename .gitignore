@@ -55,6 +55,7 @@ Examples/*/Content/__ExternalObjects__/MCP_ScaffoldSmoke_C/
 Examples/*/Content/MCPDemo/Blueprints/Core/BP_MCP_BPGraphSmokeTest_*.uasset
 Examples/*/Content/MCPDemo/Blueprints/UI/WBP_MCP_WidgetSmokeTest_*.uasset
 Tools/UnrealMcpSupervisor/
+/Tools/UnrealMcpToolScaffolds/
 
 # Logs and crash dumps
 *.log

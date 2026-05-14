@@ -147,31 +147,6 @@ namespace UnrealMcp
 			return MakeExecutionResult(TailText, StructuredContent, false);
 		}
 
-		FString GeneratedConfigureFpsSettingsPythonString(const FString& Value)
-		{
-			FString Escaped = Value;
-			Escaped.ReplaceInline(TEXT("\\"), TEXT("\\\\"));
-			Escaped.ReplaceInline(TEXT("\""), TEXT("\\\""));
-			Escaped.ReplaceInline(TEXT("\r"), TEXT("\\r"));
-			Escaped.ReplaceInline(TEXT("\n"), TEXT("\\n"));
-			return FString::Printf(TEXT("\"%s\""), *Escaped);
-		}
-
-		void GeneratedConfigureFpsSettingsAppendString(FString& Script, const FString& Key, const FString& Value)
-		{
-			Script += FString::Printf(TEXT("args[%s] = %s\n"), *GeneratedConfigureFpsSettingsPythonString(Key), *GeneratedConfigureFpsSettingsPythonString(Value));
-		}
-
-		void GeneratedConfigureFpsSettingsAppendBool(FString& Script, const FString& Key, bool bValue)
-		{
-			Script += FString::Printf(TEXT("args[%s] = %s\n"), *GeneratedConfigureFpsSettingsPythonString(Key), bValue ? TEXT("True") : TEXT("False"));
-		}
-
-		void GeneratedConfigureFpsSettingsAppendNumber(FString& Script, const FString& Key, double Value)
-		{
-			Script += FString::Printf(TEXT("args[%s] = %.17g\n"), *GeneratedConfigureFpsSettingsPythonString(Key), Value);
-		}
-
 		bool EditorToolIsEditorPlaying()
 		{
 			return GEditor
@@ -614,150 +589,6 @@ namespace UnrealMcp
 			return MakeExecutionResult(Text, StructuredContent, !bSucceeded);
 		}
 
-		FUnrealMcpExecutionResult ExecuteGeneratedConfigureFpsSettingsTool(const FString& ToolName, const FJsonObject& Arguments)
-		{
-			if (EditorToolIsEditorPlaying())
-			{
-				return EditorToolMakePieBlockedResult(ToolName);
-			}
-
-			FString PawnBlueprintPath;
-			FString GameModeBlueprintPath;
-			if (!Arguments.TryGetStringField(TEXT("pawnBlueprintPath"), PawnBlueprintPath) || PawnBlueprintPath.TrimStartAndEnd().IsEmpty())
-			{
-				return MakeExecutionResult(TEXT("Missing required field 'pawnBlueprintPath'."), nullptr, true);
-			}
-			if (!Arguments.TryGetStringField(TEXT("gameModeBlueprintPath"), GameModeBlueprintPath) || GameModeBlueprintPath.TrimStartAndEnd().IsEmpty())
-			{
-				return MakeExecutionResult(TEXT("Missing required field 'gameModeBlueprintPath'."), nullptr, true);
-			}
-
-			FString PlayerStartLabel = TEXT("FPS_PlayerStart");
-			Arguments.TryGetStringField(TEXT("playerStartLabel"), PlayerStartLabel);
-			bool bApplyToCurrentLevel = true, bConfigureGameModeDefaultPawn = true, bCreateOrMovePlayerStart = true;
-			bool bUseControllerRotationYaw = true, bOrientRotationToMovement = false, bCompileSave = true, bSaveLevel = false, bDryRun = false;
-			Arguments.TryGetBoolField(TEXT("applyToCurrentLevel"), bApplyToCurrentLevel);
-			Arguments.TryGetBoolField(TEXT("configureGameModeDefaultPawn"), bConfigureGameModeDefaultPawn);
-			Arguments.TryGetBoolField(TEXT("createOrMovePlayerStart"), bCreateOrMovePlayerStart);
-			Arguments.TryGetBoolField(TEXT("useControllerRotationYaw"), bUseControllerRotationYaw);
-			Arguments.TryGetBoolField(TEXT("orientRotationToMovement"), bOrientRotationToMovement);
-			Arguments.TryGetBoolField(TEXT("compileSave"), bCompileSave);
-			Arguments.TryGetBoolField(TEXT("saveLevel"), bSaveLevel);
-			Arguments.TryGetBoolField(TEXT("dryRun"), bDryRun);
-			double X = 0, Y = 0, Z = 190, Pitch = 0, Yaw = 0, Roll = 0, CameraFov = 90, CameraHeight = 72, WalkSpeed = 650, Acceleration = 4096, Deceleration = 4096, CapsuleRadius = 42, CapsuleHalfHeight = 96;
-			Arguments.TryGetNumberField(TEXT("x"), X); Arguments.TryGetNumberField(TEXT("y"), Y); Arguments.TryGetNumberField(TEXT("z"), Z);
-			Arguments.TryGetNumberField(TEXT("pitch"), Pitch); Arguments.TryGetNumberField(TEXT("yaw"), Yaw); Arguments.TryGetNumberField(TEXT("roll"), Roll);
-			Arguments.TryGetNumberField(TEXT("cameraFov"), CameraFov); Arguments.TryGetNumberField(TEXT("cameraHeight"), CameraHeight);
-			Arguments.TryGetNumberField(TEXT("walkSpeed"), WalkSpeed); Arguments.TryGetNumberField(TEXT("acceleration"), Acceleration); Arguments.TryGetNumberField(TEXT("deceleration"), Deceleration);
-			Arguments.TryGetNumberField(TEXT("capsuleRadius"), CapsuleRadius); Arguments.TryGetNumberField(TEXT("capsuleHalfHeight"), CapsuleHalfHeight);
-
-			FString PythonScript = TEXT("import unreal, json\nargs = {}\n");
-			GeneratedConfigureFpsSettingsAppendString(PythonScript, TEXT("pawnBlueprintPath"), PawnBlueprintPath);
-			GeneratedConfigureFpsSettingsAppendString(PythonScript, TEXT("gameModeBlueprintPath"), GameModeBlueprintPath);
-			GeneratedConfigureFpsSettingsAppendString(PythonScript, TEXT("playerStartLabel"), PlayerStartLabel);
-			GeneratedConfigureFpsSettingsAppendBool(PythonScript, TEXT("applyToCurrentLevel"), bApplyToCurrentLevel);
-			GeneratedConfigureFpsSettingsAppendBool(PythonScript, TEXT("configureGameModeDefaultPawn"), bConfigureGameModeDefaultPawn);
-			GeneratedConfigureFpsSettingsAppendBool(PythonScript, TEXT("createOrMovePlayerStart"), bCreateOrMovePlayerStart);
-			GeneratedConfigureFpsSettingsAppendBool(PythonScript, TEXT("useControllerRotationYaw"), bUseControllerRotationYaw);
-			GeneratedConfigureFpsSettingsAppendBool(PythonScript, TEXT("orientRotationToMovement"), bOrientRotationToMovement);
-			GeneratedConfigureFpsSettingsAppendBool(PythonScript, TEXT("compileSave"), bCompileSave);
-			GeneratedConfigureFpsSettingsAppendBool(PythonScript, TEXT("saveLevel"), bSaveLevel);
-			GeneratedConfigureFpsSettingsAppendBool(PythonScript, TEXT("dryRun"), bDryRun);
-			GeneratedConfigureFpsSettingsAppendNumber(PythonScript, TEXT("x"), X); GeneratedConfigureFpsSettingsAppendNumber(PythonScript, TEXT("y"), Y); GeneratedConfigureFpsSettingsAppendNumber(PythonScript, TEXT("z"), Z);
-			GeneratedConfigureFpsSettingsAppendNumber(PythonScript, TEXT("pitch"), Pitch); GeneratedConfigureFpsSettingsAppendNumber(PythonScript, TEXT("yaw"), Yaw); GeneratedConfigureFpsSettingsAppendNumber(PythonScript, TEXT("roll"), Roll);
-			GeneratedConfigureFpsSettingsAppendNumber(PythonScript, TEXT("cameraFov"), CameraFov); GeneratedConfigureFpsSettingsAppendNumber(PythonScript, TEXT("cameraHeight"), CameraHeight);
-			GeneratedConfigureFpsSettingsAppendNumber(PythonScript, TEXT("walkSpeed"), WalkSpeed); GeneratedConfigureFpsSettingsAppendNumber(PythonScript, TEXT("acceleration"), Acceleration); GeneratedConfigureFpsSettingsAppendNumber(PythonScript, TEXT("deceleration"), Deceleration);
-			GeneratedConfigureFpsSettingsAppendNumber(PythonScript, TEXT("capsuleRadius"), CapsuleRadius); GeneratedConfigureFpsSettingsAppendNumber(PythonScript, TEXT("capsuleHalfHeight"), CapsuleHalfHeight);
-			PythonScript += TEXT(R"PY(
-report={'action':'configure_fps_settings','dryRun':args['dryRun'],'changes':[],'warnings':[],'verified':{}}
-def c(t): report['changes'].append(t)
-def w(t): report['warnings'].append(t)
-def load_bp(path,name):
-    bp=unreal.load_asset(path)
-    if not bp: raise RuntimeError('Could not load '+name+' Blueprint: '+str(path))
-    try: cls=bp.generated_class()
-    except Exception: cls=getattr(bp,'generated_class',None)
-    if not cls: raise RuntimeError(name+' Blueprint has no generated class')
-    report['verified'][name+'Blueprint']=bp.get_path_name(); report['verified'][name+'Class']=cls.get_path_name(); return bp,cls
-def setp(obj,prop,val,msg):
-    try:
-        if not args['dryRun']: obj.set_editor_property(prop,val)
-        c(msg); return True
-    except Exception as e: w('skip '+prop+': '+str(e)); return False
-pawn_bp,pawn_cls=load_bp(args['pawnBlueprintPath'],'pawn'); gm_bp,gm_cls=load_bp(args['gameModeBlueprintPath'],'gameMode')
-if args['configureGameModeDefaultPawn']:
-    gm_cdo=unreal.get_default_object(gm_cls); setp(gm_cdo,'default_pawn_class',pawn_cls,'GameMode DefaultPawnClass configured')
-    try: report['verified']['gameModeDefaultPawnClass']=gm_cdo.get_editor_property('default_pawn_class').get_path_name()
-    except Exception as e: w('verify default pawn: '+str(e))
-if args['applyToCurrentLevel']:
-    try:
-        world=unreal.EditorLevelLibrary.get_editor_world(); ws=world.get_world_settings()
-        if not args['dryRun']: ws.set_editor_property('default_game_mode',gm_cls)
-        c('WorldSettings GameMode override configured')
-        report['verified']['worldGameModeOverride']=ws.get_editor_property('default_game_mode').get_path_name() if ws.get_editor_property('default_game_mode') else None
-    except Exception as e: w('level GameMode override: '+str(e))
-pawn_cdo=unreal.get_default_object(pawn_cls); setp(pawn_cdo,'use_controller_rotation_yaw',bool(args['useControllerRotationYaw']),'Pawn UseControllerRotationYaw configured')
-for clsname,props in [('CameraComponent',[]),('CharacterMovementComponent',[]),('FloatingPawnMovement',[]),('CapsuleComponent',[]),('SphereComponent',[])]:
-    try:
-        comp_cls=getattr(unreal,clsname); comps=pawn_cdo.get_components_by_class(comp_cls); report['verified'][clsname+'Count']=len(comps)
-        for comp in comps:
-            if clsname=='CameraComponent':
-                if args['cameraFov']>0 and not args['dryRun']: comp.set_editor_property('field_of_view',float(args['cameraFov']))
-                if args['cameraFov']>0: c('Camera FOV configured')
-                if args['cameraHeight']!=0:
-                    loc=comp.get_relative_location()
-                    if not args['dryRun']: comp.set_relative_location(unreal.Vector(loc.x,loc.y,float(args['cameraHeight'])))
-                    c('Camera height configured')
-            elif clsname=='CharacterMovementComponent':
-                if args['walkSpeed']>0: setp(comp,'max_walk_speed',float(args['walkSpeed']),'Character walk speed configured')
-                if args['acceleration']>0: setp(comp,'max_acceleration',float(args['acceleration']),'Character acceleration configured')
-                if args['deceleration']>0: setp(comp,'braking_deceleration_walking',float(args['deceleration']),'Character deceleration configured')
-                setp(comp,'orient_rotation_to_movement',bool(args['orientRotationToMovement']),'Character orient rotation configured')
-            elif clsname=='FloatingPawnMovement':
-                if args['walkSpeed']>0: setp(comp,'max_speed',float(args['walkSpeed']),'FloatingPawn speed configured')
-                if args['acceleration']>0: setp(comp,'acceleration',float(args['acceleration']),'FloatingPawn acceleration configured')
-                if args['deceleration']>0: setp(comp,'deceleration',float(args['deceleration']),'FloatingPawn deceleration configured')
-            elif clsname=='CapsuleComponent' and args['capsuleRadius']>0 and args['capsuleHalfHeight']>0:
-                if not args['dryRun']: comp.set_capsule_size(float(args['capsuleRadius']),float(args['capsuleHalfHeight']),False)
-                c('Capsule collision configured')
-            elif clsname=='SphereComponent' and args['capsuleRadius']>0:
-                if not args['dryRun']: comp.set_sphere_radius(float(args['capsuleRadius']),False)
-                c('Sphere collision configured')
-    except Exception as e: w(clsname+' settings: '+str(e))
-if args['createOrMovePlayerStart']:
-    try:
-        sub=unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
-        starts=[a for a in sub.get_all_level_actors() if a and a.get_actor_label()==args['playerStartLabel']]
-        ps=starts[0] if starts else None
-        if not ps and not args['dryRun']:
-            ps=sub.spawn_actor_from_class(unreal.PlayerStart,unreal.Vector(args['x'],args['y'],args['z']),unreal.Rotator(args['roll'],args['pitch'],args['yaw'])); ps.set_actor_label(args['playerStartLabel'])
-        if ps and not args['dryRun']:
-            ps.set_actor_location(unreal.Vector(args['x'],args['y'],args['z']),False,False); ps.set_actor_rotation(unreal.Rotator(args['roll'],args['pitch'],args['yaw']),False)
-        c('PlayerStart configured'); report['verified']['playerStartLabel']=args['playerStartLabel']
-    except Exception as e: w('PlayerStart: '+str(e))
-if args['compileSave'] and not args['dryRun']:
-    try:
-        unreal.BlueprintEditorLibrary.compile_blueprint(pawn_bp); unreal.BlueprintEditorLibrary.compile_blueprint(gm_bp)
-        unreal.EditorAssetLibrary.save_loaded_asset(pawn_bp); unreal.EditorAssetLibrary.save_loaded_asset(gm_bp); c('Blueprints compiled and saved')
-    except Exception as e: w('compile/save: '+str(e))
-if args['saveLevel'] and not args['dryRun']:
-    try: unreal.EditorLoadingAndSavingUtils.save_dirty_packages(True,False); c('Dirty map packages saved')
-    except Exception as e: w('save level: '+str(e))
-print('CONFIGURE_FPS_SETTINGS_RESULT '+json.dumps(report,sort_keys=True,default=str))
-)PY");
-
-			TSharedPtr<FJsonObject> PythonArguments = MakeShared<FJsonObject>();
-			PythonArguments->SetStringField(TEXT("command"), PythonScript);
-			PythonArguments->SetStringField(TEXT("mode"), TEXT("ExecuteFile"));
-			PythonArguments->SetStringField(TEXT("scope"), TEXT("Private"));
-			PythonArguments->SetBoolField(TEXT("autoMode"), true);
-			PythonArguments->SetBoolField(TEXT("forceEnable"), true);
-			PythonArguments->SetBoolField(TEXT("unattended"), true);
-			FUnrealMcpExecutionResult PythonResult = ExecutePythonCommand(*PythonArguments);
-			PythonResult.Text = FString::Printf(TEXT("Configure FPS Settings %s.\n%s"), bDryRun ? TEXT("previewed") : TEXT("completed"), *PythonResult.Text);
-			return PythonResult;
-		}
-
 		FUnrealMcpExecutionResult ExecutePythonFile(const FJsonObject& Arguments)
 		{
 			FString ScriptPath;
@@ -1187,12 +1018,6 @@ print('CONFIGURE_FPS_SETTINGS_RESULT '+json.dumps(report,sort_keys=True,default=
 		if (ToolName == TEXT("unreal.editor.engine_version"))
 		{
 			OutResult = ExecuteEditorEngineVersion();
-			return true;
-		}
-
-		if (ToolName == TEXT("unreal.configure_fps_settings"))
-		{
-			OutResult = ExecuteGeneratedConfigureFpsSettingsTool(ToolName, Arguments);
 			return true;
 		}
 

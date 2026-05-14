@@ -218,7 +218,6 @@ Editor and inspection:
 
 - `unreal.editor_status`
 - `unreal.editor.engine_version`
-- `unreal.configure_fps_settings`
 - `unreal.tail_log`
 - `unreal.map_check`
 - map, asset, selected asset, actor, and selected actor listing
@@ -244,7 +243,7 @@ Blueprint tools:
 
 - create Blueprint class
 - compile one Blueprint or all Blueprints in a path
-- add variables/functions/event/input-axis/call/branch/foreach nodes
+- add variables/functions/event/call/branch/foreach nodes
 - connect pins
 - set pin defaults
 - arrange graph
@@ -342,7 +341,7 @@ Tools/UnrealMcpToolRegistry/schema.json
 Schemas/UnrealMcpToolRegistry.schema.json
 ```
 
-At the time this file was written, the registry contained 121 entries across:
+At the time this file was written, the registry contained 119 entries across:
 
 - actors
 - blueprint
@@ -352,6 +351,11 @@ At the time this file was written, the registry contained 121 entries across:
 - self-extension
 - skills
 - widget
+
+`unreal.configure_fps_settings` and
+`unreal.bp_add_input_axis_event_node` were moved back to scaffold-only status
+pending functional verification and replacement by the planned
+`unreal.fps.bootstrap` plus `unreal.simulation.verify_input_drives_pawn` tools.
 
 The visible count in a running editor can differ because legacy/hidden entries
 and aliases are filtered. Always trust live output from:

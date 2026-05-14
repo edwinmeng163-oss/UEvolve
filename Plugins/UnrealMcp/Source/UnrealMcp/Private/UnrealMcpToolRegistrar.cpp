@@ -61,49 +61,6 @@ namespace UnrealMcp
 					TEXT("UnrealMcpEditorEngineVersionTool.cpp")),
 				MakeObjectSchema());
 
-			{
-				TSharedPtr<FJsonObject> Properties = MakeShared<FJsonObject>();
-				Properties->SetObjectField(TEXT("pawnBlueprintPath"), MakeStringProperty(TEXT("Pawn or Character Blueprint asset path to configure, for example /Game/FPS/BP_FPSCharacter."), FString()));
-				Properties->SetObjectField(TEXT("gameModeBlueprintPath"), MakeStringProperty(TEXT("GameMode Blueprint asset path to configure, for example /Game/FPS/BP_FPSGameMode."), FString()));
-				Properties->SetObjectField(TEXT("applyToCurrentLevel"), MakeBoolProperty(TEXT("Set the current level WorldSettings GameMode override to gameModeBlueprintPath."), true));
-				Properties->SetObjectField(TEXT("configureGameModeDefaultPawn"), MakeBoolProperty(TEXT("Set the GameMode default pawn class to pawnBlueprintPath."), true));
-				Properties->SetObjectField(TEXT("createOrMovePlayerStart"), MakeBoolProperty(TEXT("Create or move a PlayerStart actor for FPS spawn."), true));
-				Properties->SetObjectField(TEXT("playerStartLabel"), MakeStringProperty(TEXT("PlayerStart actor label to find or create."), TEXT("FPS_PlayerStart")));
-				Properties->SetObjectField(TEXT("x"), MakeNumberProperty(TEXT("PlayerStart world X."), 0.0));
-				Properties->SetObjectField(TEXT("y"), MakeNumberProperty(TEXT("PlayerStart world Y."), 0.0));
-				Properties->SetObjectField(TEXT("z"), MakeNumberProperty(TEXT("PlayerStart world Z."), 190.0));
-				Properties->SetObjectField(TEXT("pitch"), MakeNumberProperty(TEXT("PlayerStart pitch in degrees."), 0.0));
-				Properties->SetObjectField(TEXT("yaw"), MakeNumberProperty(TEXT("PlayerStart yaw in degrees."), 0.0));
-				Properties->SetObjectField(TEXT("roll"), MakeNumberProperty(TEXT("PlayerStart roll in degrees."), 0.0));
-				Properties->SetObjectField(TEXT("cameraFov"), MakeNumberProperty(TEXT("Camera field of view to apply to CameraComponents when present. Use <=0 to leave unchanged."), 90.0));
-				Properties->SetObjectField(TEXT("cameraHeight"), MakeNumberProperty(TEXT("Relative Z height for CameraComponents when present. Use 0 to leave unchanged."), 72.0));
-				Properties->SetObjectField(TEXT("walkSpeed"), MakeNumberProperty(TEXT("CharacterMovement MaxWalkSpeed or FloatingPawnMovement MaxSpeed. Use <=0 to leave unchanged."), 650.0));
-				Properties->SetObjectField(TEXT("acceleration"), MakeNumberProperty(TEXT("Movement acceleration. Use <=0 to leave unchanged."), 4096.0));
-				Properties->SetObjectField(TEXT("deceleration"), MakeNumberProperty(TEXT("Movement deceleration/braking deceleration. Use <=0 to leave unchanged."), 4096.0));
-				Properties->SetObjectField(TEXT("capsuleRadius"), MakeNumberProperty(TEXT("Capsule radius or sphere radius for pawn collision. Use <=0 to leave unchanged."), 42.0));
-				Properties->SetObjectField(TEXT("capsuleHalfHeight"), MakeNumberProperty(TEXT("Capsule half-height for Character collision. Use <=0 to leave unchanged."), 96.0));
-				Properties->SetObjectField(TEXT("useControllerRotationYaw"), MakeBoolProperty(TEXT("Set pawn UseControllerRotationYaw."), true));
-				Properties->SetObjectField(TEXT("orientRotationToMovement"), MakeBoolProperty(TEXT("Set CharacterMovement bOrientRotationToMovement when present."), false));
-				Properties->SetObjectField(TEXT("compileSave"), MakeBoolProperty(TEXT("Compile and save the touched Blueprint assets."), true));
-				Properties->SetObjectField(TEXT("saveLevel"), MakeBoolProperty(TEXT("Save dirty map packages after applying level changes."), false));
-				Properties->SetObjectField(TEXT("dryRun"), MakeBoolProperty(TEXT("Preview intended changes without mutating assets or level actors."), false));
-				TSharedPtr<FJsonObject> Schema = MakeObjectSchema();
-				Schema->SetObjectField(TEXT("properties"), Properties);
-
-				FUnrealMcpToolDescriptor Descriptor = MakeDescriptor(
-					TEXT("unreal.configure_fps_settings"),
-					TEXT("Configure FPS Settings"),
-					TEXT("Configures first-person/FPS player settings for the current level and Blueprint assets: GameMode default pawn, level GameMode override, PlayerStart transform, pawn camera/FOV, movement, collision, compile/save, and verification evidence."),
-					TEXT("editor"),
-					TEXT("UnrealMcpEditorTools.cpp"),
-					EUnrealMcpToolRisk::Medium);
-				Descriptor.bRequiresWrite = true;
-				Descriptor.bDryRunSupport = true;
-				Descriptor.bPreflightSupport = true;
-				Descriptor.bPostcheckSupport = true;
-				Registrar.Add(Descriptor, Schema);
-			}
-
 			Registrar.Add(
 				MakeDescriptor(
 					TEXT("unreal.list_maps"),
@@ -174,44 +131,6 @@ namespace UnrealMcp
 					Schema);
 			}
 
-			{
-				TSharedPtr<FJsonObject> Properties = MakeShared<FJsonObject>();
-				Properties->SetObjectField(TEXT("blueprintPath"), MakeStringProperty(TEXT("Blueprint asset path to edit, for example /Game/MCP/FPS/Blueprints/BP_MCP_FPSCharacter."), FString()));
-				Properties->SetObjectField(TEXT("graphName"), MakeStringProperty(TEXT("Target graph name. Defaults to EventGraph."), TEXT("EventGraph")));
-				Properties->SetObjectField(TEXT("axisName"), MakeStringProperty(TEXT("Legacy input axis mapping name, for example MoveForward, MoveRight, Turn, or LookUp."), FString()));
-				Properties->SetObjectField(TEXT("x"), MakeNumberProperty(TEXT("Graph X position for the new node."), 0.0));
-				Properties->SetObjectField(TEXT("y"), MakeNumberProperty(TEXT("Graph Y position for the new node."), 0.0));
-				Properties->SetObjectField(TEXT("consumeInput"), MakeBoolProperty(TEXT("Whether the input event consumes input when the node supports it."), false));
-				Properties->SetObjectField(TEXT("executeWhenPaused"), MakeBoolProperty(TEXT("Whether the input event should execute while paused when the node supports it."), false));
-				Properties->SetObjectField(TEXT("overrideParentBinding"), MakeBoolProperty(TEXT("Whether to override parent class input binding when the node supports it."), false));
-				Properties->SetObjectField(TEXT("dryRun"), MakeBoolProperty(TEXT("Preview the target graph/node plan without mutating the Blueprint."), false));
-
-				TArray<TSharedPtr<FJsonValue>> Required;
-				Required.Add(MakeShared<FJsonValueString>(TEXT("blueprintPath")));
-				Required.Add(MakeShared<FJsonValueString>(TEXT("axisName")));
-
-				TSharedPtr<FJsonObject> Schema = MakeObjectSchema();
-				Schema->SetObjectField(TEXT("properties"), Properties);
-				Schema->SetArrayField(TEXT("required"), Required);
-
-				FUnrealMcpToolDescriptor Descriptor = MakeDescriptor(
-					TEXT("unreal.bp_add_input_axis_event_node"),
-					TEXT("Add Blueprint Input Axis Event Node"),
-					TEXT("Adds a true K2 InputAxisEvent node for a named legacy input axis to a Blueprint graph and returns the node GUID and pins for later graph wiring."),
-					TEXT("blueprint"),
-					TEXT("UnrealMcpBlueprintTools.cpp"),
-					EUnrealMcpToolRisk::Medium);
-				Descriptor.bRequiresWrite = true;
-				Descriptor.bRequiresBuild = false;
-				Descriptor.bRequiresExternalProcess = false;
-				Descriptor.bRequiresRestart = false;
-				Descriptor.bRequiresProjectMemory = false;
-				Descriptor.bRequiresLock = false;
-				Descriptor.bDryRunSupport = true;
-				Descriptor.bPreflightSupport = true;
-				Descriptor.bPostcheckSupport = true;
-				Registrar.Add(Descriptor, Schema);
-			}
 		}
 
 		void RegisterWidgetInspectorMcpToolDescriptors(FUnrealMcpToolRegistrar& Registrar)
