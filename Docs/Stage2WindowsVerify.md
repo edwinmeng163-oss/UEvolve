@@ -251,6 +251,135 @@ Remove-Item -Recurse -Force C:\Temp\UEvolvePilotTest
 
 The clone at `C:\Work\UEvolve` may stay (it has the verified zip in `Saved\UnrealMcp\Packages\`, which is gitignored and harmless). If you want a fully clean machine afterwards, also `Remove-Item -Recurse -Force C:\Work\UEvolve` — but the verified zip there is the actual artifact we may want to upload to GitHub as a second release asset, so consider keeping it.
 
+## Stage 2b: Full-Experience Zip Verification
+
+This path verifies `UnrealMcp-v0.12.0-pilot-full-win-ue561.zip`, which extracts at a project root and includes `Plugins/`, project-level `Tools/`, docs, schemas, a UE 5.6.1 Win64 plugin binary, and an offline-ready Codex bridge bundle. Use Epic Launcher Unreal Engine 5.6.1 for this test; the prebuilt plugin binary is BuildId-locked to that engine patch.
+
+### Phase 1 — Build UE 5.6.1 Win64 plugin binaries
+
+Use the same clone at `C:\Work\UEvolve`, but build against UE 5.6.1:
+
+```powershell
+$repo = "C:\Work\UEvolve"
+$buildLog = "C:\Temp\uevolve-stage2b-build.log"
+cd $repo
+& "C:\Program Files\Epic Games\UE_5.6\Engine\Build\BatchFiles\Build.bat" `
+    UEvolveEditor Win64 Development `
+    "-Project=$repo\UEvolve.uproject" `
+    -WaitMutex *>&1 | Tee-Object -FilePath $buildLog
+$LASTEXITCODE
+Test-Path "$repo\Plugins\UnrealMcp\Binaries\Win64\UnrealEditor-UnrealMcp.dll"
+Test-Path "$repo\Plugins\UnrealMcp\Binaries\Win64\UnrealEditor.modules"
+```
+
+PASS: build exit code is `0`, the build log reports success, and both binary files exist.
+
+### Phase 3 — Bundle the offline Codex bridge
+
+```powershell
+cd C:\Work\UEvolve
+powershell -ExecutionPolicy Bypass -File Tools\bundle_bridge_for_release.ps1 *>&1 |
+    Tee-Object -FilePath C:\Temp\uevolve-stage2b-bridge-bundle.log
+Test-Path Saved\UnrealMcp\Packages\UnrealMcp-CodexBridge-win-bundle.tar
+```
+
+PASS: the helper prints `Bridge bundle: ...` and the tarball exists. If Bun was not installed, the helper downloads the standalone Win64 runtime and includes it under `runtime\bun.exe`.
+
+### Phase 4 — Package the full-experience zip
+
+```powershell
+cd C:\Work\UEvolve
+$bridgeBundle = "Saved\UnrealMcp\Packages\UnrealMcp-CodexBridge-win-bundle.tar"
+powershell -ExecutionPolicy Bypass -File Tools\package_plugin.ps1 `
+    -FullExperience `
+    -PrebuiltBinariesPath "C:\Work\UEvolve" `
+    -BridgeBundlePath $bridgeBundle `
+    -EngineTag ue561 *>&1 |
+    Tee-Object -FilePath C:\Temp\uevolve-stage2b-package.log
+
+$zip = "Saved\UnrealMcp\Packages\UnrealMcp-v0.12.0-pilot-full-win-ue561.zip"
+Test-Path $zip
+Test-Path "$zip.sha256"
+(Get-FileHash -Algorithm SHA256 $zip).Hash.ToLower()
+Get-Content "$zip.sha256"
+```
+
+PASS: the package script exits `0`, prints the zip path, size, SHA-256, and `Done. Next: open this on a clean Windows UE 5.6.1 project; see Docs/FIRST_LAUNCH.md.` The recomputed SHA-256 must match the sidecar.
+
+### Phase 6 — Test on a clean UE 5.6.1 project
+
+Create a clean blank project named `UEvolveFullTest` at `C:\Temp\UEvolveFullTest`. Use Unreal's Project Browser, or reuse the `TP_Blank` rename flow from Step 4 above with `UEvolveFullTest` substituted everywhere. Do not only rename the `.uproject`; the module and target names must match too.
+
+Extract the full-experience zip into the project root:
+
+```powershell
+$proj = "C:\Temp\UEvolveFullTest"
+Test-Path "$proj\UEvolveFullTest.uproject"
+Expand-Archive -Path "C:\Work\UEvolve\Saved\UnrealMcp\Packages\UnrealMcp-v0.12.0-pilot-full-win-ue561.zip" `
+    -DestinationPath $proj -Force
+Test-Path "$proj\Plugins\UnrealMcp\UnrealMcp.uplugin"
+Test-Path "$proj\Tools\UnrealMcpToolRegistry\tools.json"
+Test-Path "$proj\Tools\UnrealMcpCodexBridge\start-bridge.cmd"
+```
+
+Edit `UEvolveFullTest.uproject` and enable both plugins:
+
+```json
+{ "Name": "PythonScriptPlugin", "Enabled": true },
+{ "Name": "UnrealMcp", "Enabled": true }
+```
+
+Open `UEvolveFullTest.uproject` in Unreal Editor. PASS: the editor opens and the plugin loads with no build prompt.
+
+Start the bridge:
+
+```powershell
+Start-Process -FilePath "$proj\Tools\UnrealMcpCodexBridge\start-bridge.cmd" -WorkingDirectory "$proj\Tools\UnrealMcpCodexBridge"
+Get-NetTCPConnection -LocalPort 8766 -State Listen
+```
+
+PASS: the bridge console reports `Bridge listening on ws://127.0.0.1:8766/uevolve` and port `8766` is listening.
+
+Open `Window > Unreal MCP Chat` and call:
+
+```text
+/tool unreal.editor_status {}
+```
+
+PASS: Chat returns a structured editor status response.
+
+Apply the `fps_bootstrap` starter scaffold from `Tools/UnrealMcpToolScaffoldStarters/` through Chat, then call:
+
+```text
+/tool unreal.fps.bootstrap {"targetPath":"/Game/UEvolveFull/FPS","characterName":"BP_UEvolvePilotCharacter"}
+```
+
+PASS: the scaffold pipeline runs and `unreal.fps.bootstrap` creates a functional FPS character setup.
+
+Run the functional input verifier:
+
+```text
+/tool unreal.simulation.verify_input_drives_pawn {"pawnName":"BP_UEvolvePilotCharacter"}
+```
+
+PASS: verification reports success. Finally, press Play in PIE and manually confirm WASD movement plus mouse rotation.
+
+### Stage 2b Report
+
+Report these fields:
+
+```text
+FULL ZIP: PASS | FAIL — <zip path> — <SHA-256>
+PHASE 1 BUILD: PASS | FAIL — <result line> — <log path>
+PHASE 3 BRIDGE BUNDLE: PASS | FAIL — <bundle path>
+PHASE 4 PACKAGE: PASS | FAIL — <zip path> — <SHA-256 sidecar match yes/no>
+PHASE 6 CLEAN PROJECT: PASS | FAIL — no-build-prompt: yes/no — bridge 8766: yes/no — editor_status: yes/no
+FPS SCAFFOLD: PASS | FAIL
+FPS BOOTSTRAP: PASS | FAIL
+INPUT VERIFIER: PASS | FAIL
+MANUAL PIE MOVEMENT: PASS | FAIL
+```
+
 REPORT (top of message)
 ```
 PACKAGE: PASS | FAIL — <win zip path> — <SHA-256>

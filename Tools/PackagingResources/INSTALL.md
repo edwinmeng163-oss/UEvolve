@@ -1,5 +1,31 @@
 # Unreal MCP Pilot Install
 
+## Full Experience Zip (Windows UE 5.6.1)
+
+### English
+
+Use this mode for `UnrealMcp-v0.12.0-pilot-full-win-ue561.zip`.
+Extract the full-experience zip into your Unreal project root, next to `<YourProject>.uproject`; do not extract it under `Plugins/`.
+It creates `Plugins/UnrealMcp/`, project-level `Tools/`, `Docs/`, optional `Schemas/`, root `INSTALL.md`, and root `README-FULL.md`.
+The bundled Win64 plugin binary is for Epic Launcher Unreal Engine 5.6.1 only. Engine source builds or other patch versions need their own build.
+For the 5-step first launch flow, read `Docs/FIRST_LAUNCH.md` after extraction.
+
+### 中文
+
+此模式适用于 `UnrealMcp-v0.12.0-pilot-full-win-ue561.zip`。
+请把 full-experience zip 解压到 Unreal 项目根目录，也就是 `<YourProject>.uproject` 旁边；不要解压到 `Plugins/` 目录下。
+它会创建 `Plugins/UnrealMcp/`、项目级 `Tools/`、`Docs/`、可选 `Schemas/`、根目录 `INSTALL.md` 和根目录 `README-FULL.md`。
+包内 Win64 插件二进制只匹配 Epic Launcher 的 Unreal Engine 5.6.1。源码编译版引擎或其他补丁版本需要重新构建。
+解压后，请阅读 `Docs/FIRST_LAUNCH.md` 中的 5 步首次启动流程。
+
+### 日本語
+
+この方式は `UnrealMcp-v0.12.0-pilot-full-win-ue561.zip` 用です。
+full-experience zip は `<YourProject>.uproject` と同じ Unreal プロジェクトルートへ展開してください。`Plugins/` の下へは展開しません。
+展開すると `Plugins/UnrealMcp/`、プロジェクトレベルの `Tools/`、`Docs/`、任意の `Schemas/`、ルートの `INSTALL.md`、ルートの `README-FULL.md` が作られます。
+同梱の Win64 プラグインバイナリは Epic Launcher 版 Unreal Engine 5.6.1 専用です。ソースビルドのエンジンや別のパッチ版では、その環境でのビルドが必要です。
+展開後、初回起動の 5 ステップは `Docs/FIRST_LAUNCH.md` を参照してください。
+
 ## English
 
 ### Prerequisites
@@ -11,6 +37,10 @@
 - Close Unreal Editor before copying or replacing the plugin folder.
 
 ### Install Modes
+
+This section is for the source-only `*-source.zip` package. Source-only packages
+are placed as a plugin folder, while the full-experience zip above is extracted
+at the project root.
 
 Project plugin placement is recommended on both macOS and Windows:
 
@@ -52,7 +82,7 @@ Windows PowerShell:
 
 On first editor launch, Unreal Build Tool compiles the plugin against your local Unreal binary. This can take about 30 seconds to 15 minutes depending on your build cache and machine.
 
-### Drop-in Limitations
+### Source-Only Drop-in Limitations
 
 - Workbench `Run Core Tests` and `Run RAG Evals` are disabled unless you copy the optional `Tools/UnrealMcpTests/` and `Tools/UnrealMcpKnowledge/Evals/` directories into your project. See `Docs/Release-2026-05.md` and `Plugins/UnrealMcp/README.md` in the full workbench repository for details.
 - `unreal.tools.import_package` requires a writable `Tools/UnrealMcpToolRegistry/tools.json` at the project root. If it is missing, the tool returns a structured `REGISTRY_NOT_INITIALIZED` error with the setup recipe.
@@ -97,6 +127,9 @@ Compare the `Get-FileHash` value with the hash in the `.sha256` sidecar.
 
 ### 安装模式
 
+本节适用于 source-only 的 `*-source.zip` 包。source-only 包按插件目录放置；
+上面的 full-experience zip 则解压到项目根目录。
+
 macOS 和 Windows 都推荐使用项目级插件位置：
 
 ```text
@@ -137,7 +170,7 @@ Windows PowerShell：
 
 首次启动编辑器时，Unreal Build Tool 会针对你的本地 Unreal 二进制编译插件。根据构建缓存和机器性能，这通常需要约 30 秒到 15 分钟。
 
-### Drop-in 限制
+### Source-Only Drop-in 限制
 
 - Workbench 的 `Run Core Tests` 和 `Run RAG Evals` 按钮会保持禁用，除非你把可选的 `Tools/UnrealMcpTests/` 和 `Tools/UnrealMcpKnowledge/Evals/` 目录复制到项目中。完整说明请查看完整 workbench 仓库里的 `Docs/Release-2026-05.md` 和 `Plugins/UnrealMcp/README.md`。
 - `unreal.tools.import_package` 需要项目根目录下存在可写的 `Tools/UnrealMcpToolRegistry/tools.json`。如果缺失，工具会返回结构化的 `REGISTRY_NOT_INITIALIZED` 错误，并附带设置步骤。
@@ -182,6 +215,10 @@ Get-Content UnrealMcp-v<version>-win-ue56-ue57-source.zip.sha256
 
 ### インストール方式
 
+このセクションは source-only の `*-source.zip` パッケージ向けです。
+source-only パッケージはプラグインフォルダとして配置します。上記の
+full-experience zip はプロジェクトルートへ展開します。
+
 macOS と Windows のどちらでも、推奨はプロジェクトプラグインとして配置する方法です。
 
 ```text
@@ -222,7 +259,7 @@ Windows PowerShell:
 
 初回のエディタ起動時に、Unreal Build Tool がローカルの Unreal バイナリに合わせてプラグインをコンパイルします。ビルドキャッシュとマシン性能により、約 30 秒から 15 分かかります。
 
-### Drop-in の制限
+### Source-Only Drop-in の制限
 
 - Workbench の `Run Core Tests` と `Run RAG Evals` ボタンは、任意の `Tools/UnrealMcpTests/` と `Tools/UnrealMcpKnowledge/Evals/` ディレクトリをプロジェクトへコピーするまで無効です。詳しくはフル workbench リポジトリの `Docs/Release-2026-05.md` と `Plugins/UnrealMcp/README.md` を参照してください。
 - `unreal.tools.import_package` には、プロジェクトルートの書き込み可能な `Tools/UnrealMcpToolRegistry/tools.json` が必要です。存在しない場合、ツールはセットアップ手順を含む構造化された `REGISTRY_NOT_INITIALIZED` エラーを返します。
