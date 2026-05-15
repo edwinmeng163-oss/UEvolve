@@ -1,5 +1,6 @@
 #include "UnrealMcpModule.h"
 
+#include "UnrealMcpPythonToolBridge.h"
 #include "UnrealMcpActorTools.h"
 #include "UnrealMcpBlueprintTools.h"
 #include "UnrealMcpEditorTools.h"
@@ -129,6 +130,11 @@ FUnrealMcpExecutionResult FUnrealMcpModule::ExecuteToolInternal(const FString& T
 			FString::Printf(TEXT("Handler '%s' is not registered in the explicit MCP handler registry."), *ToolName),
 			StructuredContent,
 			true);
+	}
+
+	if (HandlerEntry->ImplementationTrack == UnrealMcp::EToolImplementationTrack::Python)
+	{
+		return UnrealMcp::UnrealMcpPythonToolBridge::ExecutePythonRegisteredTool(*HandlerEntry, Arguments);
 	}
 
 	FUnrealMcpExecutionResult CategoryResult;

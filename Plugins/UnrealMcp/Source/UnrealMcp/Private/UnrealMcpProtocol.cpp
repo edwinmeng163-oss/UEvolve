@@ -14,6 +14,7 @@
 #include "Templates/Atomic.h"
 #include "UnrealMcpActivityLog.h"
 #include "UnrealMcpSettings.h"
+#include "UnrealMcpToolHandlerRegistry.h"
 #include "UnrealMcpToolRegistry.h"
 
 namespace UnrealMcp
@@ -346,16 +347,31 @@ TUniquePtr<FHttpServerResponse> FUnrealMcpModule::HandleToolsCall(const TSharedP
 		}
 		ArgumentKeys.Sort();
 
+		const FString HandlerName = UnrealMcp::ResolveToolHandlerName(ToolName);
 		const UnrealMcp::FToolPolicy ActivityPolicy = UnrealMcp::GetToolPolicy(ToolName);
 		TSharedPtr<FJsonObject> Payload = MakeShared<FJsonObject>();
 		Payload->SetStringField(TEXT("toolName"), ToolName);
-		Payload->SetStringField(TEXT("handlerName"), UnrealMcp::ResolveToolHandlerName(ToolName));
+		Payload->SetStringField(TEXT("handlerName"), HandlerName);
 		Payload->SetStringField(TEXT("riskLevel"), UnrealMcp::LexToString(ActivityPolicy.RiskLevel));
 		Payload->SetArrayField(TEXT("argumentKeys"), UnrealMcp::MakeJsonStringArray(ArgumentKeys));
 		Payload->SetBoolField(TEXT("isError"), Result.bIsError);
 		Payload->SetNumberField(TEXT("textLength"), Result.Text.Len());
 		Payload->SetBoolField(TEXT("hasStructuredContent"), Result.StructuredContent.IsValid());
 		Payload->SetNumberField(TEXT("durationMs"), FMath::Max(0.0, (FDateTime::UtcNow() - ToolStartTimeUtc).GetTotalMilliseconds()));
+
+		const UnrealMcp::FToolHandlerRegistryEntry* ActivityHandlerEntry = UnrealMcp::FindToolHandlerRegistryEntry(HandlerName);
+		if (ActivityHandlerEntry && ActivityHandlerEntry->ImplementationTrack == UnrealMcp::EToolImplementationTrack::Python)
+		{
+			FString PythonActualSha256;
+			if (Result.StructuredContent.IsValid())
+			{
+				Result.StructuredContent->TryGetStringField(TEXT("pythonActualSha256"), PythonActualSha256);
+			}
+			Payload->SetStringField(TEXT("pythonHandlerPath"), ActivityHandlerEntry->PythonHandlerPath);
+			Payload->SetStringField(TEXT("pythonExpectedSha256"), ActivityHandlerEntry->PythonHandlerSha256);
+			Payload->SetStringField(TEXT("pythonActualSha256"), PythonActualSha256);
+			Payload->SetNumberField(TEXT("pythonImportAllowListSize"), ActivityHandlerEntry->PythonImportAllowList.Num());
+		}
 
 		UnrealMcp::FActivityLogEvent Event;
 		Event.EventKind = TEXT("tool_call");
