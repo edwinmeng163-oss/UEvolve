@@ -4,6 +4,7 @@
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "HAL/FileManager.h"
+#include "HAL/PlatformFileManager.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "UnrealMcpActivityLog.h"
@@ -896,12 +897,20 @@ namespace UnrealMcp
 				}
 
 				TSharedPtr<FJsonObject> FileObject = MakeShared<FJsonObject>();
+				const FString HashBefore = HashTextForManifest(Pair.Value);
+				const FString HashAfter = HashTextForManifest(*PlannedText);
 				FileObject->SetStringField(TEXT("sourcePath"), Pair.Key);
 				FileObject->SetStringField(TEXT("relativePath"), MakeApplyRelativePath(Pair.Key));
-				FileObject->SetStringField(TEXT("hashBefore"), HashTextForManifest(Pair.Value));
-				FileObject->SetStringField(TEXT("hashAfter"), HashTextForManifest(*PlannedText));
+				FileObject->SetStringField(TEXT("hashBefore"), HashBefore);
+				FileObject->SetStringField(TEXT("hashAfter"), HashAfter);
 				FileObject->SetBoolField(TEXT("changed"), Pair.Value != *PlannedText);
 				FileObject->SetObjectField(TEXT("diff"), MakeTextDiffObject(Pair.Value, *PlannedText, TargetDiffPreviewLines));
+				TSharedPtr<FJsonObject> DiskVerificationObject = MakeShared<FJsonObject>();
+				DiskVerificationObject->SetStringField(TEXT("status"), bDryRun ? TEXT("dry_run") : TEXT("pending"));
+				DiskVerificationObject->SetStringField(TEXT("expectedHashBefore"), HashBefore);
+				DiskVerificationObject->SetStringField(TEXT("expectedHashAfter"), HashAfter);
+				DiskVerificationObject->SetBoolField(TEXT("verifiedOnDisk"), false);
+				FileObject->SetObjectField(TEXT("diskVerification"), DiskVerificationObject);
 				TargetDiffs.Add(MakeShared<FJsonValueObject>(FileObject));
 				if (Pair.Value != *PlannedText)
 				{
@@ -1023,6 +1032,7 @@ namespace UnrealMcp
 			StructuredContent->SetObjectField(TEXT("postcheck"), PostcheckObject);
 			StructuredContent->SetObjectField(TEXT("registrationStatus"), RegistrationStatusObject);
 			StructuredContent->SetArrayField(TEXT("nextSteps"), NextSteps);
+			StructuredContent->SetBoolField(TEXT("rolledBackOnApplyFailure"), false);
 
 			if (!bCanApply)
 			{
@@ -1063,42 +1073,40 @@ namespace UnrealMcp
 			const FString Timestamp = FDateTime::UtcNow().ToString(TEXT("%Y%m%d-%H%M%S"));
 			const FString BackupDirectory = FPaths::Combine(GetMcpExtensionBackupRoot(), Timestamp + TEXT("_") + SanitizeMcpToolIdForPath(ToolName));
 			TArray<TSharedPtr<FJsonValue>> ManifestFiles;
-			if (bCreateBackup)
+			StructuredContent->SetStringField(TEXT("backupDirectory"), BackupDirectory);
+
+			auto ReadAndHashFile = [](const FString& FilePath, FString& OutText, FString& OutHash) -> bool
 			{
-				if (!IFileManager::Get().MakeDirectory(*BackupDirectory, true))
+				if (!FFileHelper::LoadFileToString(OutText, *FilePath))
 				{
-					return MakeExecutionResult(FString::Printf(TEXT("Failed to create backup directory '%s'."), *BackupDirectory), StructuredContent, true);
+					OutHash = FString();
+					return false;
+				}
+				OutHash = HashTextForManifest(OutText);
+				return true;
+			};
+
+			auto MakeOrGetDiskVerification = [](const TSharedPtr<FJsonObject>& FileObject) -> TSharedPtr<FJsonObject>
+			{
+				if (!FileObject.IsValid())
+				{
+					return MakeShared<FJsonObject>();
 				}
 
-				for (const TSharedPtr<FJsonValue>& ChangedFileValue : ChangedFiles)
+				const TSharedPtr<FJsonObject>* ExistingObject = nullptr;
+				if (FileObject->TryGetObjectField(TEXT("diskVerification"), ExistingObject) && ExistingObject && (*ExistingObject).IsValid())
 				{
-					TSharedPtr<FJsonObject> ChangedFileObject = ChangedFileValue->AsObject();
-					if (!ChangedFileObject.IsValid())
-					{
-						continue;
-					}
-					FString SourcePath;
-					FString RelativePath;
-					ChangedFileObject->TryGetStringField(TEXT("sourcePath"), SourcePath);
-					ChangedFileObject->TryGetStringField(TEXT("relativePath"), RelativePath);
-					const FString BackupPath = FPaths::Combine(BackupDirectory, RelativePath + TEXT(".before"));
-					const FString AfterPath = FPaths::Combine(BackupDirectory, RelativePath + TEXT(".after"));
-					if (!IFileManager::Get().MakeDirectory(*FPaths::GetPath(BackupPath), true)
-						|| !IFileManager::Get().MakeDirectory(*FPaths::GetPath(AfterPath), true))
-					{
-						return MakeExecutionResult(FString::Printf(TEXT("Failed to create backup directories for '%s'."), *SourcePath), StructuredContent, true);
-					}
-					const FString BeforeText = BeforeTexts.FindChecked(SourcePath);
-					const FString AfterText = PlannedTexts.FindChecked(SourcePath);
-					if (!FFileHelper::SaveStringToFile(BeforeText, *BackupPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM)
-						|| !FFileHelper::SaveStringToFile(AfterText, *AfterPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
-					{
-						return MakeExecutionResult(FString::Printf(TEXT("Failed to write backup snapshots for '%s'."), *SourcePath), StructuredContent, true);
-					}
-					ChangedFileObject->SetStringField(TEXT("backupPath"), BackupPath);
-					ChangedFileObject->SetStringField(TEXT("afterPath"), AfterPath);
-					ManifestFiles.Add(MakeShared<FJsonValueObject>(ChangedFileObject));
+					return *ExistingObject;
 				}
+
+				TSharedPtr<FJsonObject> DiskVerificationObject = MakeShared<FJsonObject>();
+				FileObject->SetObjectField(TEXT("diskVerification"), DiskVerificationObject);
+				return DiskVerificationObject;
+			};
+
+			if (!IFileManager::Get().MakeDirectory(*BackupDirectory, true))
+			{
+				return MakeExecutionResult(FString::Printf(TEXT("Failed to create atomic apply backup directory '%s'."), *BackupDirectory), StructuredContent, true);
 			}
 
 			for (const TSharedPtr<FJsonValue>& ChangedFileValue : ChangedFiles)
@@ -1108,16 +1116,315 @@ namespace UnrealMcp
 				{
 					continue;
 				}
+
 				FString SourcePath;
+				FString RelativePath;
 				ChangedFileObject->TryGetStringField(TEXT("sourcePath"), SourcePath);
-				const FString* PlannedText = PlannedTexts.Find(SourcePath);
-				if (!PlannedText || !FFileHelper::SaveStringToFile(*PlannedText, *SourcePath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+				ChangedFileObject->TryGetStringField(TEXT("relativePath"), RelativePath);
+				const FString* BeforeText = BeforeTexts.Find(SourcePath);
+				const FString* AfterText = PlannedTexts.Find(SourcePath);
+				TSharedPtr<FJsonObject> DiskVerificationObject = MakeOrGetDiskVerification(ChangedFileObject);
+				DiskVerificationObject->SetStringField(TEXT("status"), TEXT("staging"));
+
+				if (SourcePath.IsEmpty() || RelativePath.IsEmpty() || !BeforeText || !AfterText)
 				{
-					return MakeExecutionResult(FString::Printf(TEXT("Failed to write source file '%s'."), *SourcePath), StructuredContent, true);
+					DiskVerificationObject->SetStringField(TEXT("status"), TEXT("failed"));
+					DiskVerificationObject->SetStringField(TEXT("failureStage"), TEXT("plan_lookup"));
+					StructuredContent->SetArrayField(TEXT("manifestFiles"), ManifestFiles);
+					return MakeExecutionResult(FString::Printf(TEXT("Missing planned text for changed source file '%s'."), *SourcePath), StructuredContent, true);
 				}
+
+				const FString BackupPath = FPaths::Combine(BackupDirectory, RelativePath + TEXT(".before"));
+				const FString AfterPath = FPaths::Combine(BackupDirectory, RelativePath + TEXT(".after"));
+				const FString TempPath = FPaths::Combine(
+					FPaths::GetPath(SourcePath),
+					FString::Printf(TEXT(".%s.%s.%d.unrealmcp.tmp"), *FPaths::GetCleanFilename(SourcePath), *Timestamp, ManifestFiles.Num()));
+				const FString ExpectedBeforeHash = HashTextForManifest(*BeforeText);
+				const FString ExpectedAfterHash = HashTextForManifest(*AfterText);
+
+				ChangedFileObject->SetStringField(TEXT("backupPath"), BackupPath);
+				ChangedFileObject->SetStringField(TEXT("afterPath"), AfterPath);
+				ChangedFileObject->SetStringField(TEXT("tempPath"), TempPath);
+				DiskVerificationObject->SetStringField(TEXT("tempPath"), TempPath);
+				DiskVerificationObject->SetStringField(TEXT("backupPath"), BackupPath);
+				DiskVerificationObject->SetStringField(TEXT("afterPath"), AfterPath);
+				ManifestFiles.Add(MakeShared<FJsonValueObject>(ChangedFileObject));
+
+				if (!IFileManager::Get().MakeDirectory(*FPaths::GetPath(BackupPath), true)
+					|| !IFileManager::Get().MakeDirectory(*FPaths::GetPath(AfterPath), true)
+					|| !IFileManager::Get().MakeDirectory(*FPaths::GetPath(TempPath), true))
+				{
+					DiskVerificationObject->SetStringField(TEXT("status"), TEXT("failed"));
+					DiskVerificationObject->SetStringField(TEXT("failureStage"), TEXT("create_staging_directories"));
+					StructuredContent->SetArrayField(TEXT("manifestFiles"), ManifestFiles);
+					return MakeExecutionResult(FString::Printf(TEXT("Failed to create atomic apply staging directories for '%s'."), *SourcePath), StructuredContent, true);
+				}
+
+				if (!FFileHelper::SaveStringToFile(*AfterText, *TempPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+				{
+					DiskVerificationObject->SetStringField(TEXT("status"), TEXT("failed"));
+					DiskVerificationObject->SetStringField(TEXT("failureStage"), TEXT("write_temp_after"));
+					StructuredContent->SetArrayField(TEXT("manifestFiles"), ManifestFiles);
+					return MakeExecutionResult(FString::Printf(TEXT("Failed to write atomic temp file '%s'."), *TempPath), StructuredContent, true);
+				}
+
+				FString TempText;
+				FString TempHash;
+				const bool bTempReadable = ReadAndHashFile(TempPath, TempText, TempHash);
+				DiskVerificationObject->SetStringField(TEXT("tempHash"), TempHash);
+				DiskVerificationObject->SetBoolField(TEXT("tempHashMatchesExpectedAfter"), bTempReadable && TempHash == ExpectedAfterHash);
+				if (!bTempReadable || TempHash != ExpectedAfterHash)
+				{
+					DiskVerificationObject->SetStringField(TEXT("status"), TEXT("failed"));
+					DiskVerificationObject->SetStringField(TEXT("failureStage"), TEXT("verify_temp_after"));
+					StructuredContent->SetArrayField(TEXT("manifestFiles"), ManifestFiles);
+					return MakeExecutionResult(FString::Printf(TEXT("Atomic temp file hash verification failed for '%s'."), *SourcePath), StructuredContent, true);
+				}
+
+				if (!FFileHelper::SaveStringToFile(*BeforeText, *BackupPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+				{
+					DiskVerificationObject->SetStringField(TEXT("status"), TEXT("failed"));
+					DiskVerificationObject->SetStringField(TEXT("failureStage"), TEXT("write_backup_before"));
+					StructuredContent->SetArrayField(TEXT("manifestFiles"), ManifestFiles);
+					return MakeExecutionResult(FString::Printf(TEXT("Failed to write before snapshot '%s'."), *BackupPath), StructuredContent, true);
+				}
+
+				FString BackupText;
+				FString BackupHash;
+				const bool bBackupReadable = ReadAndHashFile(BackupPath, BackupText, BackupHash);
+				DiskVerificationObject->SetStringField(TEXT("backupHash"), BackupHash);
+				DiskVerificationObject->SetBoolField(TEXT("backupHashMatchesExpectedBefore"), bBackupReadable && BackupHash == ExpectedBeforeHash);
+				if (!bBackupReadable || BackupHash != ExpectedBeforeHash)
+				{
+					DiskVerificationObject->SetStringField(TEXT("status"), TEXT("failed"));
+					DiskVerificationObject->SetStringField(TEXT("failureStage"), TEXT("verify_backup_before"));
+					StructuredContent->SetArrayField(TEXT("manifestFiles"), ManifestFiles);
+					return MakeExecutionResult(FString::Printf(TEXT("Before snapshot hash verification failed for '%s'."), *SourcePath), StructuredContent, true);
+				}
+
+				if (!FFileHelper::SaveStringToFile(*AfterText, *AfterPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+				{
+					DiskVerificationObject->SetStringField(TEXT("status"), TEXT("failed"));
+					DiskVerificationObject->SetStringField(TEXT("failureStage"), TEXT("write_after_snapshot"));
+					StructuredContent->SetArrayField(TEXT("manifestFiles"), ManifestFiles);
+					return MakeExecutionResult(FString::Printf(TEXT("Failed to write after snapshot '%s'."), *AfterPath), StructuredContent, true);
+				}
+
+				FString AfterSnapshotText;
+				FString AfterSnapshotHash;
+				const bool bAfterSnapshotReadable = ReadAndHashFile(AfterPath, AfterSnapshotText, AfterSnapshotHash);
+				DiskVerificationObject->SetStringField(TEXT("afterSnapshotHash"), AfterSnapshotHash);
+				DiskVerificationObject->SetBoolField(TEXT("afterSnapshotHashMatchesExpectedAfter"), bAfterSnapshotReadable && AfterSnapshotHash == ExpectedAfterHash);
+				if (!bAfterSnapshotReadable || AfterSnapshotHash != ExpectedAfterHash)
+				{
+					DiskVerificationObject->SetStringField(TEXT("status"), TEXT("failed"));
+					DiskVerificationObject->SetStringField(TEXT("failureStage"), TEXT("verify_after_snapshot"));
+					StructuredContent->SetArrayField(TEXT("manifestFiles"), ManifestFiles);
+					return MakeExecutionResult(FString::Printf(TEXT("After snapshot hash verification failed for '%s'."), *SourcePath), StructuredContent, true);
+				}
+
+				DiskVerificationObject->SetStringField(TEXT("status"), TEXT("staged"));
 			}
 
-			StructuredContent->SetStringField(TEXT("backupDirectory"), BackupDirectory);
+			StructuredContent->SetArrayField(TEXT("manifestFiles"), ManifestFiles);
+			TArray<TSharedPtr<FJsonObject>> AppliedFileObjects;
+			auto RollbackAppliedFiles = [&StructuredContent, &ReadAndHashFile, &MakeOrGetDiskVerification](const TArray<TSharedPtr<FJsonObject>>& FilesToRollback, FString& OutRollbackFailure) -> bool
+			{
+				bool bAllRollbackSucceeded = true;
+				for (int32 FileIndex = FilesToRollback.Num() - 1; FileIndex >= 0; --FileIndex)
+				{
+					TSharedPtr<FJsonObject> FileObject = FilesToRollback[FileIndex];
+					if (!FileObject.IsValid())
+					{
+						continue;
+					}
+
+					FString SourcePath;
+					FString BackupPath;
+					FString ExpectedBeforeHash;
+					FileObject->TryGetStringField(TEXT("sourcePath"), SourcePath);
+					FileObject->TryGetStringField(TEXT("backupPath"), BackupPath);
+					FileObject->TryGetStringField(TEXT("hashBefore"), ExpectedBeforeHash);
+					TSharedPtr<FJsonObject> DiskVerificationObject = MakeOrGetDiskVerification(FileObject);
+					DiskVerificationObject->SetBoolField(TEXT("rollbackAttempted"), true);
+
+					FString BackupText;
+					if (SourcePath.IsEmpty() || BackupPath.IsEmpty() || !FFileHelper::LoadFileToString(BackupText, *BackupPath))
+					{
+						bAllRollbackSucceeded = false;
+						DiskVerificationObject->SetStringField(TEXT("status"), TEXT("rollback_failed"));
+						DiskVerificationObject->SetBoolField(TEXT("verifiedOnDisk"), false);
+						DiskVerificationObject->SetBoolField(TEXT("rollbackSucceeded"), false);
+						DiskVerificationObject->SetStringField(TEXT("rollbackFailure"), FString::Printf(TEXT("Failed to read before snapshot '%s'."), *BackupPath));
+						if (OutRollbackFailure.IsEmpty())
+						{
+							OutRollbackFailure = FString::Printf(TEXT("Failed to read before snapshot '%s'."), *BackupPath);
+						}
+						continue;
+					}
+
+					if (!FFileHelper::SaveStringToFile(BackupText, *SourcePath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+					{
+						bAllRollbackSucceeded = false;
+						DiskVerificationObject->SetStringField(TEXT("status"), TEXT("rollback_failed"));
+						DiskVerificationObject->SetBoolField(TEXT("verifiedOnDisk"), false);
+						DiskVerificationObject->SetBoolField(TEXT("rollbackSucceeded"), false);
+						DiskVerificationObject->SetStringField(TEXT("rollbackFailure"), FString::Printf(TEXT("Failed to restore source file '%s'."), *SourcePath));
+						if (OutRollbackFailure.IsEmpty())
+						{
+							OutRollbackFailure = FString::Printf(TEXT("Failed to restore source file '%s'."), *SourcePath);
+						}
+						continue;
+					}
+
+					FString RestoredText;
+					FString RestoredHash;
+					const bool bRestoredReadable = ReadAndHashFile(SourcePath, RestoredText, RestoredHash);
+					const bool bRestoredHashMatches = bRestoredReadable && (ExpectedBeforeHash.IsEmpty() || RestoredHash == ExpectedBeforeHash);
+					DiskVerificationObject->SetStringField(TEXT("rollbackHash"), RestoredHash);
+					DiskVerificationObject->SetStringField(TEXT("finalDiskHash"), RestoredHash);
+					DiskVerificationObject->SetBoolField(TEXT("rollbackHashMatchesExpectedBefore"), bRestoredHashMatches);
+					DiskVerificationObject->SetBoolField(TEXT("finalDiskHashMatchesExpectedBefore"), bRestoredHashMatches);
+					DiskVerificationObject->SetBoolField(TEXT("verifiedOnDisk"), false);
+					DiskVerificationObject->SetBoolField(TEXT("rollbackSucceeded"), bRestoredHashMatches);
+					DiskVerificationObject->SetStringField(TEXT("status"), bRestoredHashMatches ? TEXT("rolled_back") : TEXT("rollback_failed"));
+					if (!bRestoredHashMatches)
+					{
+						bAllRollbackSucceeded = false;
+						DiskVerificationObject->SetStringField(TEXT("rollbackFailure"), FString::Printf(TEXT("Restored source hash verification failed for '%s'."), *SourcePath));
+						if (OutRollbackFailure.IsEmpty())
+						{
+							OutRollbackFailure = FString::Printf(TEXT("Restored source hash verification failed for '%s'."), *SourcePath);
+						}
+					}
+				}
+
+				StructuredContent->SetBoolField(TEXT("rolledBackOnApplyFailure"), true);
+				StructuredContent->SetBoolField(TEXT("rollbackSucceeded"), bAllRollbackSucceeded);
+				return bAllRollbackSucceeded;
+			};
+
+			for (const TSharedPtr<FJsonValue>& ChangedFileValue : ChangedFiles)
+			{
+				TSharedPtr<FJsonObject> ChangedFileObject = ChangedFileValue->AsObject();
+				if (!ChangedFileObject.IsValid())
+				{
+					continue;
+				}
+
+				FString SourcePath;
+				FString TempPath;
+				FString ExpectedBeforeHash;
+				FString ExpectedAfterHash;
+				ChangedFileObject->TryGetStringField(TEXT("sourcePath"), SourcePath);
+				ChangedFileObject->TryGetStringField(TEXT("tempPath"), TempPath);
+				ChangedFileObject->TryGetStringField(TEXT("hashBefore"), ExpectedBeforeHash);
+				ChangedFileObject->TryGetStringField(TEXT("hashAfter"), ExpectedAfterHash);
+				TSharedPtr<FJsonObject> DiskVerificationObject = MakeOrGetDiskVerification(ChangedFileObject);
+				DiskVerificationObject->SetStringField(TEXT("status"), TEXT("replacing"));
+
+				if (SourcePath.IsEmpty() || TempPath.IsEmpty())
+				{
+					DiskVerificationObject->SetStringField(TEXT("status"), TEXT("failed"));
+					DiskVerificationObject->SetStringField(TEXT("failureStage"), TEXT("replace_target"));
+					FString RollbackFailure;
+					const bool bHadAppliedFiles = AppliedFileObjects.Num() > 0;
+					const bool bRollbackSucceeded = !bHadAppliedFiles || RollbackAppliedFiles(AppliedFileObjects, RollbackFailure);
+					StructuredContent->SetArrayField(TEXT("manifestFiles"), ManifestFiles);
+					return MakeExecutionResult(
+						bHadAppliedFiles
+							? (bRollbackSucceeded
+								? FString::Printf(TEXT("Failed to atomically replace source file '%s'. Previously written files were restored from .before snapshots."), *SourcePath)
+								: FString::Printf(TEXT("Failed to atomically replace source file '%s', and rollback was incomplete: %s"), *SourcePath, *RollbackFailure))
+							: FString::Printf(TEXT("Failed to atomically replace source file '%s'. No source files had been replaced yet."), *SourcePath),
+						StructuredContent,
+						true);
+				}
+
+				FString DiskBeforeText;
+				FString DiskBeforeHash;
+				const bool bDiskBeforeReadable = ReadAndHashFile(SourcePath, DiskBeforeText, DiskBeforeHash);
+				const bool bDiskBeforeHashMatches = bDiskBeforeReadable && DiskBeforeHash == ExpectedBeforeHash;
+				DiskVerificationObject->SetStringField(TEXT("diskHashBefore"), DiskBeforeHash);
+				DiskVerificationObject->SetBoolField(TEXT("diskHashBeforeMatchesExpected"), bDiskBeforeHashMatches);
+				if (!bDiskBeforeHashMatches)
+				{
+					DiskVerificationObject->SetStringField(TEXT("status"), TEXT("failed"));
+					DiskVerificationObject->SetStringField(TEXT("failureStage"), TEXT("verify_disk_before"));
+					FString RollbackFailure;
+					const bool bHadAppliedFiles = AppliedFileObjects.Num() > 0;
+					const bool bRollbackSucceeded = !bHadAppliedFiles || RollbackAppliedFiles(AppliedFileObjects, RollbackFailure);
+					StructuredContent->SetArrayField(TEXT("manifestFiles"), ManifestFiles);
+					return MakeExecutionResult(
+						bHadAppliedFiles
+							? (bRollbackSucceeded
+								? FString::Printf(TEXT("Disk hash verification failed before replacing '%s'. Previously written files were restored from .before snapshots."), *SourcePath)
+								: FString::Printf(TEXT("Disk hash verification failed before replacing '%s', and rollback was incomplete: %s"), *SourcePath, *RollbackFailure))
+							: FString::Printf(TEXT("Disk hash verification failed before replacing '%s'. No source files had been replaced yet."), *SourcePath),
+						StructuredContent,
+						true);
+				}
+
+				DiskVerificationObject->SetStringField(TEXT("replaceMethod"), TEXT("platform_move_file"));
+				if (!FPlatformFileManager::Get().GetPlatformFile().MoveFile(*SourcePath, *TempPath))
+				{
+					DiskVerificationObject->SetStringField(TEXT("status"), TEXT("failed"));
+					DiskVerificationObject->SetStringField(TEXT("failureStage"), TEXT("replace_target"));
+					FString FailedReplaceDiskText;
+					FString FailedReplaceDiskHash;
+					const bool bFailedReplaceTargetReadable = ReadAndHashFile(SourcePath, FailedReplaceDiskText, FailedReplaceDiskHash);
+					const bool bFailedReplaceTargetStillBefore = bFailedReplaceTargetReadable && FailedReplaceDiskHash == ExpectedBeforeHash;
+					DiskVerificationObject->SetStringField(TEXT("diskHashAfterFailedReplace"), FailedReplaceDiskHash);
+					DiskVerificationObject->SetBoolField(TEXT("targetStillMatchesExpectedBeforeAfterFailedReplace"), bFailedReplaceTargetStillBefore);
+
+					TArray<TSharedPtr<FJsonObject>> RollbackFileObjects = AppliedFileObjects;
+					if (!bFailedReplaceTargetStillBefore)
+					{
+						RollbackFileObjects.Add(ChangedFileObject);
+					}
+
+					FString RollbackFailure;
+					const bool bHadRollbackTargets = RollbackFileObjects.Num() > 0;
+					const bool bRollbackSucceeded = !bHadRollbackTargets || RollbackAppliedFiles(RollbackFileObjects, RollbackFailure);
+					StructuredContent->SetArrayField(TEXT("manifestFiles"), ManifestFiles);
+					return MakeExecutionResult(
+						bHadRollbackTargets
+							? (bRollbackSucceeded
+								? FString::Printf(TEXT("Failed to atomically replace source file '%s'. Written files were restored from .before snapshots."), *SourcePath)
+								: FString::Printf(TEXT("Failed to atomically replace source file '%s', and rollback was incomplete: %s"), *SourcePath, *RollbackFailure))
+							: FString::Printf(TEXT("Failed to atomically replace source file '%s'. No source files had been replaced yet."), *SourcePath),
+						StructuredContent,
+						true);
+				}
+
+				AppliedFileObjects.Add(ChangedFileObject);
+				DiskVerificationObject->SetBoolField(TEXT("targetReplaceSucceeded"), true);
+
+				FString DiskText;
+				FString DiskHash;
+				const bool bDiskReadable = ReadAndHashFile(SourcePath, DiskText, DiskHash);
+				const bool bDiskHashMatches = bDiskReadable && DiskHash == ExpectedAfterHash;
+				DiskVerificationObject->SetStringField(TEXT("diskHashAfter"), DiskHash);
+				DiskVerificationObject->SetBoolField(TEXT("diskHashAfterMatchesExpected"), bDiskHashMatches);
+				DiskVerificationObject->SetBoolField(TEXT("verifiedOnDisk"), bDiskHashMatches);
+				if (!bDiskHashMatches)
+				{
+					DiskVerificationObject->SetStringField(TEXT("status"), TEXT("failed"));
+					DiskVerificationObject->SetStringField(TEXT("failureStage"), TEXT("verify_disk_after"));
+					FString RollbackFailure;
+					const bool bRollbackSucceeded = RollbackAppliedFiles(AppliedFileObjects, RollbackFailure);
+					StructuredContent->SetArrayField(TEXT("manifestFiles"), ManifestFiles);
+					return MakeExecutionResult(
+						bRollbackSucceeded
+							? FString::Printf(TEXT("Disk hash verification failed after replacing '%s'. Written files were restored from .before snapshots."), *SourcePath)
+							: FString::Printf(TEXT("Disk hash verification failed after replacing '%s', and rollback was incomplete: %s"), *SourcePath, *RollbackFailure),
+						StructuredContent,
+						true);
+				}
+
+				DiskVerificationObject->SetStringField(TEXT("status"), TEXT("verified"));
+			}
+
 			StructuredContent->SetArrayField(TEXT("manifestFiles"), ManifestFiles);
 			FString ManifestPath;
 			FString LatestManifestPath;
@@ -1139,6 +1446,7 @@ namespace UnrealMcp
 			ManifestObject->SetArrayField(TEXT("changes"), Changes);
 			ManifestObject->SetArrayField(TEXT("files"), ManifestFiles);
 			ManifestObject->SetObjectField(TEXT("postcheck"), PostcheckObject);
+			ManifestObject->SetBoolField(TEXT("rolledBackOnApplyFailure"), false);
 
 			if (bCreateBackup)
 			{
@@ -1148,7 +1456,15 @@ namespace UnrealMcp
 				if (!SaveJsonObjectToFile(ManifestObject, ManifestPath, ManifestFailure)
 					|| !SaveJsonObjectToFile(ManifestObject, LatestManifestPath, ManifestFailure))
 				{
-					return MakeExecutionResult(ManifestFailure, StructuredContent, true);
+					FString RollbackFailure;
+					const bool bRollbackSucceeded = RollbackAppliedFiles(AppliedFileObjects, RollbackFailure);
+					StructuredContent->SetArrayField(TEXT("manifestFiles"), ManifestFiles);
+					return MakeExecutionResult(
+						bRollbackSucceeded
+							? FString::Printf(TEXT("%s Written files were restored from .before snapshots."), *ManifestFailure)
+							: FString::Printf(TEXT("%s Rollback was incomplete: %s"), *ManifestFailure, *RollbackFailure),
+						StructuredContent,
+						true);
 				}
 				StructuredContent->SetStringField(TEXT("manifestPath"), ManifestPath);
 				StructuredContent->SetStringField(TEXT("latestManifestPath"), LatestManifestPath);
