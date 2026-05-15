@@ -306,40 +306,44 @@ Get-Content "$zip.sha256"
 
 PASS: the package script exits `0`, prints the zip path, size, SHA-256, and `Done. Next: open this on a clean Windows UE 5.6.1 project; see Docs/FIRST_LAUNCH.md.` The recomputed SHA-256 must match the sidecar.
 
-### Phase 6 — Test on a clean UE 5.6.1 project
+### Stage 2b-BP: Blueprint-only pure-unzip cold start
 
-Create a clean Blueprint-only blank project at `C:\Temp\UEvolveFullTest` by copying `TP_Blank`, removing its C++ `Source/` tree, and deleting the `.uproject` `Modules` array. This is required for a true no-compile cold start; C++ test projects rebuild their project module on first open.
+Create a clean Blueprint-only blank project at `C:\Temp\UEvolveFullTestBP` by copying `TP_Blank`. You MUST remove the template `Source/` tree AND leave the `.uproject` `Modules` array empty; otherwise UBT will treat the project as a build path and the first launch will not prove the pure-unzip case.
 
 ```powershell
-$proj = "C:\Temp\UEvolveFullTest"
+$proj = "C:\Temp\UEvolveFullTestBP"
 if (Test-Path $proj) { Remove-Item -Recurse -Force $proj }
 Copy-Item -Recurse "C:\Program Files\Epic Games\UE_5.6\Templates\TP_Blank" $proj
-Move-Item "$proj\TP_Blank.uproject" "$proj\UEvolveFullTest.uproject"
+Move-Item "$proj\TP_Blank.uproject" "$proj\UEvolveFullTestBP.uproject"
 Remove-Item -Recurse -Force "$proj\Source" -ErrorAction SilentlyContinue
 
-$uproj = "$proj\UEvolveFullTest.uproject"
+$uproj = "$proj\UEvolveFullTestBP.uproject"
 $json = Get-Content $uproj -Raw | ConvertFrom-Json
-if ($json.PSObject.Properties.Name -contains "Modules") {
-    $json.PSObject.Properties.Remove("Modules")
-}
+$json | Add-Member -NotePropertyName Modules -NotePropertyValue ([object[]]@()) -Force
 $json | Add-Member -NotePropertyName Plugins -NotePropertyValue @(
     [pscustomobject]@{ Name = "PythonScriptPlugin"; Enabled = $true },
     [pscustomobject]@{ Name = "UnrealMcp"; Enabled = $true }
 ) -Force
 $json | ConvertTo-Json -Depth 10 | Set-Content $uproj -Encoding UTF8
 
-Test-Path "$proj\UEvolveFullTest.uproject"
-Test-Path "$proj\Source"
 Expand-Archive -Path "C:\Work\UEvolve\Saved\UnrealMcp\Packages\UnrealMcp-v0.12.0-pilot-full-win-ue561.zip" `
     -DestinationPath $proj -Force
+$checkJson = Get-Content $uproj -Raw | ConvertFrom-Json
+$moduleCount = 0
+if ($null -ne $checkJson.Modules) { $moduleCount = @($checkJson.Modules).Count }
+
+Test-Path "$proj\UEvolveFullTestBP.uproject"
+Test-Path "$proj\Source"
+$moduleCount
 Test-Path "$proj\Plugins\UnrealMcp\UnrealMcp.uplugin"
 Test-Path "$proj\Tools\UnrealMcpToolRegistry\tools.json"
 Test-Path "$proj\Tools\UnrealMcpCodexBridge\start-bridge.cmd"
+Test-Path "$proj\first_launch_build.cmd"
 ```
 
-PASS: `UEvolveFullTest.uproject` exists, `Test-Path "$proj\Source"` returns `False`, and the extracted `Plugins/` and `Tools/` paths exist.
+PASS: `UEvolveFullTestBP.uproject` exists, `Test-Path "$proj\Source"` returns `False`, `$moduleCount` is `0`, and the extracted `Plugins/`, `Tools/`, and `first_launch_build.cmd` paths exist.
 
-Open `UEvolveFullTest.uproject` in Unreal Editor. PASS: the editor opens and the plugin loads with no build prompt.
+Open `UEvolveFullTestBP.uproject` in Unreal Editor. PASS: the editor opens, the plugin DLL loads as-is, and there is ZERO UBT activity: no rebuild prompt, no `UnrealBuildTool`/`Build.bat` process, and no plugin compile/link lines.
 
 Start the bridge:
 
@@ -374,6 +378,79 @@ Run the functional input verifier:
 
 PASS: verification reports success. Finally, press Play in PIE and manually confirm WASD movement plus mouse rotation.
 
+### Stage 2b-CPP: C++ first-launch rebuild path
+
+Create a clean C++ `TP_Blank` project at `C:\Temp\UEvolveFullTestCPP` and keep its `Source/` tree. This path is expected to rebuild on first launch. After extracting the full-experience zip, run `<Project>\first_launch_build.cmd` from the project root, verify it succeeds, then open the editor and confirm the plugin loads.
+
+```powershell
+$projCpp = "C:\Temp\UEvolveFullTestCPP"
+if (Test-Path $projCpp) { Remove-Item -Recurse -Force $projCpp }
+Copy-Item -Recurse "C:\Program Files\Epic Games\UE_5.6\Templates\TP_Blank" $projCpp
+Move-Item "$projCpp\TP_Blank.uproject" "$projCpp\UEvolveFullTestCPP.uproject"
+
+$uprojCpp = "$projCpp\UEvolveFullTestCPP.uproject"
+$jsonCpp = Get-Content $uprojCpp -Raw | ConvertFrom-Json
+$jsonCpp.Modules[0].Name = "UEvolveFullTestCPP"
+$jsonCpp | Add-Member -NotePropertyName Plugins -NotePropertyValue @(
+    [pscustomobject]@{ Name = "PythonScriptPlugin"; Enabled = $true },
+    [pscustomobject]@{ Name = "UnrealMcp"; Enabled = $true }
+) -Force
+$jsonCpp | ConvertTo-Json -Depth 10 | Set-Content $uprojCpp -Encoding UTF8
+
+Move-Item "$projCpp\Source\TP_Blank" "$projCpp\Source\UEvolveFullTestCPP"
+Get-ChildItem "$projCpp\Source\UEvolveFullTestCPP" -File | ForEach-Object {
+    $newName = $_.Name -replace 'TP_Blank', 'UEvolveFullTestCPP'
+    if ($_.Name -ne $newName) { Rename-Item $_.FullName $newName }
+}
+Move-Item "$projCpp\Source\TP_Blank.Target.cs" "$projCpp\Source\UEvolveFullTestCPP.Target.cs"
+Move-Item "$projCpp\Source\TP_BlankEditor.Target.cs" "$projCpp\Source\UEvolveFullTestCPPEditor.Target.cs"
+Get-ChildItem "$projCpp\Source" -Recurse -Include *.cs,*.cpp,*.h | ForEach-Object {
+    $content = Get-Content $_.FullName -Raw
+    $rewritten = $content -replace 'TP_Blank', 'UEvolveFullTestCPP'
+    if ($content -ne $rewritten) { Set-Content $_.FullName -Value $rewritten -NoNewline }
+}
+Remove-Item "$projCpp\Config\TemplateDefs.ini" -ErrorAction SilentlyContinue
+Get-ChildItem $projCpp -Recurse -File | Select-String -Pattern 'TP_Blank' -SimpleMatch | Select-Object -First 5
+
+Expand-Archive -Path "C:\Work\UEvolve\Saved\UnrealMcp\Packages\UnrealMcp-v0.12.0-pilot-full-win-ue561.zip" `
+    -DestinationPath $projCpp -Force
+Test-Path "$projCpp\Source"
+Test-Path "$projCpp\first_launch_build.cmd"
+Test-Path "$projCpp\Plugins\UnrealMcp\Binaries\Win64\UnrealEditor-UnrealMcp.dll"
+```
+
+PASS: the `Select-String` returns nothing, `Source/` remains present, and the extracted top-level `first_launch_build.cmd` plus prebuilt plugin DLL exist.
+
+Run the first-launch build. On a warm cache this is expected to take about 5 minutes:
+
+```powershell
+Push-Location $projCpp
+try {
+    & "$projCpp\first_launch_build.cmd"
+    $firstLaunchExit = $LASTEXITCODE
+} finally {
+    Pop-Location
+}
+$firstLaunchLog = "$projCpp\Saved\Logs\first_launch_build.log"
+$firstLaunchExit
+Test-Path $firstLaunchLog
+Select-String $firstLaunchLog -Pattern 'Build succeeded|Result: Succeeded' | Select-Object -Last 5
+```
+
+PASS: `$firstLaunchExit -eq 0`, the log exists, and the script prints `Build succeeded - log at <path>`.
+
+Verify the rebuilt plugin modules manifest now matches the UE 5.6.1 engine BuildId:
+
+```powershell
+$engineModules = Get-Content "C:\Program Files\Epic Games\UE_5.6\Engine\Binaries\Win64\UnrealEditor.modules" -Raw | ConvertFrom-Json
+$pluginModules = Get-Content "$projCpp\Plugins\UnrealMcp\Binaries\Win64\UnrealEditor.modules" -Raw | ConvertFrom-Json
+$engineModules.BuildId
+$pluginModules.BuildId
+$engineModules.BuildId -eq $pluginModules.BuildId
+```
+
+PASS: the final comparison returns `True`. Then open `UEvolveFullTestCPP.uproject`; the editor should load the rebuilt plugin without another rebuild prompt.
+
 ### Stage 2b Report
 
 Report these fields:
@@ -383,7 +460,8 @@ FULL ZIP: PASS | FAIL — <zip path> — <SHA-256>
 PHASE 1 BUILD: PASS | FAIL — <result line> — <log path>
 PHASE 3 BRIDGE BUNDLE: PASS | FAIL — <bundle path>
 PHASE 4 PACKAGE: PASS | FAIL — <zip path> — <SHA-256 sidecar match yes/no>
-PHASE 6 CLEAN PROJECT: PASS | FAIL — no-build-prompt: yes/no — bridge 8766: yes/no — editor_status: yes/no
+STAGE 2b-BP PURE UNZIP: PASS | FAIL — zero UBT activity: yes/no — plugin DLL as-is: yes/no — bridge 8766: yes/no — editor_status: yes/no
+STAGE 2b-CPP FIRST-LAUNCH BUILD: PASS | FAIL — duration: <minutes> — BuildId match: yes/no — plugin loads: yes/no
 FPS SCAFFOLD: PASS | FAIL
 FPS BOOTSTRAP: PASS | FAIL
 INPUT VERIFIER: PASS | FAIL

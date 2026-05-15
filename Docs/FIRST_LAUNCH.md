@@ -4,11 +4,11 @@
 
 ### Prerequisites
 
-- Windows 10 or Windows 11.
-- Epic Launcher Unreal Engine 5.6.1. Use the Epic Launcher binary build, not an engine source build.
-- Visual Studio 2022 with the "Game Development with C++" workload.
-- .NET 6 or newer.
-- For the no-compile pure-unzip experience, your project must be Blueprint-only with no `<Project>/Source/` directory. C++ projects will still rebuild their own module on first open after dropping the zip in; that is the project compiling, not the plugin.
+- BP-only pure-unzip path: only requires Windows 10/11 and Epic Launcher Unreal Engine 5.6.1. Use the Epic Launcher binary build, not an engine source build.
+- C++ first-launch path: additionally requires Visual Studio 2022 with the "Game Development with C++" workload, a Windows 10/11 SDK, and .NET 6 or newer.
+- Existing source-only zip users: same prerequisites as the C++ first-launch path.
+
+In this v0.13.0 package, if your project has a `Source/` tree, UBT will treat UnrealMcp as part of the target build graph during the first-launch rebuild, and the pre-built `UnrealEditor-UnrealMcp.dll` may be overwritten with a freshly compiled version. To get genuine no-compile launch, either start from a Blueprint-only project (no `Source/`) or wait for a future v0.14.x installed-plugin variant.
 
 ### Step 1 - Extract
 
@@ -51,11 +51,11 @@ Test the setup by asking Chat to `list maps` or by calling `unreal.editor_status
 
 ### 前提条件
 
-- Windows 10 或 Windows 11。
-- Epic Launcher 安装的 Unreal Engine 5.6.1。请使用 Epic Launcher 二进制版本，不要使用源码编译版引擎。
-- Visual Studio 2022，并安装 "Game Development with C++" 工作负载。
-- .NET 6 或更新版本。
-- 如果想获得无需编译、纯解压即可启动的体验，项目必须是 Blueprint-only，且没有 `<Project>/Source/` 目录。C++ 项目在放入 zip 后首次打开时仍会重新构建自己的项目模块；这是项目在编译，不是插件在编译。
+- BP-only 纯解压路径：只需要 Windows 10/11 和 Epic Launcher 安装的 Unreal Engine 5.6.1。请使用 Epic Launcher 二进制版本，不要使用源码编译版引擎。
+- C++ 首次启动构建路径：还需要 Visual Studio 2022，并安装 "Game Development with C++" 工作负载、Windows 10/11 SDK，以及 .NET 6 或更新版本。
+- 现有 source-only zip 用户：前提条件与 C++ 首次启动构建路径相同。
+
+在这个 v0.13.0 包中，如果你的项目有 `Source/` 目录，首次启动重建时 UBT 会把 UnrealMcp 视为目标构建图的一部分，预构建的 `UnrealEditor-UnrealMcp.dll` 可能会被新编译出的版本覆盖。要获得真正无需编译的启动，请从 Blueprint-only 项目（没有 `Source/`）开始，或等待未来 v0.14.x 的 installed-plugin 变体。
 
 ### 步骤 1 - 解压
 
@@ -98,11 +98,11 @@ Test the setup by asking Chat to `list maps` or by calling `unreal.editor_status
 
 ### 前提条件
 
-- Windows 10 または Windows 11。
-- Epic Launcher 版 Unreal Engine 5.6.1。エンジンをソースからビルドした版ではなく、Epic Launcher のバイナリ版を使ってください。
-- Visual Studio 2022 と "Game Development with C++" ワークロード。
-- .NET 6 以降。
-- コンパイルなしの純粋な unzip 体験にするには、プロジェクトが Blueprint-only で、`<Project>/Source/` ディレクトリが存在しない必要があります。C++ プロジェクトでは zip を配置した後の初回起動時に自分のプロジェクトモジュールが再ビルドされます。これはプラグインではなくプロジェクト側のコンパイルです。
+- Blueprint-only の純粋な unzip パス: Windows 10/11 と Epic Launcher 版 Unreal Engine 5.6.1 だけが必要です。エンジンをソースからビルドした版ではなく、Epic Launcher のバイナリ版を使ってください。
+- C++ 初回起動ビルドパス: 追加で Visual Studio 2022 の "Game Development with C++" ワークロード、Windows 10/11 SDK、.NET 6 以降が必要です。
+- 既存の source-only zip ユーザー: C++ 初回起動ビルドパスと同じ前提条件です。
+
+この v0.13.0 パッケージでは、プロジェクトに `Source/` ツリーがある場合、初回起動時の再ビルドで UBT は UnrealMcp をターゲットのビルドグラフの一部として扱うため、事前ビルド済みの `UnrealEditor-UnrealMcp.dll` が新しくコンパイルされた版で上書きされることがあります。本当にコンパイルなしで起動するには、Blueprint-only プロジェクト（`Source/` なし）から始めるか、将来の v0.14.x installed-plugin バリアントを待ってください。
 
 ### Step 1 - 展開
 

@@ -298,6 +298,10 @@ try {
         }
         Copy-Item -LiteralPath $installResource -Destination (Join-Path $stageParent "README-FULL.md") -Force
         Copy-Item -LiteralPath $installResource -Destination (Join-Path $stageParent "INSTALL.md") -Force
+        Copy-Item -LiteralPath @(
+            (Join-Path $repoRoot "Tools/first_launch_build.ps1"),
+            (Join-Path $repoRoot "Tools/first_launch_build.cmd")
+        ) -Destination $stageParent -Force
 
         Assert-PlainFile (Join-Path $stagePlugin "UnrealMcp.uplugin") `
             "Staging integrity failure: missing Plugins/UnrealMcp/UnrealMcp.uplugin" `
