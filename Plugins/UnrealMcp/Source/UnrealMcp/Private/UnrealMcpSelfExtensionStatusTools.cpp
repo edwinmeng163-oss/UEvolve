@@ -81,6 +81,91 @@ namespace UnrealMcp
 		TSharedPtr<FJsonObject> ManifestObject;
 		if (FPaths::FileExists(GetLatestMcpExtensionManifestPath()) && LoadJsonObjectFromFile(GetLatestMcpExtensionManifestPath(), ManifestObject, FailureReason))
 		{
+			bool bLatestManifestDrift = false;
+			auto AnnotateManifestFileDrift = [&bLatestManifestDrift](
+				const TSharedPtr<FJsonObject>& FileObject,
+				const FString& SourcePath,
+				const FString& ExpectedAfterHash,
+				const FString& ExpectedBeforeHash)
+			{
+				if (!FileObject.IsValid())
+				{
+					return;
+				}
+
+				FString ResolvedSourcePath;
+				FString ResolveFailure;
+				const bool bResolved = !SourcePath.TrimStartAndEnd().IsEmpty()
+					&& ResolveProjectPathInsideProject(SourcePath, ResolvedSourcePath, ResolveFailure);
+
+				FString CurrentText;
+				FString CurrentHash;
+				const bool bCurrentReadable = bResolved && FFileHelper::LoadFileToString(CurrentText, *ResolvedSourcePath);
+				if (bCurrentReadable)
+				{
+					CurrentHash = HashTextForManifest(CurrentText);
+				}
+
+				const bool bMatchesExpectedAfter = bCurrentReadable && !ExpectedAfterHash.IsEmpty() && CurrentHash == ExpectedAfterHash;
+				const bool bMatchesExpectedBefore = bCurrentReadable && !ExpectedBeforeHash.IsEmpty() && CurrentHash == ExpectedBeforeHash;
+				const bool bCanCheckDrift = !ExpectedAfterHash.IsEmpty();
+				const bool bManifestDrift = bCanCheckDrift && !bMatchesExpectedAfter;
+				bLatestManifestDrift |= bManifestDrift;
+
+				FileObject->SetBoolField(TEXT("sourcePathResolved"), bResolved);
+				if (bResolved)
+				{
+					FileObject->SetStringField(TEXT("resolvedSourcePath"), ResolvedSourcePath);
+				}
+				else if (!ResolveFailure.IsEmpty())
+				{
+					FileObject->SetStringField(TEXT("sourcePathResolveWarning"), ResolveFailure);
+				}
+				FileObject->SetBoolField(TEXT("currentReadable"), bCurrentReadable);
+				FileObject->SetStringField(TEXT("currentHash"), CurrentHash);
+				FileObject->SetStringField(TEXT("expectedAfterHash"), ExpectedAfterHash);
+				FileObject->SetStringField(TEXT("expectedBeforeHash"), ExpectedBeforeHash);
+				FileObject->SetBoolField(TEXT("currentHashMatchesExpectedAfter"), bMatchesExpectedAfter);
+				FileObject->SetBoolField(TEXT("currentHashMatchesExpectedBefore"), bMatchesExpectedBefore);
+				FileObject->SetBoolField(TEXT("rolledBackOnDisk"), bManifestDrift && bMatchesExpectedBefore);
+				FileObject->SetBoolField(TEXT("manifestDrift"), bManifestDrift);
+				FileObject->SetStringField(
+					TEXT("manifestDriftKind"),
+					bManifestDrift ? (bMatchesExpectedBefore ? TEXT("rolled_back") : TEXT("manual_edit_or_missing")) : TEXT("none"));
+			};
+
+			const TArray<TSharedPtr<FJsonValue>>* ManifestFiles = nullptr;
+			if (ManifestObject->TryGetArrayField(TEXT("files"), ManifestFiles) && ManifestFiles)
+			{
+				for (const TSharedPtr<FJsonValue>& FileValue : *ManifestFiles)
+				{
+					TSharedPtr<FJsonObject> FileObject = FileValue.IsValid() ? FileValue->AsObject() : nullptr;
+					if (!FileObject.IsValid())
+					{
+						continue;
+					}
+
+					FString SourcePath;
+					FString ExpectedAfterHash;
+					FString ExpectedBeforeHash;
+					FileObject->TryGetStringField(TEXT("sourcePath"), SourcePath);
+					FileObject->TryGetStringField(TEXT("hashAfter"), ExpectedAfterHash);
+					FileObject->TryGetStringField(TEXT("hashBefore"), ExpectedBeforeHash);
+					AnnotateManifestFileDrift(FileObject, SourcePath, ExpectedAfterHash, ExpectedBeforeHash);
+				}
+			}
+			else
+			{
+				FString SourcePath;
+				FString ExpectedAfterHash;
+				FString ExpectedBeforeHash;
+				ManifestObject->TryGetStringField(TEXT("sourcePath"), SourcePath);
+				ManifestObject->TryGetStringField(TEXT("sourceHashAfter"), ExpectedAfterHash);
+				ManifestObject->TryGetStringField(TEXT("sourceHashBefore"), ExpectedBeforeHash);
+				AnnotateManifestFileDrift(ManifestObject, SourcePath, ExpectedAfterHash, ExpectedBeforeHash);
+			}
+
+			StructuredContent->SetBoolField(TEXT("latestManifestDrift"), bLatestManifestDrift);
 			StructuredContent->SetObjectField(TEXT("latestManifest"), ManifestObject);
 		}
 		else if (!FailureReason.IsEmpty())
