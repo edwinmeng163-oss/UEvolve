@@ -49,7 +49,13 @@ if ($null -ne $bunCommand -and (Test-Path -LiteralPath $bunCommand.Source -PathT
 
 Push-Location $bridgeDir
 try {
-    & $bunExe install 2>&1 | ForEach-Object { Write-Host $_ }
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & $bunExe install 2>&1 | ForEach-Object { Write-Host $_ }
+    } finally {
+        $ErrorActionPreference = $prevEAP
+    }
     if ($LASTEXITCODE -ne 0) {
         Die "bun install failed in Tools/UnrealMcpCodexBridge"
     }
@@ -70,7 +76,13 @@ if (-not (Test-Path -LiteralPath (Join-Path $stageBridge "node_modules") -PathTy
 }
 
 Remove-Item -LiteralPath $outputPath -Force -ErrorAction SilentlyContinue
-& tar -cf $outputPath -C $workRoot "UnrealMcpCodexBridge" 2>&1 | ForEach-Object { Write-Host $_ }
+$prevEAP = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+try {
+    & tar -cf $outputPath -C $workRoot "UnrealMcpCodexBridge" 2>&1 | ForEach-Object { Write-Host $_ }
+} finally {
+    $ErrorActionPreference = $prevEAP
+}
 if ($LASTEXITCODE -ne 0) {
     Die "tar failed while writing bridge bundle"
 }

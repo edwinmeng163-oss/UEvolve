@@ -53,7 +53,13 @@ function Invoke-PythonScript {
         }
         # Merge stderr into stdout so PowerShell's Stop-on-stderr policy doesn't
         # wrap legitimate validator messages as NativeCommandError records.
-        & $command.Source $ScriptPath 2>&1 | ForEach-Object { Write-Host $_ }
+        $prevEAP = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            & $command.Source $ScriptPath 2>&1 | ForEach-Object { Write-Host $_ }
+        } finally {
+            $ErrorActionPreference = $prevEAP
+        }
         if ($LASTEXITCODE -eq 0) {
             return $true
         }
@@ -165,7 +171,13 @@ function Resolve-BridgeBundleRoot {
         if ($null -eq $tarCommand) {
             Die "Bridge bundle tar extraction requires tar.exe in PATH"
         }
-        & $tarCommand.Source -xf $resolved.Path -C $extractDir 2>&1 | ForEach-Object { Write-Host $_ }
+        $prevEAP = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            & $tarCommand.Source -xf $resolved.Path -C $extractDir 2>&1 | ForEach-Object { Write-Host $_ }
+        } finally {
+            $ErrorActionPreference = $prevEAP
+        }
         if ($LASTEXITCODE -ne 0) {
             Die "Could not extract bridge bundle tarball: $($resolved.Path)"
         }
