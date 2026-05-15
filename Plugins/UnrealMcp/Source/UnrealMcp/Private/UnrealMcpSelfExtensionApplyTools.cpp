@@ -361,32 +361,391 @@ namespace UnrealMcp
 			return RelativePath;
 		}
 
-		FString FindTryExecuteFirstIfAnchor(const FString& SourceText, const FString& TryExecuteName)
+		bool IsCppIdentifierStart(TCHAR Character)
 		{
-			const int32 FunctionOffset = SourceText.Find(FString::Printf(TEXT("bool %s("), *TryExecuteName), ESearchCase::CaseSensitive);
-			if (FunctionOffset == INDEX_NONE)
+			return FChar::IsAlpha(Character) || Character == TEXT('_');
+		}
+
+		bool IsCppIdentifierChar(TCHAR Character)
+		{
+			return FChar::IsAlnum(Character) || Character == TEXT('_');
+		}
+
+		bool TrySkipCppLineOrBlockComment(const FString& SourceText, int32& Offset)
+		{
+			const int32 TextLength = SourceText.Len();
+			if (Offset + 1 >= TextLength || SourceText[Offset] != TEXT('/'))
+			{
+				return false;
+			}
+
+			if (SourceText[Offset + 1] == TEXT('/'))
+			{
+				Offset += 2;
+				while (Offset < TextLength && SourceText[Offset] != TEXT('\n'))
+				{
+					++Offset;
+				}
+				return true;
+			}
+
+			if (SourceText[Offset + 1] == TEXT('*'))
+			{
+				Offset += 2;
+				while (Offset + 1 < TextLength)
+				{
+					if (SourceText[Offset] == TEXT('*') && SourceText[Offset + 1] == TEXT('/'))
+					{
+						Offset += 2;
+						return true;
+					}
+					++Offset;
+				}
+				Offset = TextLength;
+				return true;
+			}
+
+			return false;
+		}
+
+		bool TrySkipCppRawStringLiteral(const FString& SourceText, int32& Offset)
+		{
+			const int32 TextLength = SourceText.Len();
+			if (Offset + 2 >= TextLength || SourceText[Offset] != TEXT('R') || SourceText[Offset + 1] != TEXT('"'))
+			{
+				return false;
+			}
+
+			const int32 DelimiterStart = Offset + 2;
+			int32 OpenParenOffset = DelimiterStart;
+			while (OpenParenOffset < TextLength
+				&& SourceText[OpenParenOffset] != TEXT('(')
+				&& SourceText[OpenParenOffset] != TEXT('\n')
+				&& SourceText[OpenParenOffset] != TEXT('\r'))
+			{
+				++OpenParenOffset;
+			}
+			if (OpenParenOffset >= TextLength || SourceText[OpenParenOffset] != TEXT('('))
+			{
+				return false;
+			}
+
+			const FString Delimiter = SourceText.Mid(DelimiterStart, OpenParenOffset - DelimiterStart);
+			const FString ClosingNeedle = FString::Printf(TEXT(")%s\""), *Delimiter);
+			const int32 ClosingOffset = SourceText.Find(ClosingNeedle, ESearchCase::CaseSensitive, ESearchDir::FromStart, OpenParenOffset + 1);
+			Offset = ClosingOffset == INDEX_NONE ? TextLength : ClosingOffset + ClosingNeedle.Len();
+			return true;
+		}
+
+		bool TrySkipCppStringOrCharacterLiteral(const FString& SourceText, int32& Offset)
+		{
+			if (TrySkipCppRawStringLiteral(SourceText, Offset))
+			{
+				return true;
+			}
+
+			const int32 TextLength = SourceText.Len();
+			if (Offset >= TextLength || (SourceText[Offset] != TEXT('"') && SourceText[Offset] != TEXT('\'')))
+			{
+				return false;
+			}
+
+			const TCHAR QuoteCharacter = SourceText[Offset];
+			++Offset;
+			while (Offset < TextLength)
+			{
+				if (SourceText[Offset] == TEXT('\\'))
+				{
+					Offset += 2;
+					continue;
+				}
+				if (SourceText[Offset] == QuoteCharacter)
+				{
+					++Offset;
+					return true;
+				}
+				++Offset;
+			}
+
+			return true;
+		}
+
+		void SkipCppTrivia(const FString& SourceText, int32& Offset)
+		{
+			const int32 TextLength = SourceText.Len();
+			while (Offset < TextLength)
+			{
+				if (FChar::IsWhitespace(SourceText[Offset]))
+				{
+					++Offset;
+					continue;
+				}
+				if (TrySkipCppLineOrBlockComment(SourceText, Offset))
+				{
+					continue;
+				}
+				break;
+			}
+		}
+
+		FString ReadPreviousCppIdentifier(const FString& SourceText, int32 BeforeOffset)
+		{
+			int32 EndOffset = BeforeOffset - 1;
+			while (EndOffset >= 0 && FChar::IsWhitespace(SourceText[EndOffset]))
+			{
+				--EndOffset;
+			}
+
+			if (EndOffset < 0 || !IsCppIdentifierChar(SourceText[EndOffset]))
 			{
 				return FString();
 			}
 
-			const int32 BodyOffset = SourceText.Find(TEXT("{"), ESearchCase::CaseSensitive, ESearchDir::FromStart, FunctionOffset);
-			if (BodyOffset == INDEX_NONE)
+			int32 StartOffset = EndOffset;
+			while (StartOffset > 0 && IsCppIdentifierChar(SourceText[StartOffset - 1]))
 			{
-				return FString();
+				--StartOffset;
+			}
+			return SourceText.Mid(StartOffset, EndOffset - StartOffset + 1);
+		}
+
+		int32 FindMatchingCppDelimiter(const FString& SourceText, int32 OpenOffset, TCHAR OpenCharacter, TCHAR CloseCharacter)
+		{
+			const int32 TextLength = SourceText.Len();
+			int32 Offset = OpenOffset;
+			int32 Depth = 0;
+			while (Offset < TextLength)
+			{
+				if (TrySkipCppLineOrBlockComment(SourceText, Offset) || TrySkipCppStringOrCharacterLiteral(SourceText, Offset))
+				{
+					continue;
+				}
+
+				if (SourceText[Offset] == OpenCharacter)
+				{
+					++Depth;
+				}
+				else if (SourceText[Offset] == CloseCharacter)
+				{
+					--Depth;
+					if (Depth == 0)
+					{
+						return Offset;
+					}
+				}
+				++Offset;
 			}
 
-			const int32 FirstIfOffset = SourceText.Find(TEXT("\n\t\tif ("), ESearchCase::CaseSensitive, ESearchDir::FromStart, BodyOffset);
-			if (FirstIfOffset == INDEX_NONE)
+			return INDEX_NONE;
+		}
+
+		bool IsCppBodyEmpty(const FString& SourceText, int32 BodyStartOffset, int32 BodyEndOffset)
+		{
+			int32 Offset = BodyStartOffset + 1;
+			while (Offset < BodyEndOffset)
 			{
-				return FString();
+				if (FChar::IsWhitespace(SourceText[Offset]))
+				{
+					++Offset;
+					continue;
+				}
+				if (TrySkipCppLineOrBlockComment(SourceText, Offset))
+				{
+					continue;
+				}
+				return false;
+			}
+			return true;
+		}
+
+		bool TryFindFirstTopLevelIfAnchorInBody(
+			const FString& SourceText,
+			int32 BodyStartOffset,
+			int32 BodyEndOffset,
+			FString& OutAnchor)
+		{
+			int32 Offset = BodyStartOffset + 1;
+			int32 NestedBraceDepth = 0;
+			while (Offset < BodyEndOffset)
+			{
+				if (TrySkipCppLineOrBlockComment(SourceText, Offset) || TrySkipCppStringOrCharacterLiteral(SourceText, Offset))
+				{
+					continue;
+				}
+
+				if (SourceText[Offset] == TEXT('{'))
+				{
+					++NestedBraceDepth;
+					++Offset;
+					continue;
+				}
+				if (SourceText[Offset] == TEXT('}'))
+				{
+					NestedBraceDepth = FMath::Max(0, NestedBraceDepth - 1);
+					++Offset;
+					continue;
+				}
+
+				if (NestedBraceDepth == 0 && IsCppIdentifierStart(SourceText[Offset]))
+				{
+					const int32 TokenStartOffset = Offset;
+					while (Offset < BodyEndOffset && IsCppIdentifierChar(SourceText[Offset]))
+					{
+						++Offset;
+					}
+					if (SourceText.Mid(TokenStartOffset, Offset - TokenStartOffset) != TEXT("if"))
+					{
+						continue;
+					}
+
+					int32 AfterIfOffset = Offset;
+					SkipCppTrivia(SourceText, AfterIfOffset);
+					if (AfterIfOffset >= BodyEndOffset || SourceText[AfterIfOffset] != TEXT('('))
+					{
+						continue;
+					}
+
+					int32 LineStartOffset = TokenStartOffset;
+					while (LineStartOffset > BodyStartOffset + 1
+						&& SourceText[LineStartOffset - 1] != TEXT('\n')
+						&& SourceText[LineStartOffset - 1] != TEXT('\r'))
+					{
+						--LineStartOffset;
+					}
+
+					bool bOnlyIndentationBeforeIf = true;
+					for (int32 LineOffset = LineStartOffset; LineOffset < TokenStartOffset; ++LineOffset)
+					{
+						if (!FChar::IsWhitespace(SourceText[LineOffset]))
+						{
+							bOnlyIndentationBeforeIf = false;
+							break;
+						}
+					}
+					if (!bOnlyIndentationBeforeIf)
+					{
+						continue;
+					}
+
+					int32 AnchorStartOffset = LineStartOffset;
+					if (AnchorStartOffset > 0 && SourceText[AnchorStartOffset - 1] == TEXT('\n'))
+					{
+						--AnchorStartOffset;
+						if (AnchorStartOffset > 0 && SourceText[AnchorStartOffset - 1] == TEXT('\r'))
+						{
+							--AnchorStartOffset;
+						}
+					}
+					else if (AnchorStartOffset > 0 && SourceText[AnchorStartOffset - 1] == TEXT('\r'))
+					{
+						--AnchorStartOffset;
+					}
+
+					OutAnchor = SourceText.Mid(AnchorStartOffset, BodyEndOffset - AnchorStartOffset + 1);
+					return true;
+				}
+
+				++Offset;
 			}
 
-			const int32 LineEndOffset = SourceText.Find(TEXT("\n"), ESearchCase::CaseSensitive, ESearchDir::FromStart, FirstIfOffset + 1);
-			if (LineEndOffset == INDEX_NONE)
+			return false;
+		}
+
+		bool FindTryExecuteFirstIfAnchor(
+			const FString& SourceText,
+			const FString& TryExecuteName,
+			FString& OutAnchor,
+			FString& OutFailureReason)
+		{
+			OutAnchor.Reset();
+			OutFailureReason.Reset();
+
+			const FString CleanTryExecuteName = TryExecuteName.TrimStartAndEnd();
+			if (CleanTryExecuteName.IsEmpty())
 			{
-				return SourceText.Mid(FirstIfOffset);
+				OutFailureReason = TEXT("TryExecute dispatcher name is empty.");
+				return false;
 			}
-			return SourceText.Mid(FirstIfOffset, LineEndOffset - FirstIfOffset);
+
+			const int32 TextLength = SourceText.Len();
+			int32 Offset = 0;
+			while (Offset < TextLength)
+			{
+				if (TrySkipCppLineOrBlockComment(SourceText, Offset) || TrySkipCppStringOrCharacterLiteral(SourceText, Offset))
+				{
+					continue;
+				}
+
+				if (!IsCppIdentifierStart(SourceText[Offset]))
+				{
+					++Offset;
+					continue;
+				}
+
+				const int32 TokenStartOffset = Offset;
+				while (Offset < TextLength && IsCppIdentifierChar(SourceText[Offset]))
+				{
+					++Offset;
+				}
+
+				if (SourceText.Mid(TokenStartOffset, Offset - TokenStartOffset) != CleanTryExecuteName)
+				{
+					continue;
+				}
+
+				if (ReadPreviousCppIdentifier(SourceText, TokenStartOffset) != TEXT("bool"))
+				{
+					continue;
+				}
+
+				int32 AfterNameOffset = Offset;
+				SkipCppTrivia(SourceText, AfterNameOffset);
+				if (AfterNameOffset >= TextLength || SourceText[AfterNameOffset] != TEXT('('))
+				{
+					continue;
+				}
+
+				const int32 SignatureEndOffset = FindMatchingCppDelimiter(SourceText, AfterNameOffset, TEXT('('), TEXT(')'));
+				if (SignatureEndOffset == INDEX_NONE)
+				{
+					continue;
+				}
+
+				int32 AfterSignatureOffset = SignatureEndOffset + 1;
+				SkipCppTrivia(SourceText, AfterSignatureOffset);
+				if (AfterSignatureOffset < TextLength && SourceText[AfterSignatureOffset] == TEXT(';'))
+				{
+					continue;
+				}
+				if (AfterSignatureOffset >= TextLength || SourceText[AfterSignatureOffset] != TEXT('{'))
+				{
+					continue;
+				}
+
+				const int32 BodyEndOffset = FindMatchingCppDelimiter(SourceText, AfterSignatureOffset, TEXT('{'), TEXT('}'));
+				if (BodyEndOffset == INDEX_NONE)
+				{
+					OutFailureReason = FString::Printf(TEXT("Definition for %s has no matching closing brace."), *CleanTryExecuteName);
+					return false;
+				}
+
+				if (IsCppBodyEmpty(SourceText, AfterSignatureOffset, BodyEndOffset))
+				{
+					OutFailureReason = FString::Printf(TEXT("Definition for %s has an empty body; cannot locate dispatcher insertion point."), *CleanTryExecuteName);
+					return false;
+				}
+
+				if (!TryFindFirstTopLevelIfAnchorInBody(SourceText, AfterSignatureOffset, BodyEndOffset, OutAnchor))
+				{
+					OutFailureReason = FString::Printf(TEXT("Definition for %s has no top-level 'if (' dispatcher branch."), *CleanTryExecuteName);
+					return false;
+				}
+
+				return true;
+			}
+
+			OutFailureReason = FString::Printf(TEXT("Could not find a non-declaration definition for %s; skipped comments, string literals, and prototype-only lines."), *CleanTryExecuteName);
+			return false;
 		}
 
 		bool ReadScaffoldPatchFile(
@@ -763,13 +1122,16 @@ namespace UnrealMcp
 				Changes,
 				bChanged);
 
-			const FString DispatcherAnchor = FindTryExecuteFirstIfAnchor(CategoryBefore, TryExecuteName);
-			if (DispatcherAnchor.IsEmpty())
+			FString DispatcherAnchor;
+			FString DispatcherAnchorFailureReason;
+			if (!FindTryExecuteFirstIfAnchor(CategoryBefore, TryExecuteName, DispatcherAnchor, DispatcherAnchorFailureReason))
 			{
 				Changes.Add(MakeShared<FJsonValueObject>(MakeInsertionChangeObject(
 					TEXT("CategoryDispatcherBranch"),
 					EMcpScaffoldInsertionStatus::MissingAnchor,
-					FString::Printf(TEXT("Could not find first if branch in %s."), *TryExecuteName),
+					DispatcherAnchorFailureReason.IsEmpty()
+						? FString::Printf(TEXT("Could not find first top-level if branch in %s."), *TryExecuteName)
+						: DispatcherAnchorFailureReason,
 					INDEX_NONE,
 					CategoryDispatcherPatch.Left(800))));
 				bCanApply = false;
