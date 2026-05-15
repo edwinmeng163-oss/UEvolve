@@ -655,9 +655,11 @@ namespace UnrealMcp
 			const FString& SourceText,
 			const FString& TryExecuteName,
 			FString& OutAnchor,
+			FString& OutDispatcherBodyScope,
 			FString& OutFailureReason)
 		{
 			OutAnchor.Reset();
+			OutDispatcherBodyScope.Reset();
 			OutFailureReason.Reset();
 
 			const FString CleanTryExecuteName = TryExecuteName.TrimStartAndEnd();
@@ -741,6 +743,9 @@ namespace UnrealMcp
 					return false;
 				}
 
+				OutDispatcherBodyScope = SourceText.Mid(
+					AfterSignatureOffset,
+					BodyEndOffset - AfterSignatureOffset + 1);
 				return true;
 			}
 
@@ -782,7 +787,7 @@ namespace UnrealMcp
 
 		bool PlanOrApplyPatchInsertion(
 			FString& SourceText,
-			const FString& ConflictSourceText,
+			const FString& ConflictSearchScope,
 			const FString& Section,
 			const FString& SourcePath,
 			const FString& ToolName,
@@ -816,7 +821,7 @@ namespace UnrealMcp
 				return true;
 			}
 
-			if (!ConflictNeedle.IsEmpty() && ConflictSourceText.Contains(ConflictNeedle, ESearchCase::CaseSensitive))
+			if (!ConflictNeedle.IsEmpty() && ConflictSearchScope.Contains(ConflictNeedle, ESearchCase::CaseSensitive))
 			{
 				Changes.Add(MakeShared<FJsonValueObject>(MakeInsertionChangeObject(
 					Section,
@@ -1123,8 +1128,14 @@ namespace UnrealMcp
 				bChanged);
 
 			FString DispatcherAnchor;
+			FString DispatcherConflictSearchScope;
 			FString DispatcherAnchorFailureReason;
-			if (!FindTryExecuteFirstIfAnchor(CategoryBefore, TryExecuteName, DispatcherAnchor, DispatcherAnchorFailureReason))
+			if (!FindTryExecuteFirstIfAnchor(
+				CategoryBefore,
+				TryExecuteName,
+				DispatcherAnchor,
+				DispatcherConflictSearchScope,
+				DispatcherAnchorFailureReason))
 			{
 				Changes.Add(MakeShared<FJsonValueObject>(MakeInsertionChangeObject(
 					TEXT("CategoryDispatcherBranch"),
@@ -1140,7 +1151,7 @@ namespace UnrealMcp
 			{
 				bCanApply &= PlanOrApplyPatchInsertion(
 					CategoryText,
-					CategoryBefore,
+					DispatcherConflictSearchScope,
 					TEXT("CategoryDispatcherBranch"),
 					CategorySourcePath,
 					ToolName,
