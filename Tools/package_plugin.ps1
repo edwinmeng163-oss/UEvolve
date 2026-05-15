@@ -165,7 +165,7 @@ function Resolve-BridgeBundleRoot {
         if ($null -eq $tarCommand) {
             Die "Bridge bundle tar extraction requires tar.exe in PATH"
         }
-        & $tarCommand.Source -xf $resolved.Path -C $extractDir
+        & $tarCommand.Source -xf $resolved.Path -C $extractDir 2>&1 | ForEach-Object { Write-Host $_ }
         if ($LASTEXITCODE -ne 0) {
             Die "Could not extract bridge bundle tarball: $($resolved.Path)"
         }
@@ -376,6 +376,12 @@ try {
     }
 } catch {
     Write-Error -Message "Error: $($_.Exception.Message)" -ErrorAction Continue
+    if ($null -ne $_.InvocationInfo -and -not [string]::IsNullOrWhiteSpace($_.InvocationInfo.PositionMessage)) {
+        Write-Error -Message $_.InvocationInfo.PositionMessage -ErrorAction Continue
+    }
+    if (-not [string]::IsNullOrWhiteSpace($_.ScriptStackTrace)) {
+        Write-Error -Message $_.ScriptStackTrace -ErrorAction Continue
+    }
     exit 1
 } finally {
     if ((-not [string]::IsNullOrWhiteSpace($stageParent)) -and (Test-Path -LiteralPath $stageParent)) {
