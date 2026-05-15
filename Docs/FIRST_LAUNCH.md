@@ -8,6 +8,7 @@
 - Epic Launcher Unreal Engine 5.6.1. Use the Epic Launcher binary build, not an engine source build.
 - Visual Studio 2022 with the "Game Development with C++" workload.
 - .NET 6 or newer.
+- For the no-compile pure-unzip experience, your project must be Blueprint-only with no `<Project>/Source/` directory. C++ projects will still rebuild their own module on first open after dropping the zip in; that is the project compiling, not the plugin.
 
 ### Step 1 - Extract
 
@@ -54,6 +55,7 @@ Test the setup by asking Chat to `list maps` or by calling `unreal.editor_status
 - Epic Launcher 安装的 Unreal Engine 5.6.1。请使用 Epic Launcher 二进制版本，不要使用源码编译版引擎。
 - Visual Studio 2022，并安装 "Game Development with C++" 工作负载。
 - .NET 6 或更新版本。
+- 如果想获得无需编译、纯解压即可启动的体验，项目必须是 Blueprint-only，且没有 `<Project>/Source/` 目录。C++ 项目在放入 zip 后首次打开时仍会重新构建自己的项目模块；这是项目在编译，不是插件在编译。
 
 ### 步骤 1 - 解压
 
@@ -100,6 +102,7 @@ Test the setup by asking Chat to `list maps` or by calling `unreal.editor_status
 - Epic Launcher 版 Unreal Engine 5.6.1。エンジンをソースからビルドした版ではなく、Epic Launcher のバイナリ版を使ってください。
 - Visual Studio 2022 と "Game Development with C++" ワークロード。
 - .NET 6 以降。
+- コンパイルなしの純粋な unzip 体験にするには、プロジェクトが Blueprint-only で、`<Project>/Source/` ディレクトリが存在しない必要があります。C++ プロジェクトでは zip を配置した後の初回起動時に自分のプロジェクトモジュールが再ビルドされます。これはプラグインではなくプロジェクト側のコンパイルです。
 
 ### Step 1 - 展開
 

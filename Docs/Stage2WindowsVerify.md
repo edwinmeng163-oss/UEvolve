@@ -308,13 +308,28 @@ PASS: the package script exits `0`, prints the zip path, size, SHA-256, and `Don
 
 ### Phase 6 — Test on a clean UE 5.6.1 project
 
-Create a clean blank project named `UEvolveFullTest` at `C:\Temp\UEvolveFullTest`. Use Unreal's Project Browser, or reuse the `TP_Blank` rename flow from Step 4 above with `UEvolveFullTest` substituted everywhere. Do not only rename the `.uproject`; the module and target names must match too.
-
-Extract the full-experience zip into the project root:
+Create a clean Blueprint-only blank project at `C:\Temp\UEvolveFullTest` by copying `TP_Blank`, removing its C++ `Source/` tree, and deleting the `.uproject` `Modules` array. This is required for a true no-compile cold start; C++ test projects rebuild their project module on first open.
 
 ```powershell
 $proj = "C:\Temp\UEvolveFullTest"
+if (Test-Path $proj) { Remove-Item -Recurse -Force $proj }
+Copy-Item -Recurse "C:\Program Files\Epic Games\UE_5.6\Templates\TP_Blank" $proj
+Move-Item "$proj\TP_Blank.uproject" "$proj\UEvolveFullTest.uproject"
+Remove-Item -Recurse -Force "$proj\Source" -ErrorAction SilentlyContinue
+
+$uproj = "$proj\UEvolveFullTest.uproject"
+$json = Get-Content $uproj -Raw | ConvertFrom-Json
+if ($json.PSObject.Properties.Name -contains "Modules") {
+    $json.PSObject.Properties.Remove("Modules")
+}
+$json | Add-Member -NotePropertyName Plugins -NotePropertyValue @(
+    [pscustomobject]@{ Name = "PythonScriptPlugin"; Enabled = $true },
+    [pscustomobject]@{ Name = "UnrealMcp"; Enabled = $true }
+) -Force
+$json | ConvertTo-Json -Depth 10 | Set-Content $uproj -Encoding UTF8
+
 Test-Path "$proj\UEvolveFullTest.uproject"
+Test-Path "$proj\Source"
 Expand-Archive -Path "C:\Work\UEvolve\Saved\UnrealMcp\Packages\UnrealMcp-v0.12.0-pilot-full-win-ue561.zip" `
     -DestinationPath $proj -Force
 Test-Path "$proj\Plugins\UnrealMcp\UnrealMcp.uplugin"
@@ -322,12 +337,7 @@ Test-Path "$proj\Tools\UnrealMcpToolRegistry\tools.json"
 Test-Path "$proj\Tools\UnrealMcpCodexBridge\start-bridge.cmd"
 ```
 
-Edit `UEvolveFullTest.uproject` and enable both plugins:
-
-```json
-{ "Name": "PythonScriptPlugin", "Enabled": true },
-{ "Name": "UnrealMcp", "Enabled": true }
-```
+PASS: `UEvolveFullTest.uproject` exists, `Test-Path "$proj\Source"` returns `False`, and the extracted `Plugins/` and `Tools/` paths exist.
 
 Open `UEvolveFullTest.uproject` in Unreal Editor. PASS: the editor opens and the plugin loads with no build prompt.
 
