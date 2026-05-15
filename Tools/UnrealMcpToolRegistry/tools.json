@@ -2511,6 +2511,222 @@
       "docsPath": "README.md#tool-coverage",
       "reason": "Explicit registry: read-only editor engine version inspection for version-aware tool planning.",
       "notes": ""
+    },
+    {
+      "name": "unreal.editor.python_runtime_info",
+      "category": "editor",
+      "handlerName": "unreal.editor.python_runtime_info",
+      "title": "Editor Python Runtime Info",
+      "description": "Reports read-only Python interpreter, module-count, and Unreal module/runtime details to confirm the python implementation track is working.",
+      "implementationTrack": "python",
+      "pythonHandlerPath": "Tools/UnrealMcpPyTools/editor_python_runtime_info/main.py",
+      "pythonHandlerSha256": "56f6f019a385406e59571db5d781cf5532d7225516c78253c1ce47bae7facb39",
+      "pythonImportAllowList": [
+        "unreal"
+      ],
+      "exposure": "visible",
+      "riskLevel": "critical",
+      "requiresWrite": false,
+      "requiresBuild": false,
+      "requiresExternalProcess": true,
+      "requiresRestart": false,
+      "requiresProjectMemory": false,
+      "requiresLock": false,
+      "dryRunSupport": false,
+      "preflightSupport": false,
+      "postcheckSupport": false,
+      "testCoverage": "manual",
+      "owner": "UEvolve Core",
+      "docsPath": "README.md#tool-coverage",
+      "reason": "Python implementation track smoke tool. Underlying operation is read-only, but Lane E defaults python-track registry entries to critical risk and external-process handling.",
+      "summaryTemplate": "Reported Unreal Python {result.python.versionInfo.major}.{result.python.versionInfo.minor} with {result.python.moduleCount} loaded modules",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {},
+        "required": []
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "isError",
+          "toolName",
+          "summary",
+          "python",
+          "unreal",
+          "request"
+        ],
+        "properties": {
+          "isError": {
+            "type": "boolean"
+          },
+          "toolName": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "python": {
+            "type": "object",
+            "additionalProperties": true,
+            "required": [
+              "version",
+              "versionInfo",
+              "moduleCount",
+              "pathCount"
+            ],
+            "properties": {
+              "version": {
+                "type": "string"
+              },
+              "versionInfo": {
+                "type": "object"
+              },
+              "implementation": {
+                "type": "object"
+              },
+              "compiler": {
+                "type": "string"
+              },
+              "build": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "executable": {
+                "type": "string"
+              },
+              "prefix": {
+                "type": "string"
+              },
+              "basePrefix": {
+                "type": "string"
+              },
+              "execPrefix": {
+                "type": "string"
+              },
+              "baseExecPrefix": {
+                "type": "string"
+              },
+              "byteOrder": {
+                "type": "string"
+              },
+              "filesystemEncoding": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "defaultEncoding": {
+                "type": "string"
+              },
+              "moduleCount": {
+                "type": "integer"
+              },
+              "pathCount": {
+                "type": "integer"
+              },
+              "platform": {
+                "type": "string"
+              }
+            }
+          },
+          "unreal": {
+            "type": "object",
+            "additionalProperties": true,
+            "required": [
+              "moduleImported",
+              "moduleName",
+              "apiObjectCount",
+              "engineVersion"
+            ],
+            "properties": {
+              "moduleImported": {
+                "type": "boolean"
+              },
+              "moduleName": {
+                "type": "string"
+              },
+              "moduleFile": {
+                "type": "string"
+              },
+              "apiObjectCount": {
+                "type": "integer"
+              },
+              "systemLibraryAvailable": {
+                "type": "boolean"
+              },
+              "engineVersion": {
+                "type": "object"
+              }
+            }
+          },
+          "request": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "argumentKeys"
+            ],
+            "properties": {
+              "argumentKeys": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "handlerName": {
+            "type": "string"
+          },
+          "pythonHandlerPath": {
+            "type": "string"
+          },
+          "pythonHandlerAbsolutePath": {
+            "type": "string"
+          },
+          "pythonExpectedSha256": {
+            "type": "string"
+          },
+          "pythonActualSha256": {
+            "type": "string"
+          },
+          "pythonImportAllowListSize": {
+            "type": "integer"
+          },
+          "pythonExecutionSucceeded": {
+            "type": "boolean"
+          }
+        }
+      },
+      "policy": {
+        "riskLevel": "critical",
+        "requiresWrite": false,
+        "requiresBuild": false,
+        "requiresExternalProcess": true,
+        "requiresRestart": false,
+        "requiresProjectMemory": false,
+        "requiresLock": false,
+        "dryRunSupport": false,
+        "preflightSupport": false,
+        "postcheckSupport": false,
+        "category": "editor",
+        "testCoverage": "manual",
+        "owner": "UEvolve Core",
+        "docsPath": "README.md#tool-coverage",
+        "reason": "Python implementation track smoke tool. Underlying operation is read-only, but Lane E defaults python-track registry entries to critical risk and external-process handling.",
+        "summaryTemplate": "Reported Unreal Python {result.python.versionInfo.major}.{result.python.versionInfo.minor} with {result.python.moduleCount} loaded modules",
+        "explicitRegistryEntry": true,
+        "implementationTrack": "python",
+        "pythonHandlerPath": "Tools/UnrealMcpPyTools/editor_python_runtime_info/main.py",
+        "pythonHandlerSha256": "56f6f019a385406e59571db5d781cf5532d7225516c78253c1ce47bae7facb39",
+        "pythonImportAllowList": [
+          "unreal"
+        ]
+      },
+      "notes": "Read-only canonical first Python-track smoke tool; use to verify PythonScriptPlugin bridge execution and handler hash enforcement."
     }
   ]
 }
