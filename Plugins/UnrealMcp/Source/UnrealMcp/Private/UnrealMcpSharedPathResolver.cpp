@@ -364,6 +364,8 @@ namespace UnrealMcp
 			return TEXT("ProjectLocal");
 		case FToolsReadResolution::ESource::SharedRepoRoot:
 			return TEXT("SharedRepoRoot");
+		case FToolsReadResolution::ESource::CanonicalStarter:
+			return TEXT("CanonicalStarter");
 		case FToolsReadResolution::ESource::PluginResources:
 			return TEXT("PluginResources");
 		case FToolsReadResolution::ESource::Unresolved:

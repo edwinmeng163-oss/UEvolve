@@ -20,6 +20,11 @@ namespace UnrealMcp
 		FString& OutScaffoldDirectory,
 		FString& OutFailureReason,
 		FToolsReadResolution* OutResolution = nullptr);
+	FToolsReadResolution ResolveScaffoldReadDirectory_Pure(
+		const FString& ProjectDir,
+		const FString& PluginBaseDir,
+		const FString& ToolId,
+		TFunctionRef<bool(const FString&)> FileOrDirExists);
 	FString SanitizeMcpToolIdForPath(const FString& ToolName);
 	FString GetMcpModuleSourcePath();
 	FString GetMcpModuleHeaderPath();

@@ -13,6 +13,7 @@ namespace UnrealMcp
 			Unresolved,
 			ProjectLocal,
 			SharedRepoRoot,
+			CanonicalStarter,
 			PluginResources
 		};
 

@@ -162,7 +162,11 @@ whichever `.uproject` the editor was launched against:
   scaffold recipes, skills, tests, and knowledge): use the Tools reader
   resolver. Project-local `Tools` may override shared repo-root `Tools`; always
   surface `sourceKind` and `candidates` in structured results when a reader
-  path is user-visible.
+  path is user-visible. Readers of scaffold files check
+  `Tools/UnrealMcpToolScaffolds/<id>` first (writable working copy,
+  project-local then walked-up), then fall back to
+  `Tools/UnrealMcpToolScaffoldStarters/<id>` (canonical committed starter,
+  read-only) for fresh clones or unmodified recipe applies.
 - WRITER domain (generated drafts, session output, backups, manifests, logs,
   and locks): use `<ProjectDir>` / `<ProjectSavedDir>` paths such as
   `ResolveProjectOutputDirectory`. Do NOT use SharedPathResolver or walk up to

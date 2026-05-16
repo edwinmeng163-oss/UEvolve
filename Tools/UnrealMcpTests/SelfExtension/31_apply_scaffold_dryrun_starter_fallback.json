@@ -1,0 +1,24 @@
+{
+  "name": "apply_scaffold_dryrun_starter_fallback",
+  "description": "Apply dry-run resolves canonical committed scaffold starters when gitignored working-copy scaffolds are absent on a fresh clone.",
+  "category": "happy_path",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": false,
+  "expectToolCallStructuredFields": {
+    "canApply": true,
+    "scaffoldFound": true
+  },
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 331,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.mcp_apply_scaffold",
+      "arguments": {
+        "toolName": "unreal.fps.bootstrap",
+        "dryRun": true
+      }
+    }
+  }
+}

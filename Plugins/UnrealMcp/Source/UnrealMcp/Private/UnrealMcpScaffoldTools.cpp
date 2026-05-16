@@ -964,6 +964,76 @@ namespace UnrealMcp
 		return true;
 	}
 
+	void AppendUniqueScaffoldReadCandidates(TArray<FString>& Target, const TArray<FString>& Source)
+	{
+		for (const FString& Candidate : Source)
+		{
+			bool bAlreadyPresent = false;
+			for (const FString& Existing : Target)
+			{
+				if (Existing.Equals(Candidate, ESearchCase::IgnoreCase))
+				{
+					bAlreadyPresent = true;
+					break;
+				}
+			}
+			if (!bAlreadyPresent)
+			{
+				Target.Add(Candidate);
+			}
+		}
+	}
+
+	FToolsReadResolution ResolveScaffoldReadDirectory_Pure(
+		const FString& ProjectDir,
+		const FString& PluginBaseDir,
+		const FString& ToolId,
+		TFunctionRef<bool(const FString&)> FileOrDirExists)
+	{
+		FToolsReadResolution Resolution;
+		const FString CleanToolId = SanitizeMcpToolIdForPath(ToolId).TrimStartAndEnd();
+		if (CleanToolId.IsEmpty())
+		{
+			Resolution.Warning = TEXT("toolId must not be empty.");
+			return Resolution;
+		}
+
+		Resolution = ResolveToolsReadSubpath_Pure(
+			ProjectDir,
+			PluginBaseDir,
+			FPaths::Combine(TEXT("UnrealMcpToolScaffolds"), CleanToolId),
+			FileOrDirExists);
+		if (Resolution.bFound)
+		{
+			return Resolution;
+		}
+
+		FToolsReadResolution StarterResolution = ResolveToolsReadSubpath_Pure(
+			ProjectDir,
+			PluginBaseDir,
+			FPaths::Combine(TEXT("UnrealMcpToolScaffoldStarters"), CleanToolId),
+			FileOrDirExists);
+		AppendUniqueScaffoldReadCandidates(Resolution.Candidates, StarterResolution.Candidates);
+		if (StarterResolution.bFound)
+		{
+			Resolution.Path = StarterResolution.Path;
+			Resolution.bFound = true;
+			Resolution.SourceKind = FToolsReadResolution::ESource::CanonicalStarter;
+			Resolution.Warning = StarterResolution.Warning;
+			return Resolution;
+		}
+
+		if (Resolution.Path.IsEmpty() && Resolution.Candidates.Num() > 0)
+		{
+			Resolution.Path = Resolution.Candidates[0];
+		}
+		if (Resolution.Warning.IsEmpty())
+		{
+			Resolution.Warning = StarterResolution.Warning;
+		}
+		return Resolution;
+	}
+
 	bool ResolveScaffoldReadDirectory(
 		const FString& ToolId,
 		FString& OutScaffoldDirectory,
@@ -984,9 +1054,17 @@ namespace UnrealMcp
 			return false;
 		}
 
-		FToolsReadResolution Resolution = ResolveToolsReadSubpath(
-			FPaths::Combine(TEXT("UnrealMcpToolScaffolds"), CleanToolId),
-			{ TEXT("ScaffoldMetadata.json") });
+		FString ProjectDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+		FPaths::NormalizeDirectoryName(ProjectDir);
+		FPaths::CollapseRelativeDirectories(ProjectDir);
+		FToolsReadResolution Resolution = ResolveScaffoldReadDirectory_Pure(
+			ProjectDir,
+			ResolvePluginBaseDir().Path,
+			CleanToolId,
+			[](const FString& Candidate)
+			{
+				return SharedRepoRootHasAny(Candidate, { TEXT("ScaffoldMetadata.json") });
+			});
 		if (OutResolution)
 		{
 			*OutResolution = Resolution;

@@ -137,6 +137,22 @@ bool FUnrealMcpToolsReadPathResolverPureTest::RunTest(const FString& Parameters)
 	}
 
 	{
+		const auto Exists = MakeExistsPredicate({
+			TEXT("/Repo/Tools/UnrealMcpToolScaffoldStarters/fps_bootstrap")
+		});
+		const UnrealMcp::FToolsReadResolution StarterResolution = UnrealMcp::ResolveScaffoldReadDirectory_Pure(
+			TEXT("/Repo/Examples/UEvolveExample"),
+			TEXT("/Repo/Plugins/UnrealMcp"),
+			TEXT("unreal.fps.bootstrap"),
+			Exists);
+		TestTrue(TEXT("Missing working scaffold falls back to canonical starter."), StarterResolution.bFound);
+		TestTrue(TEXT("Starter fallback source kind"), StarterResolution.SourceKind == ESource::CanonicalStarter);
+		TestEqual(TEXT("Starter fallback path"), StarterResolution.Path, TEXT("/Repo/Tools/UnrealMcpToolScaffoldStarters/fps_bootstrap"));
+		TestEqual(TEXT("Starter fallback preserves working-copy candidate first"), StarterResolution.Candidates[0], TEXT("/Repo/Examples/UEvolveExample/Tools/UnrealMcpToolScaffolds/fps_bootstrap"));
+		TestTrue(TEXT("Starter fallback candidate list includes starter tree"), StarterResolution.Candidates.Contains(TEXT("/Repo/Tools/UnrealMcpToolScaffoldStarters/fps_bootstrap")));
+	}
+
+	{
 		const auto Exists = MakeExistsPredicate({});
 		const TArray<FString> InvalidSubpaths = {
 			TEXT("../UnrealMcpToolRegistry/tools.json"),
