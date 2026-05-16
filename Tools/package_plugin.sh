@@ -154,6 +154,7 @@ plugin_dir="$repo_root/Plugins/UnrealMcp"
 python_tools_dir="$repo_root/Tools/UnrealMcpPyTools"
 uplugin="$plugin_dir/UnrealMcp.uplugin"
 canonical_registry="$repo_root/Tools/UnrealMcpToolRegistry/tools.json"
+canonical_registry_schema="$repo_root/Tools/UnrealMcpToolRegistry/schema.json"
 mirror_registry="$plugin_dir/Resources/ToolRegistry/tools.json"
 install_resource="$repo_root/Tools/PackagingResources/INSTALL.md"
 first_launch_doc="$repo_root/Docs/FIRST_LAUNCH.md"
@@ -182,6 +183,7 @@ fi
 [ -f "$mirror_registry" ] || die "Missing plugin registry mirror: Plugins/UnrealMcp/Resources/ToolRegistry/tools.json"
 [ ! -L "$mirror_registry" ] || die "Phase 1 fix not applied: see commit 00fbf5e"
 [ -f "$canonical_registry" ] || die "Missing canonical registry: Tools/UnrealMcpToolRegistry/tools.json"
+[ -f "$canonical_registry_schema" ] || die "Missing canonical registry schema: Tools/UnrealMcpToolRegistry/schema.json"
 [ -d "$python_tools_dir" ] || die "Missing Python tool handlers: Tools/UnrealMcpPyTools"
 cmp -s "$mirror_registry" "$canonical_registry" || die 'Registry mirror mismatch; run `python3 Tools/validate_tool_registry.py` and resync'
 
@@ -194,8 +196,8 @@ if ! (cd "$repo_root" && python3 Tools/check_ue56_compat.py); then
 fi
 
 [ -f "$install_resource" ] || die "Missing install resource: Tools/PackagingResources/INSTALL.md"
+[ -f "$first_launch_doc" ] || die "Missing first-launch doc: Docs/FIRST_LAUNCH.md"
 if [ "$full_experience" -eq 1 ]; then
-  [ -f "$first_launch_doc" ] || die "Missing first-launch doc: Docs/FIRST_LAUNCH.md"
   if [ -z "$prebuilt_binaries_path" ]; then
     die "Full-experience packaging requires --prebuilt-binaries-path. Produce binaries on a Windows machine first; see Tools/bundle_prebuilt_binaries_win.md."
   fi
@@ -231,6 +233,8 @@ if [ "$full_experience" -eq 1 ]; then
     --exclude 'Intermediate/' --exclude 'Saved/' --exclude 'DerivedDataCache/' --exclude '.DS_Store'
   rm -rf "$stage_parent/bridge-bundle-extract"
   copy_clean_dir "$repo_root/Tools/UnrealMcpToolScaffoldStarters" "$stage_tools/UnrealMcpToolScaffoldStarters" --exclude '.DS_Store' --exclude 'Saved/'
+  copy_clean_dir "$repo_root/Tools/UnrealMcpToolScaffolds/fps_bootstrap" "$stage_tools/UnrealMcpToolScaffolds/fps_bootstrap" --exclude '.DS_Store' --exclude 'Saved/'
+  copy_clean_dir "$repo_root/Tools/UnrealMcpToolScaffolds/verify_input_drives_pawn" "$stage_tools/UnrealMcpToolScaffolds/verify_input_drives_pawn" --exclude '.DS_Store' --exclude 'Saved/'
 
   mkdir -p "$stage_parent/Docs"
   cp "$first_launch_doc" "$stage_parent/Docs/FIRST_LAUNCH.md"
@@ -246,6 +250,8 @@ if [ "$full_experience" -eq 1 ]; then
   cmp -s "$stage_plugin/Resources/ToolRegistry/tools.json" "$canonical_registry" || die "Staging integrity failure: staged plugin registry differs from canonical registry"
   cmp -s "$stage_tools/UnrealMcpToolRegistry/tools.json" "$canonical_registry" || die "Staging integrity failure: staged Tools registry differs from canonical registry"
   [ -f "$stage_tools/UnrealMcpPyTools/editor_python_runtime_info/main.py" ] || die "Staging integrity failure: missing Tools/UnrealMcpPyTools/editor_python_runtime_info/main.py"
+  [ -f "$stage_tools/UnrealMcpToolScaffolds/fps_bootstrap/ScaffoldMetadata.json" ] || die "Staging integrity failure: missing Tools/UnrealMcpToolScaffolds/fps_bootstrap/ScaffoldMetadata.json"
+  [ -f "$stage_tools/UnrealMcpToolScaffolds/verify_input_drives_pawn/ScaffoldMetadata.json" ] || die "Staging integrity failure: missing Tools/UnrealMcpToolScaffolds/verify_input_drives_pawn/ScaffoldMetadata.json"
   assert_bridge_bundle "$stage_tools/UnrealMcpCodexBridge"
 
   excluded_paths="$(find "$stage_parent" \
@@ -256,9 +262,11 @@ if [ "$full_experience" -eq 1 ]; then
   zip_name="UnrealMcp-v${version_name}-full-win-${engine_tag}.zip"
 else
   stage_plugin="$stage_parent/Plugins/UnrealMcp"
-  stage_py_tools="$stage_parent/Tools/UnrealMcpPyTools"
-  stage_scaffold_starters="$stage_parent/Tools/UnrealMcpToolScaffoldStarters"
-  mkdir -p "$(dirname "$stage_plugin")" "$(dirname "$stage_py_tools")"
+  stage_tools="$stage_parent/Tools"
+  stage_py_tools="$stage_tools/UnrealMcpPyTools"
+  stage_scaffold_starters="$stage_tools/UnrealMcpToolScaffoldStarters"
+  stage_docs="$stage_parent/Docs"
+  mkdir -p "$(dirname "$stage_plugin")" "$stage_tools" "$stage_docs"
 
   # Stage a clean source-only project-root overlay. Automation tests and
   # generated build products stay out of the pilot zip.
@@ -274,14 +282,28 @@ else
   # Python handlers are resolved at runtime from
   # <ProjectDir>/Tools/UnrealMcpPyTools/<handlerId>/main.py, so source-only
   # pilots must include this project-root Tools tree alongside the plugin.
+  copy_clean_dir "$repo_root/Tools/UnrealMcpToolRegistry" "$stage_tools/UnrealMcpToolRegistry" \
+    --exclude '.DS_Store' --exclude 'Saved/'
   rsync --archive --delete \
     --exclude '__pycache__/' \
     --exclude '*.pyc' \
     --exclude '.DS_Store' \
     "$python_tools_dir/" "$stage_py_tools/"
+  copy_clean_dir "$repo_root/Tools/UnrealMcpSkills" "$stage_tools/UnrealMcpSkills" \
+    --exclude '.DS_Store' --exclude '.Rhistory' --exclude 'Saved/'
+  copy_clean_dir "$repo_root/Tools/UnrealMcpKnowledge" "$stage_tools/UnrealMcpKnowledge" \
+    --exclude '.DS_Store' --exclude 'Saved/'
+  copy_clean_dir "$repo_root/Tools/UnrealMcpTests" "$stage_tools/UnrealMcpTests" \
+    --exclude '.DS_Store' --exclude 'Saved/'
+  copy_clean_dir "$repo_root/Tools/UnrealMcpCodexBridge" "$stage_tools/UnrealMcpCodexBridge" \
+    --exclude 'node_modules/' --exclude 'runtime/' --exclude 'Intermediate/' \
+    --exclude 'Saved/' --exclude 'DerivedDataCache/' --exclude '.DS_Store'
   copy_clean_dir "$repo_root/Tools/UnrealMcpToolScaffoldStarters" "$stage_scaffold_starters" --exclude '.DS_Store' --exclude 'Saved/'
+  copy_clean_dir "$repo_root/Tools/UnrealMcpToolScaffolds/fps_bootstrap" "$stage_tools/UnrealMcpToolScaffolds/fps_bootstrap" --exclude '.DS_Store' --exclude 'Saved/'
+  copy_clean_dir "$repo_root/Tools/UnrealMcpToolScaffolds/verify_input_drives_pawn" "$stage_tools/UnrealMcpToolScaffolds/verify_input_drives_pawn" --exclude '.DS_Store' --exclude 'Saved/'
 
   cp "$install_resource" "$stage_plugin/INSTALL.md"
+  cp "$first_launch_doc" "$stage_docs/FIRST_LAUNCH.md"
 
   # Verify the staged tree rather than trusting rsync excludes blindly.
   [ -f "$stage_plugin/UnrealMcp.uplugin" ] || die "Staging integrity failure: missing Plugins/UnrealMcp/UnrealMcp.uplugin"
@@ -289,11 +311,22 @@ else
   [ ! -L "$stage_plugin/Resources/ToolRegistry/tools.json" ] || die "Staging integrity failure: staged registry is a symlink"
   cmp -s "$stage_plugin/Resources/ToolRegistry/tools.json" "$canonical_registry" || die "Staging integrity failure: staged registry differs from canonical registry"
   [ -f "$stage_plugin/INSTALL.md" ] || die "Staging integrity failure: missing Plugins/UnrealMcp/INSTALL.md"
+  cmp -s "$stage_tools/UnrealMcpToolRegistry/tools.json" "$canonical_registry" || die "Staging integrity failure: staged Tools registry differs from canonical registry"
+  cmp -s "$stage_tools/UnrealMcpToolRegistry/schema.json" "$canonical_registry_schema" || die "Staging integrity failure: staged Tools registry schema differs from canonical schema"
   [ -f "$stage_py_tools/editor_python_runtime_info/main.py" ] || die "Staging integrity failure: missing Tools/UnrealMcpPyTools/editor_python_runtime_info/main.py"
+  [ -f "$stage_tools/UnrealMcpSkills/mcp-self-extension/SKILL.md" ] || die "Staging integrity failure: missing Tools/UnrealMcpSkills/mcp-self-extension/SKILL.md"
+  [ -f "$stage_tools/UnrealMcpKnowledge/Evals/core_rag_eval.json" ] || die "Staging integrity failure: missing Tools/UnrealMcpKnowledge/Evals/core_rag_eval.json"
+  [ -f "$stage_tools/UnrealMcpTests/Core/editor_status_valid.json" ] || die "Staging integrity failure: missing Tools/UnrealMcpTests/Core/editor_status_valid.json"
+  [ -f "$stage_tools/UnrealMcpCodexBridge/package.json" ] || die "Staging integrity failure: missing Tools/UnrealMcpCodexBridge/package.json"
+  [ ! -e "$stage_tools/UnrealMcpCodexBridge/node_modules" ] || die "Staging integrity failure: source-only bridge includes node_modules/"
+  [ ! -e "$stage_tools/UnrealMcpCodexBridge/runtime" ] || die "Staging integrity failure: source-only bridge includes runtime/"
   [ -f "$stage_scaffold_starters/README.md" ] || die "Staging integrity failure: missing Tools/UnrealMcpToolScaffoldStarters/README.md"
+  [ -f "$stage_tools/UnrealMcpToolScaffolds/fps_bootstrap/ScaffoldMetadata.json" ] || die "Staging integrity failure: missing Tools/UnrealMcpToolScaffolds/fps_bootstrap/ScaffoldMetadata.json"
+  [ -f "$stage_tools/UnrealMcpToolScaffolds/verify_input_drives_pawn/ScaffoldMetadata.json" ] || die "Staging integrity failure: missing Tools/UnrealMcpToolScaffolds/verify_input_drives_pawn/ScaffoldMetadata.json"
+  [ -f "$stage_docs/FIRST_LAUNCH.md" ] || die "Staging integrity failure: missing Docs/FIRST_LAUNCH.md"
 
   excluded_paths="$(find "$stage_parent" \
-    \( -name Binaries -o -name Intermediate -o -name Saved -o -name DerivedDataCache -o -name .DS_Store -o -name __pycache__ -o -name '*.pyc' \) \
+    \( -name Binaries -o -name Intermediate -o -name Saved -o -name DerivedDataCache -o -name .DS_Store -o -name .Rhistory -o -name __pycache__ -o -name '*.pyc' -o -name node_modules -o -name runtime \) \
     -print)"
   [ -z "$excluded_paths" ] || die "Staging integrity failure: excluded path present: $(printf '%s' "$excluded_paths" | head -n 1)"
   [ ! -e "$stage_plugin/Source/UnrealMcp/Private/Tests" ] || die "Staging integrity failure: excluded path present: Plugins/UnrealMcp/Source/UnrealMcp/Private/Tests"

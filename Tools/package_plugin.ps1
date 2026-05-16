@@ -201,6 +201,7 @@ $pluginDir = Join-Path $repoRoot "Plugins/UnrealMcp"
 $pythonToolsDir = Join-Path $repoRoot "Tools/UnrealMcpPyTools"
 $uplugin = Join-Path $pluginDir "UnrealMcp.uplugin"
 $canonicalRegistry = Join-Path $repoRoot "Tools/UnrealMcpToolRegistry/tools.json"
+$canonicalRegistrySchema = Join-Path $repoRoot "Tools/UnrealMcpToolRegistry/schema.json"
 $mirrorRegistry = Join-Path $pluginDir "Resources/ToolRegistry/tools.json"
 $installResource = Join-Path $repoRoot "Tools/PackagingResources/INSTALL.md"
 $firstLaunchDoc = Join-Path $repoRoot "Docs/FIRST_LAUNCH.md"
@@ -232,6 +233,9 @@ try {
     if (-not (Test-Path -LiteralPath $canonicalRegistry -PathType Leaf)) {
         Die "Missing canonical registry: Tools/UnrealMcpToolRegistry/tools.json"
     }
+    if (-not (Test-Path -LiteralPath $canonicalRegistrySchema -PathType Leaf)) {
+        Die "Missing canonical registry schema: Tools/UnrealMcpToolRegistry/schema.json"
+    }
     if (-not (Test-Path -LiteralPath $pythonToolsDir -PathType Container)) {
         Die "Missing Python tool handlers: Tools/UnrealMcpPyTools"
     }
@@ -254,7 +258,7 @@ try {
     if (-not (Test-Path -LiteralPath $installResource -PathType Leaf)) {
         Die "Missing install resource: Tools/PackagingResources/INSTALL.md"
     }
-    if ($FullExperience -and (-not (Test-Path -LiteralPath $firstLaunchDoc -PathType Leaf))) {
+    if (-not (Test-Path -LiteralPath $firstLaunchDoc -PathType Leaf)) {
         Die "Missing first-launch doc: Docs/FIRST_LAUNCH.md"
     }
 
@@ -293,6 +297,8 @@ try {
             Remove-Item -LiteralPath $bridgeExtractDir -Recurse -Force
         }
         Copy-CleanDirectory (Join-Path $repoRoot "Tools/UnrealMcpToolScaffoldStarters") (Join-Path $stageTools "UnrealMcpToolScaffoldStarters") @(".DS_Store", "Saved")
+        Copy-CleanDirectory (Join-Path $repoRoot "Tools/UnrealMcpToolScaffolds/fps_bootstrap") (Join-Path $stageTools "UnrealMcpToolScaffolds/fps_bootstrap") @(".DS_Store", "Saved")
+        Copy-CleanDirectory (Join-Path $repoRoot "Tools/UnrealMcpToolScaffolds/verify_input_drives_pawn") (Join-Path $stageTools "UnrealMcpToolScaffolds/verify_input_drives_pawn") @(".DS_Store", "Saved")
 
         $stageDocs = Join-Path $stageParent "Docs"
         New-Item -ItemType Directory -Force -Path $stageDocs | Out-Null
@@ -327,6 +333,12 @@ try {
         Assert-PlainFile (Join-Path $stageTools "UnrealMcpPyTools/editor_python_runtime_info/main.py") `
             "Staging integrity failure: missing Tools/UnrealMcpPyTools/editor_python_runtime_info/main.py" `
             "Staging integrity failure: staged Python handler is a symlink"
+        Assert-PlainFile (Join-Path $stageTools "UnrealMcpToolScaffolds/fps_bootstrap/ScaffoldMetadata.json") `
+            "Staging integrity failure: missing Tools/UnrealMcpToolScaffolds/fps_bootstrap/ScaffoldMetadata.json" `
+            "Staging integrity failure: staged fps_bootstrap scaffold metadata is a symlink"
+        Assert-PlainFile (Join-Path $stageTools "UnrealMcpToolScaffolds/verify_input_drives_pawn/ScaffoldMetadata.json") `
+            "Staging integrity failure: missing Tools/UnrealMcpToolScaffolds/verify_input_drives_pawn/ScaffoldMetadata.json" `
+            "Staging integrity failure: staged verify_input_drives_pawn scaffold metadata is a symlink"
         Assert-BridgeBundle -BridgeRoot (Join-Path $stageTools "UnrealMcpCodexBridge")
 
         $excludedPath = Get-ChildItem -LiteralPath $stageParent -Force -Recurse |
@@ -339,8 +351,10 @@ try {
         $zipName = "UnrealMcp-v$Version-full-win-$EngineTag.zip"
     } else {
         $stagePlugin = Join-Path $stageParent "Plugins/UnrealMcp"
-        $stagePyTools = Join-Path $stageParent "Tools/UnrealMcpPyTools"
-        $stageScaffoldStarters = Join-Path $stageParent "Tools/UnrealMcpToolScaffoldStarters"
+        $stageTools = Join-Path $stageParent "Tools"
+        $stagePyTools = Join-Path $stageTools "UnrealMcpPyTools"
+        $stageScaffoldStarters = Join-Path $stageTools "UnrealMcpToolScaffoldStarters"
+        $stageDocs = Join-Path $stageParent "Docs"
 
         # Stage a clean source-only project-root overlay. Automation tests and
         # generated build products stay out of the pilot zip.
@@ -354,10 +368,19 @@ try {
         # Python handlers are resolved at runtime from
         # <ProjectDir>/Tools/UnrealMcpPyTools/<handlerId>/main.py, so source-only
         # pilots must include this project-root Tools tree alongside the plugin.
+        Copy-CleanDirectory (Join-Path $repoRoot "Tools/UnrealMcpToolRegistry") (Join-Path $stageTools "UnrealMcpToolRegistry") @(".DS_Store", "Saved")
         Copy-CleanDirectory $pythonToolsDir $stagePyTools @("__pycache__", "*.pyc", ".DS_Store")
+        Copy-CleanDirectory (Join-Path $repoRoot "Tools/UnrealMcpSkills") (Join-Path $stageTools "UnrealMcpSkills") @(".DS_Store", ".Rhistory", "Saved")
+        Copy-CleanDirectory (Join-Path $repoRoot "Tools/UnrealMcpKnowledge") (Join-Path $stageTools "UnrealMcpKnowledge") @(".DS_Store", "Saved")
+        Copy-CleanDirectory (Join-Path $repoRoot "Tools/UnrealMcpTests") (Join-Path $stageTools "UnrealMcpTests") @(".DS_Store", "Saved")
+        Copy-CleanDirectory (Join-Path $repoRoot "Tools/UnrealMcpCodexBridge") (Join-Path $stageTools "UnrealMcpCodexBridge") @("node_modules", "runtime", "Intermediate", "Saved", "DerivedDataCache", ".DS_Store")
         Copy-CleanDirectory (Join-Path $repoRoot "Tools/UnrealMcpToolScaffoldStarters") $stageScaffoldStarters @(".DS_Store", "Saved")
+        Copy-CleanDirectory (Join-Path $repoRoot "Tools/UnrealMcpToolScaffolds/fps_bootstrap") (Join-Path $stageTools "UnrealMcpToolScaffolds/fps_bootstrap") @(".DS_Store", "Saved")
+        Copy-CleanDirectory (Join-Path $repoRoot "Tools/UnrealMcpToolScaffolds/verify_input_drives_pawn") (Join-Path $stageTools "UnrealMcpToolScaffolds/verify_input_drives_pawn") @(".DS_Store", "Saved")
 
         Copy-Item -LiteralPath $installResource -Destination (Join-Path $stagePlugin "INSTALL.md") -Force
+        New-Item -ItemType Directory -Force -Path $stageDocs | Out-Null
+        Copy-Item -LiteralPath $firstLaunchDoc -Destination (Join-Path $stageDocs "FIRST_LAUNCH.md") -Force
 
         # Verify the staged tree rather than trusting copy excludes blindly.
         if (-not (Test-Path -LiteralPath (Join-Path $stagePlugin "UnrealMcp.uplugin") -PathType Leaf)) {
@@ -371,14 +394,45 @@ try {
         if (-not (Test-Path -LiteralPath (Join-Path $stagePlugin "INSTALL.md") -PathType Leaf)) {
             Die "Staging integrity failure: missing Plugins/UnrealMcp/INSTALL.md"
         }
+        Assert-SameFileHash (Join-Path $stageTools "UnrealMcpToolRegistry/tools.json") `
+            $canonicalRegistry "Staging integrity failure: staged Tools registry differs from canonical registry"
+        Assert-SameFileHash (Join-Path $stageTools "UnrealMcpToolRegistry/schema.json") `
+            $canonicalRegistrySchema "Staging integrity failure: staged Tools registry schema differs from canonical schema"
         Assert-PlainFile (Join-Path $stagePyTools "editor_python_runtime_info/main.py") `
             "Staging integrity failure: missing Tools/UnrealMcpPyTools/editor_python_runtime_info/main.py" `
             "Staging integrity failure: staged Python handler is a symlink"
+        Assert-PlainFile (Join-Path $stageTools "UnrealMcpSkills/mcp-self-extension/SKILL.md") `
+            "Staging integrity failure: missing Tools/UnrealMcpSkills/mcp-self-extension/SKILL.md" `
+            "Staging integrity failure: staged skill file is a symlink"
+        Assert-PlainFile (Join-Path $stageTools "UnrealMcpKnowledge/Evals/core_rag_eval.json") `
+            "Staging integrity failure: missing Tools/UnrealMcpKnowledge/Evals/core_rag_eval.json" `
+            "Staging integrity failure: staged RAG eval is a symlink"
+        Assert-PlainFile (Join-Path $stageTools "UnrealMcpTests/Core/editor_status_valid.json") `
+            "Staging integrity failure: missing Tools/UnrealMcpTests/Core/editor_status_valid.json" `
+            "Staging integrity failure: staged core test fixture is a symlink"
+        Assert-PlainFile (Join-Path $stageTools "UnrealMcpCodexBridge/package.json") `
+            "Staging integrity failure: missing Tools/UnrealMcpCodexBridge/package.json" `
+            "Staging integrity failure: staged bridge package.json is a symlink"
+        if (Test-Path -LiteralPath (Join-Path $stageTools "UnrealMcpCodexBridge/node_modules")) {
+            Die "Staging integrity failure: source-only bridge includes node_modules/"
+        }
+        if (Test-Path -LiteralPath (Join-Path $stageTools "UnrealMcpCodexBridge/runtime")) {
+            Die "Staging integrity failure: source-only bridge includes runtime/"
+        }
         Assert-PlainFile (Join-Path $stageScaffoldStarters "README.md") `
             "Staging integrity failure: missing Tools/UnrealMcpToolScaffoldStarters/README.md" `
             "Staging integrity failure: staged scaffold starters README is a symlink"
+        Assert-PlainFile (Join-Path $stageTools "UnrealMcpToolScaffolds/fps_bootstrap/ScaffoldMetadata.json") `
+            "Staging integrity failure: missing Tools/UnrealMcpToolScaffolds/fps_bootstrap/ScaffoldMetadata.json" `
+            "Staging integrity failure: staged fps_bootstrap scaffold metadata is a symlink"
+        Assert-PlainFile (Join-Path $stageTools "UnrealMcpToolScaffolds/verify_input_drives_pawn/ScaffoldMetadata.json") `
+            "Staging integrity failure: missing Tools/UnrealMcpToolScaffolds/verify_input_drives_pawn/ScaffoldMetadata.json" `
+            "Staging integrity failure: staged verify_input_drives_pawn scaffold metadata is a symlink"
+        Assert-PlainFile (Join-Path $stageDocs "FIRST_LAUNCH.md") `
+            "Staging integrity failure: missing Docs/FIRST_LAUNCH.md" `
+            "Staging integrity failure: staged first-launch doc is a symlink"
 
-        $excludedNames = @("Binaries", "Intermediate", "Saved", "DerivedDataCache", ".DS_Store")
+        $excludedNames = @("Binaries", "Intermediate", "Saved", "DerivedDataCache", ".DS_Store", ".Rhistory", "node_modules", "runtime")
         $excludedPath = Get-ChildItem -LiteralPath $stageParent -Force -Recurse |
             Where-Object { ($excludedNames -contains $_.Name) -or ($_.Name -eq "__pycache__") -or ($_.Name -like "*.pyc") } |
             Select-Object -First 1
