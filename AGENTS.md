@@ -506,6 +506,43 @@ The largest current files are still ChatPanel, ActorTools, KnowledgeTools,
 ScaffoldTools, BlueprintTools, WidgetTools, ToolDefinitions, AssistantRun, and
 several SelfExtension helpers. Prefer cautious single-category edits.
 
+## Path Resolution Policy (Four Domains)
+
+As of commit `fe65d25` (Tier 2 — issue #2 fix), runtime path resolution is
+formally split into four trust domains. This is the **canonical contract**
+for anything in the plugin source touching `Tools/...`,
+`Plugins/UnrealMcp/...`, or `Saved/UnrealMcp/...` paths. Pre-Tier-2 code
+assumed `FPaths::ProjectDir()` for everything, which broke example-host
+mode (`Examples/UEvolveExample{,57}.uproject`) that loads the plugin via
+`AdditionalPluginDirectories: ["../../Plugins"]`.
+
+| Domain | What lives here | Resolver |
+|---|---|---|
+| **READER** | versioned `Tools/...` assets: PyTools, ToolRegistry source, scaffold recipes (`Tools/UnrealMcpToolScaffolds/<id>`), skills, tests, knowledge | `ResolveToolsReadSubpath(subpath, sentinels)` in `UnrealMcpSharedPathResolver.h`. Project-local first, then walks up via `IPluginManager::FindPlugin("UnrealMcp")->GetBaseDir()` anchor. Returns `FToolsReadResolution {Path, bFound, SourceKind (Unresolved|ProjectLocal|SharedRepoRoot|PluginResources), Candidates, Warning}` — surface `SourceKind` + `Candidates` in tool responses. |
+| **WRITER** | new scaffold drafts from `unreal.scaffold_mcp_tool`, session output, project-local generated artifacts | `ResolveProjectOutputDirectory` in `UnrealMcpScaffoldTools.cpp`. UNCHANGED post-Tier-2. Always lands under active `<ProjectDir>/Tools/UnrealMcpToolScaffolds/<id>`. Do NOT walk up — per-project draft isolation (CATEGORY B). |
+| **PLUGIN SOURCE** | C++ source / `Resources/` writes (apply scaffold target files) | `ResolvePluginSourceRoot()` in `UnrealMcpSharedPathResolver.h`. Returns `IPluginManager::FindPlugin("UnrealMcp")->GetBaseDir() + "/Source"`. Never assume `<ProjectDir>/Plugins/UnrealMcp` — example projects mount the plugin from elsewhere. |
+| **SAVED** | backups, manifests, locks, ActivityLog, BuildLogs, packages, project memory | `FPaths::ProjectSavedDir()` / `Saved/UnrealMcp/`. UNCHANGED. Do NOT migrate to shared repo. Manifest body CAN reference paths under plugin BaseDir or shared Tools root for rollback target validation. |
+
+**Apply scaffold crosses three domains in one operation:**
+
+- READ scaffold metadata + patch fragments via **READER**
+- WRITE C++ patches into plugin source via **PLUGIN SOURCE**
+- WRITE backup manifests + rollback breadcrumbs via **SAVED**
+
+When adding new code that touches any of these paths, pick the right
+resolver from the table above. When refactoring code that uses
+`FPaths::ProjectDir()`, ask which domain the path belongs to and convert
+to the matching resolver. Pure-function variants of these resolvers
+(`ResolveToolsReadSubpath_Pure(ProjectDir, PluginBaseDir, Subpath,
+FileOrDirExists)`) enable unit tests without mocking — see
+`Plugins/UnrealMcp/Source/UnrealMcp/Private/Tests/UnrealMcpSharedPathResolverTests.cpp`
+for the canonical 9-case test matrix + 5 root-host zero-regression
+invariants.
+
+The full writer/reader/plugin-source/Saved rule is also formalized in
+`Tools/codex-prompt-header.md` § "Path resolution domains" for Codex
+prompt prefix purposes.
+
 ## How To Add A New MCP Tool
 
 Prefer composition first:
@@ -891,6 +928,35 @@ release. Replicate exactly:
 If smoke 3 fails on a missing scaffold file, it is almost always a packager
 gap, not an applier bug — re-read the projectroot overlay invariants below
 before opening a defect against the applier.
+
+### Stale plugin-level binary trap
+
+Real failure mode observed during the 2026-05-17 Tier 2 e2e: when a previous
+build wrote a dylib to `Plugins/UnrealMcp/Binaries/Mac/UnrealEditor-UnrealMcp.dylib`
+(e.g. from a dev-host build on `UEvolve.uproject` at the repo root) AND you
+then UBT-rebuild against an example host, UBT writes the fresh dylib to
+`Examples/<ExampleName>/Binaries/<Platform>/`, but the editor mount path for
+the externally-loaded plugin keeps loading the OLD plugin-level binary. The
+smoke responses look exactly like pre-fix behavior, with newly-added
+structured-content fields totally missing.
+
+Diagnostic signal: the runtime response of a tool you just changed lacks any
+new structured-content keys you added in the patch.
+
+**Mandatory cleanup before any example-host smoke after a plugin code
+change:**
+
+```bash
+cd "$REPO_ROOT"
+rm -rf Plugins/UnrealMcp/Binaries Plugins/UnrealMcp/Intermediate
+"<UE>/Engine/Build/BatchFiles/Mac/Build.sh" MyProjectEditor Mac Development \
+  -project="$REPO_ROOT/Examples/UEvolveExample57/UEvolveExample57.uproject" \
+  -WaitMutex
+```
+
+After rebuild, the only `UnrealEditor-UnrealMcp.dylib` on disk should be
+under the example host's `Binaries/`. If the plugin-level path still has
+one, the rm above did not run successfully — repeat.
 
 ### Projectroot zip overlay invariants
 
