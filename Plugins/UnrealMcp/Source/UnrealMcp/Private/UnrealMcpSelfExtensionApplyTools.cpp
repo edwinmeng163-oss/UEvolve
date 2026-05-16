@@ -361,6 +361,518 @@ namespace UnrealMcp
 			return RelativePath;
 		}
 
+		struct FMcpScaffoldRequiredInclude
+		{
+			FString TargetFile;
+			TArray<FString> Includes;
+		};
+
+		struct FMcpScaffoldBuildRequirements
+		{
+			TArray<FMcpScaffoldRequiredInclude> RequiredIncludes;
+			TArray<FString> RequiredModules;
+			TArray<FString> DependsOn;
+		};
+
+		void AddUniqueTrimmedString(TArray<FString>& Values, const FString& RawValue)
+		{
+			const FString Value = RawValue.TrimStartAndEnd();
+			if (!Value.IsEmpty() && !Values.Contains(Value))
+			{
+				Values.Add(Value);
+			}
+		}
+
+		void ParseJsonStringArrayField(const TSharedPtr<FJsonObject>& Object, const FString& FieldName, TArray<FString>& OutValues)
+		{
+			if (!Object.IsValid())
+			{
+				return;
+			}
+
+			const TArray<TSharedPtr<FJsonValue>>* Values = nullptr;
+			if (!Object->TryGetArrayField(FieldName, Values) || !Values)
+			{
+				return;
+			}
+
+			for (const TSharedPtr<FJsonValue>& Value : *Values)
+			{
+				if (!Value.IsValid() || Value->Type != EJson::String)
+				{
+					continue;
+				}
+				AddUniqueTrimmedString(OutValues, Value->AsString());
+			}
+		}
+
+		void ParseScaffoldBuildRequirementsMetadata(
+			const TSharedPtr<FJsonObject>& MetadataObject,
+			FMcpScaffoldBuildRequirements& OutRequirements)
+		{
+			if (!MetadataObject.IsValid())
+			{
+				return;
+			}
+
+			ParseJsonStringArrayField(MetadataObject, TEXT("dependsOn"), OutRequirements.DependsOn);
+
+			const TSharedPtr<FJsonObject>* BuildRequirementsObject = nullptr;
+			if (!MetadataObject->TryGetObjectField(TEXT("buildRequirements"), BuildRequirementsObject)
+				|| !BuildRequirementsObject
+				|| !(*BuildRequirementsObject).IsValid())
+			{
+				return;
+			}
+
+			ParseJsonStringArrayField(*BuildRequirementsObject, TEXT("requiredModules"), OutRequirements.RequiredModules);
+
+			const TArray<TSharedPtr<FJsonValue>>* IncludeEntries = nullptr;
+			if (!(*BuildRequirementsObject)->TryGetArrayField(TEXT("requiredIncludes"), IncludeEntries) || !IncludeEntries)
+			{
+				return;
+			}
+
+			for (const TSharedPtr<FJsonValue>& EntryValue : *IncludeEntries)
+			{
+				if (!EntryValue.IsValid() || EntryValue->Type != EJson::Object || !EntryValue->AsObject().IsValid())
+				{
+					continue;
+				}
+
+				TSharedPtr<FJsonObject> EntryObject = EntryValue->AsObject();
+				FMcpScaffoldRequiredInclude Entry;
+				EntryObject->TryGetStringField(TEXT("file"), Entry.TargetFile);
+				Entry.TargetFile = Entry.TargetFile.TrimStartAndEnd();
+				ParseJsonStringArrayField(EntryObject, TEXT("includes"), Entry.Includes);
+				if (!Entry.TargetFile.IsEmpty() && Entry.Includes.Num() > 0)
+				{
+					OutRequirements.RequiredIncludes.Add(Entry);
+				}
+			}
+		}
+
+		FString NormalizeBuildRequirementInclude(const FString& RawInclude)
+		{
+			FString Include = RawInclude.TrimStartAndEnd();
+			if (Include.StartsWith(TEXT("#include"), ESearchCase::CaseSensitive))
+			{
+				Include = Include.RightChop(8).TrimStartAndEnd();
+			}
+			if ((Include.StartsWith(TEXT("\""), ESearchCase::CaseSensitive) && Include.EndsWith(TEXT("\""), ESearchCase::CaseSensitive))
+				|| (Include.StartsWith(TEXT("<"), ESearchCase::CaseSensitive) && Include.EndsWith(TEXT(">"), ESearchCase::CaseSensitive)))
+			{
+				Include = Include.Mid(1, Include.Len() - 2).TrimStartAndEnd();
+			}
+			return Include;
+		}
+
+		FString ExtractIncludeTargetFromLine(const FString& Line)
+		{
+			const FString TrimmedLine = Line.TrimStartAndEnd();
+			if (!TrimmedLine.StartsWith(TEXT("#include"), ESearchCase::CaseSensitive))
+			{
+				return FString();
+			}
+			return NormalizeBuildRequirementInclude(TrimmedLine.RightChop(8));
+		}
+
+		bool SourceContainsInclude(const FString& SourceText, const FString& Include)
+		{
+			TArray<FString> Lines;
+			SourceText.ParseIntoArrayLines(Lines, false);
+			for (const FString& Line : Lines)
+			{
+				if (ExtractIncludeTargetFromLine(Line).Equals(Include, ESearchCase::CaseSensitive))
+				{
+					return true;
+				}
+			}
+			return false;
+		}
+
+		bool FindPrimaryIncludeBlockInsertOffset(const FString& SourceText, int32& OutInsertOffset)
+		{
+			const int32 TextLength = SourceText.Len();
+			int32 LineStart = 0;
+			bool bStartedIncludeBlock = false;
+			int32 LastIncludeLineEnd = INDEX_NONE;
+
+			while (LineStart < TextLength)
+			{
+				const int32 NewlineOffset = SourceText.Find(TEXT("\n"), ESearchCase::CaseSensitive, ESearchDir::FromStart, LineStart);
+				const int32 LineEnd = NewlineOffset == INDEX_NONE ? TextLength : NewlineOffset;
+				const int32 NextLineStart = NewlineOffset == INDEX_NONE ? TextLength : NewlineOffset + 1;
+				const FString Line = SourceText.Mid(LineStart, LineEnd - LineStart);
+				const FString TrimmedLine = Line.TrimStartAndEnd();
+
+				if (TrimmedLine.IsEmpty())
+				{
+					LineStart = NextLineStart;
+					continue;
+				}
+
+				if (!bStartedIncludeBlock
+					&& (TrimmedLine.StartsWith(TEXT("//"), ESearchCase::CaseSensitive)
+						|| TrimmedLine.StartsWith(TEXT("/*"), ESearchCase::CaseSensitive)
+						|| TrimmedLine.StartsWith(TEXT("*"), ESearchCase::CaseSensitive)))
+				{
+					LineStart = NextLineStart;
+					continue;
+				}
+
+				if (TrimmedLine.StartsWith(TEXT("#include"), ESearchCase::CaseSensitive))
+				{
+					bStartedIncludeBlock = true;
+					LastIncludeLineEnd = NextLineStart;
+					LineStart = NextLineStart;
+					continue;
+				}
+
+				break;
+			}
+
+			if (LastIncludeLineEnd == INDEX_NONE)
+			{
+				return false;
+			}
+
+			OutInsertOffset = LastIncludeLineEnd;
+			return true;
+		}
+
+		bool IsPathUnderDirectory(const FString& FilePath, const FString& Directory)
+		{
+			FString NormalizedFilePath = FPaths::ConvertRelativePathToFull(FilePath);
+			FString NormalizedDirectory = FPaths::ConvertRelativePathToFull(Directory);
+			FPaths::NormalizeFilename(NormalizedFilePath);
+			FPaths::NormalizeDirectoryName(NormalizedDirectory);
+			FPaths::CollapseRelativeDirectories(NormalizedFilePath);
+			FPaths::CollapseRelativeDirectories(NormalizedDirectory);
+			const FString DirectoryPrefix = NormalizedDirectory.EndsWith(TEXT("/")) ? NormalizedDirectory : NormalizedDirectory + TEXT("/");
+			return NormalizedFilePath.StartsWith(DirectoryPrefix, ESearchCase::IgnoreCase);
+		}
+
+		bool ResolveBuildRequirementTargetFile(const FString& RequestedFile, FString& OutSourcePath, FString& OutFailureReason)
+		{
+			FString RelativeFile = RequestedFile.TrimStartAndEnd();
+			RelativeFile.ReplaceInline(TEXT("\\"), TEXT("/"), ESearchCase::CaseSensitive);
+			if (RelativeFile.IsEmpty())
+			{
+				OutFailureReason = TEXT("buildRequirements.requiredIncludes entry has an empty file field.");
+				return false;
+			}
+
+			const FString ProjectDirectory = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+			const FString PluginModuleSourceDirectory = FPaths::ConvertRelativePathToFull(FPaths::Combine(
+				ProjectDirectory,
+				TEXT("Plugins/UnrealMcp/Source/UnrealMcp")));
+			const FString PrivateSourceDirectory = FPaths::ConvertRelativePathToFull(FPaths::Combine(PluginModuleSourceDirectory, TEXT("Private")));
+			const FString PublicSourceDirectory = FPaths::ConvertRelativePathToFull(FPaths::Combine(PluginModuleSourceDirectory, TEXT("Public")));
+			const FString ProjectRelativePrivatePrefix = TEXT("Plugins/UnrealMcp/Source/UnrealMcp/Private/");
+			const FString ProjectRelativePublicPrefix = TEXT("Plugins/UnrealMcp/Source/UnrealMcp/Public/");
+
+			FString ResolvedPath;
+			if (FPaths::IsRelative(RelativeFile))
+			{
+				if (RelativeFile.StartsWith(ProjectRelativePrivatePrefix, ESearchCase::IgnoreCase)
+					|| RelativeFile.StartsWith(ProjectRelativePublicPrefix, ESearchCase::IgnoreCase))
+				{
+					ResolvedPath = FPaths::ConvertRelativePathToFull(FPaths::Combine(ProjectDirectory, RelativeFile));
+				}
+				else if (RelativeFile.StartsWith(TEXT("Private/"), ESearchCase::IgnoreCase)
+					|| RelativeFile.StartsWith(TEXT("Public/"), ESearchCase::IgnoreCase))
+				{
+					ResolvedPath = FPaths::ConvertRelativePathToFull(FPaths::Combine(PluginModuleSourceDirectory, RelativeFile));
+				}
+				else
+				{
+					ResolvedPath = FPaths::ConvertRelativePathToFull(FPaths::Combine(PrivateSourceDirectory, RelativeFile));
+				}
+			}
+			else
+			{
+				ResolvedPath = FPaths::ConvertRelativePathToFull(RelativeFile);
+			}
+
+			FPaths::NormalizeFilename(ResolvedPath);
+			FPaths::CollapseRelativeDirectories(ResolvedPath);
+			if (!IsPathUnderDirectory(ResolvedPath, PrivateSourceDirectory) && !IsPathUnderDirectory(ResolvedPath, PublicSourceDirectory))
+			{
+				OutFailureReason = FString::Printf(
+					TEXT("buildRequirements.requiredIncludes file '%s' resolves outside Plugins/UnrealMcp/Source/UnrealMcp/Private or Public."),
+					*RequestedFile);
+				return false;
+			}
+
+			OutSourcePath = ResolvedPath;
+			return true;
+		}
+
+		FString GetMcpBuildCsPath()
+		{
+			return FPaths::ConvertRelativePathToFull(FPaths::Combine(
+				FPaths::ProjectDir(),
+				TEXT("Plugins/UnrealMcp/Source/UnrealMcp/UnrealMcp.Build.cs")));
+		}
+
+		bool IsSafeUnrealModuleName(const FString& ModuleName)
+		{
+			if (ModuleName.IsEmpty())
+			{
+				return false;
+			}
+			for (int32 Index = 0; Index < ModuleName.Len(); ++Index)
+			{
+				if (!FChar::IsAlnum(ModuleName[Index]) && ModuleName[Index] != TEXT('_'))
+				{
+					return false;
+				}
+			}
+			return true;
+		}
+
+		TSharedPtr<FJsonObject> MakeBuildRequirementPlanObject(
+			const FString& Kind,
+			const FString& Name,
+			const FString& SourcePath,
+			const FString& Status,
+			int32 Offset)
+		{
+			TSharedPtr<FJsonObject> Object = MakeShared<FJsonObject>();
+			Object->SetStringField(TEXT("kind"), Kind);
+			Object->SetStringField(TEXT("name"), Name);
+			Object->SetStringField(TEXT("sourcePath"), SourcePath);
+			Object->SetStringField(TEXT("relativePath"), MakeApplyRelativePath(SourcePath));
+			Object->SetStringField(TEXT("status"), Status);
+			Object->SetNumberField(TEXT("offset"), Offset);
+			return Object;
+		}
+
+		bool PlanBuildRequirementIncludes(
+			FString& SourceText,
+			const FString& SourcePath,
+			const FString& RequestedFile,
+			const TArray<FString>& RawIncludes,
+			bool bDryRun,
+			TArray<TSharedPtr<FJsonValue>>& IncludesPlanned,
+			TArray<TSharedPtr<FJsonValue>>& Changes,
+			bool& bOutChanged)
+		{
+			TArray<FString> SeenIncludes;
+			TArray<FString> MissingIncludes;
+			for (const FString& RawInclude : RawIncludes)
+			{
+				const FString Include = NormalizeBuildRequirementInclude(RawInclude);
+				if (Include.IsEmpty() || SeenIncludes.Contains(Include))
+				{
+					continue;
+				}
+				SeenIncludes.Add(Include);
+
+				if (SourceContainsInclude(SourceText, Include))
+				{
+					TSharedPtr<FJsonObject> PlannedObject = MakeBuildRequirementPlanObject(
+						TEXT("include"),
+						Include,
+						SourcePath,
+						TEXT("already_present"),
+						INDEX_NONE);
+					PlannedObject->SetStringField(TEXT("file"), RequestedFile);
+					PlannedObject->SetStringField(TEXT("line"), FString::Printf(TEXT("#include \"%s\""), *Include));
+					IncludesPlanned.Add(MakeShared<FJsonValueObject>(PlannedObject));
+					continue;
+				}
+
+				MissingIncludes.Add(Include);
+			}
+
+			if (MissingIncludes.Num() == 0)
+			{
+				return true;
+			}
+
+			int32 InsertOffset = INDEX_NONE;
+			if (!FindPrimaryIncludeBlockInsertOffset(SourceText, InsertOffset))
+			{
+				Changes.Add(MakeShared<FJsonValueObject>(MakeInsertionChangeObject(
+					TEXT("BuildRequirementsIncludes"),
+					EMcpScaffoldInsertionStatus::MissingAnchor,
+					FString::Printf(TEXT("Could not find primary #include block in required include target '%s'."), *RequestedFile),
+					INDEX_NONE,
+					FString::Join(MissingIncludes, TEXT(", ")))));
+				return false;
+			}
+
+			FString InsertionText;
+			for (const FString& Include : MissingIncludes)
+			{
+				InsertionText += FString::Printf(TEXT("#include \"%s\"%s"), *Include, LINE_TERMINATOR);
+
+				TSharedPtr<FJsonObject> PlannedObject = MakeBuildRequirementPlanObject(
+					TEXT("include"),
+					Include,
+					SourcePath,
+					bDryRun ? TEXT("will_insert") : TEXT("inserted"),
+					InsertOffset);
+				PlannedObject->SetStringField(TEXT("file"), RequestedFile);
+				PlannedObject->SetStringField(TEXT("line"), FString::Printf(TEXT("#include \"%s\""), *Include));
+				IncludesPlanned.Add(MakeShared<FJsonValueObject>(PlannedObject));
+			}
+
+			Changes.Add(MakeShared<FJsonValueObject>(MakeInsertionChangeObject(
+				TEXT("BuildRequirementsIncludes"),
+				bDryRun ? EMcpScaffoldInsertionStatus::WillInsert : EMcpScaffoldInsertionStatus::Inserted,
+				bDryRun ? TEXT("Would insert required #include lines from ScaffoldMetadata buildRequirements.") : TEXT("Inserted required #include lines from ScaffoldMetadata buildRequirements."),
+				InsertOffset,
+				InsertionText.Left(800))));
+
+			SourceText.InsertAt(InsertOffset, InsertionText);
+			bOutChanged = true;
+			return true;
+		}
+
+		bool FindPrivateDependencyModuleBlock(const FString& BuildCsText, int32& OutBlockStart, int32& OutInsertOffset)
+		{
+			const FString Anchor = TEXT("PrivateDependencyModuleNames.AddRange(new[]");
+			const int32 AnchorOffset = BuildCsText.Find(Anchor, ESearchCase::CaseSensitive);
+			if (AnchorOffset == INDEX_NONE)
+			{
+				return false;
+			}
+
+			const int32 OpenBraceOffset = BuildCsText.Find(TEXT("{"), ESearchCase::CaseSensitive, ESearchDir::FromStart, AnchorOffset + Anchor.Len());
+			if (OpenBraceOffset == INDEX_NONE)
+			{
+				return false;
+			}
+
+			const int32 CloseOffset = BuildCsText.Find(TEXT("\n\t\t});"), ESearchCase::CaseSensitive, ESearchDir::FromStart, OpenBraceOffset);
+			if (CloseOffset == INDEX_NONE)
+			{
+				return false;
+			}
+
+			OutBlockStart = OpenBraceOffset;
+			OutInsertOffset = CloseOffset;
+			return true;
+		}
+
+		bool PrivateDependencyBlockContainsModule(const FString& BuildCsText, int32 BlockStart, int32 InsertOffset, const FString& ModuleName)
+		{
+			if (BlockStart == INDEX_NONE || InsertOffset == INDEX_NONE || InsertOffset <= BlockStart)
+			{
+				return false;
+			}
+			const FString BlockText = BuildCsText.Mid(BlockStart, InsertOffset - BlockStart);
+			return BlockText.Contains(FString::Printf(TEXT("\"%s\""), *ModuleName), ESearchCase::CaseSensitive);
+		}
+
+		bool PlanBuildRequirementModules(
+			FString& BuildCsText,
+			const FString& BuildCsPath,
+			const TArray<FString>& RequiredModules,
+			bool bDryRun,
+			TArray<TSharedPtr<FJsonValue>>& ModulesPlanned,
+			TArray<TSharedPtr<FJsonValue>>& Changes,
+			TArray<TSharedPtr<FJsonValue>>& Issues,
+			bool& bOutChanged)
+		{
+			if (RequiredModules.Num() == 0)
+			{
+				return true;
+			}
+
+			int32 BlockStart = INDEX_NONE;
+			int32 InsertOffset = INDEX_NONE;
+			if (!FindPrivateDependencyModuleBlock(BuildCsText, BlockStart, InsertOffset))
+			{
+				Changes.Add(MakeShared<FJsonValueObject>(MakeInsertionChangeObject(
+					TEXT("BuildRequirementsModules"),
+					EMcpScaffoldInsertionStatus::MissingAnchor,
+					TEXT("Could not find UnrealMcp.Build.cs PrivateDependencyModuleNames AddRange block."),
+					INDEX_NONE,
+					FString())));
+				return false;
+			}
+
+			TArray<FString> SeenModules;
+			TArray<FString> MissingModules;
+			for (const FString& RawModule : RequiredModules)
+			{
+				const FString ModuleName = RawModule.TrimStartAndEnd();
+				if (SeenModules.Contains(ModuleName))
+				{
+					continue;
+				}
+				SeenModules.Add(ModuleName);
+
+				if (!IsSafeUnrealModuleName(ModuleName))
+				{
+					TSharedPtr<FJsonObject> Issue = MakeShared<FJsonObject>();
+					Issue->SetStringField(TEXT("severity"), TEXT("error"));
+					Issue->SetStringField(TEXT("code"), TEXT("invalid_build_requirement_module"));
+					Issue->SetStringField(TEXT("file"), TEXT("ScaffoldMetadata.json"));
+					Issue->SetStringField(TEXT("message"), FString::Printf(TEXT("Invalid required module name '%s'. Module names may contain only letters, digits, and underscore."), *RawModule));
+					Issues.Add(MakeShared<FJsonValueObject>(Issue));
+					return false;
+				}
+
+				if (PrivateDependencyBlockContainsModule(BuildCsText, BlockStart, InsertOffset, ModuleName))
+				{
+					TSharedPtr<FJsonObject> PlannedObject = MakeBuildRequirementPlanObject(
+						TEXT("module"),
+						ModuleName,
+						BuildCsPath,
+						TEXT("already_present"),
+						INDEX_NONE);
+					PlannedObject->SetStringField(TEXT("module"), ModuleName);
+					ModulesPlanned.Add(MakeShared<FJsonValueObject>(PlannedObject));
+					continue;
+				}
+
+				MissingModules.Add(ModuleName);
+			}
+
+			if (MissingModules.Num() == 0)
+			{
+				return true;
+			}
+
+			const FString PrefixBeforeInsert = BuildCsText.Left(InsertOffset).TrimStartAndEnd();
+			const bool bNeedsLeadingComma = !PrefixBeforeInsert.EndsWith(TEXT("{"), ESearchCase::CaseSensitive)
+				&& !PrefixBeforeInsert.EndsWith(TEXT(","), ESearchCase::CaseSensitive);
+			FString InsertionText;
+			for (int32 ModuleIndex = 0; ModuleIndex < MissingModules.Num(); ++ModuleIndex)
+			{
+				if (ModuleIndex > 0 || bNeedsLeadingComma)
+				{
+					InsertionText += TEXT(",");
+				}
+				InsertionText += FString::Printf(TEXT("%s\t\t\t\"%s\""), LINE_TERMINATOR, *MissingModules[ModuleIndex]);
+
+				TSharedPtr<FJsonObject> PlannedObject = MakeBuildRequirementPlanObject(
+					TEXT("module"),
+					MissingModules[ModuleIndex],
+					BuildCsPath,
+					bDryRun ? TEXT("will_insert") : TEXT("inserted"),
+					InsertOffset);
+				PlannedObject->SetStringField(TEXT("module"), MissingModules[ModuleIndex]);
+				ModulesPlanned.Add(MakeShared<FJsonValueObject>(PlannedObject));
+			}
+
+			Changes.Add(MakeShared<FJsonValueObject>(MakeInsertionChangeObject(
+				TEXT("BuildRequirementsModules"),
+				bDryRun ? EMcpScaffoldInsertionStatus::WillInsert : EMcpScaffoldInsertionStatus::Inserted,
+				bDryRun ? TEXT("Would insert required Unreal module dependencies from ScaffoldMetadata buildRequirements.") : TEXT("Inserted required Unreal module dependencies from ScaffoldMetadata buildRequirements."),
+				InsertOffset,
+				InsertionText.Left(800))));
+
+			BuildCsText.InsertAt(InsertOffset, InsertionText);
+			bOutChanged = true;
+			return true;
+		}
+
 		bool IsCppIdentifierStart(TCHAR Character)
 		{
 			return FChar::IsAlpha(Character) || Character == TEXT('_');
@@ -983,11 +1495,13 @@ namespace UnrealMcp
 
 			FString CategorySourceFile;
 			FString TryExecuteName;
+			FMcpScaffoldBuildRequirements BuildRequirements;
 			TSharedPtr<FJsonObject> MetadataObject;
 			if (LoadJsonObjectFromFile(FPaths::Combine(ScaffoldDirectory, TEXT("ScaffoldMetadata.json")), MetadataObject, FailureReason) && MetadataObject.IsValid())
 			{
 				MetadataObject->TryGetStringField(TEXT("categorySourceFile"), CategorySourceFile);
 				MetadataObject->TryGetStringField(TEXT("categoryTryExecute"), TryExecuteName);
+				ParseScaffoldBuildRequirementsMetadata(MetadataObject, BuildRequirements);
 			}
 			if (CategorySourceFile.TrimStartAndEnd().IsEmpty())
 			{
@@ -1048,6 +1562,28 @@ namespace UnrealMcp
 			// Category C: self-extension applies ToolRegistry patches to the active project's explicit registry mirror.
 			const FString RegistrySourcePath = FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectDir(), TEXT("Tools/UnrealMcpToolRegistry/tools.json")));
 			const FString RegistryMirrorPath = GetToolRegistryMirrorPath();
+			const FString BuildCsPath = GetMcpBuildCsPath();
+			TMap<FString, FString> BuildRequirementIncludeTargets;
+			for (const FMcpScaffoldRequiredInclude& IncludeEntry : BuildRequirements.RequiredIncludes)
+			{
+				FString IncludeTargetPath;
+				if (!ResolveBuildRequirementTargetFile(IncludeEntry.TargetFile, IncludeTargetPath, FailureReason))
+				{
+					TSharedPtr<FJsonObject> Issue = MakeShared<FJsonObject>();
+					Issue->SetStringField(TEXT("severity"), TEXT("error"));
+					Issue->SetStringField(TEXT("code"), TEXT("build_requirement_include_target_outside_allowed_source"));
+					Issue->SetStringField(TEXT("file"), TEXT("ScaffoldMetadata.json"));
+					Issue->SetStringField(TEXT("message"), FailureReason);
+					Issues.Add(MakeShared<FJsonValueObject>(Issue));
+
+					TSharedPtr<FJsonObject> StructuredContent = MakeEarlyFailureContent(
+						FailureReason,
+						TEXT("Fix ScaffoldMetadata.json buildRequirements.requiredIncludes so each file targets Plugins/UnrealMcp/Source/UnrealMcp/Private or Public."),
+						TEXT("unreal.scaffold_mcp_tool"));
+					return MakeExecutionResult(FailureReason, StructuredContent, true);
+				}
+				BuildRequirementIncludeTargets.Add(IncludeEntry.TargetFile, IncludeTargetPath);
+			}
 
 			TMap<FString, FString> BeforeTexts;
 			TMap<FString, FString> PlannedTexts;
@@ -1077,11 +1613,56 @@ namespace UnrealMcp
 			{
 				return MakeExecutionResult(FailureReason, nullptr, true);
 			}
+			for (const TPair<FString, FString>& Pair : BuildRequirementIncludeTargets)
+			{
+				if (!LoadTextTarget(Pair.Value, FailureReason))
+				{
+					return MakeExecutionResult(FailureReason, nullptr, true);
+				}
+			}
+			if (BuildRequirements.RequiredModules.Num() > 0 && !LoadTextTarget(BuildCsPath, FailureReason))
+			{
+				return MakeExecutionResult(FailureReason, nullptr, true);
+			}
 
 			TArray<TSharedPtr<FJsonValue>> Changes;
+			TArray<TSharedPtr<FJsonValue>> BuildRequirementIncludesPlanned;
+			TArray<TSharedPtr<FJsonValue>> BuildRequirementModulesPlanned;
 			bool bChanged = false;
 			bool bCanApply = true;
 			const FString GeneratedFunctionSuffix = MakeMcpGeneratedFunctionSuffixForApply(ToolName);
+
+			for (const FMcpScaffoldRequiredInclude& IncludeEntry : BuildRequirements.RequiredIncludes)
+			{
+				const FString* IncludeTargetPath = BuildRequirementIncludeTargets.Find(IncludeEntry.TargetFile);
+				if (!IncludeTargetPath)
+				{
+					continue;
+				}
+				FString& IncludeTargetText = PlannedTexts.FindChecked(*IncludeTargetPath);
+				bCanApply &= PlanBuildRequirementIncludes(
+					IncludeTargetText,
+					*IncludeTargetPath,
+					IncludeEntry.TargetFile,
+					IncludeEntry.Includes,
+					bDryRun,
+					BuildRequirementIncludesPlanned,
+					Changes,
+					bChanged);
+			}
+			if (BuildRequirements.RequiredModules.Num() > 0)
+			{
+				FString& BuildCsText = PlannedTexts.FindChecked(BuildCsPath);
+				bCanApply &= PlanBuildRequirementModules(
+					BuildCsText,
+					BuildCsPath,
+					BuildRequirements.RequiredModules,
+					bDryRun,
+					BuildRequirementModulesPlanned,
+					Changes,
+					Issues,
+					bChanged);
+			}
 
 			FString& RegistrarText = PlannedTexts.FindChecked(RegistrarPath);
 			const FString RegistrarBefore = BeforeTexts.FindChecked(RegistrarPath);
@@ -1376,6 +1957,14 @@ namespace UnrealMcp
 			}
 			AddScaffoldNextStep(NextSteps, TEXT("Verify the final outcome with explicit evidence."), TEXT("unreal.verify_task_outcome"), TEXT("Prevents treating scaffold generation as completed tool integration."));
 
+			TSharedPtr<FJsonObject> BuildRequirementsObject = MakeShared<FJsonObject>();
+			BuildRequirementsObject->SetBoolField(TEXT("present"), BuildRequirements.RequiredIncludes.Num() > 0 || BuildRequirements.RequiredModules.Num() > 0 || BuildRequirements.DependsOn.Num() > 0);
+			BuildRequirementsObject->SetNumberField(TEXT("requiredIncludeTargets"), BuildRequirements.RequiredIncludes.Num());
+			BuildRequirementsObject->SetArrayField(TEXT("requiredModules"), MakeJsonStringArray(BuildRequirements.RequiredModules));
+			BuildRequirementsObject->SetArrayField(TEXT("dependsOn"), MakeJsonStringArray(BuildRequirements.DependsOn));
+			BuildRequirementsObject->SetArrayField(TEXT("includesPlanned"), BuildRequirementIncludesPlanned);
+			BuildRequirementsObject->SetArrayField(TEXT("modulesPlanned"), BuildRequirementModulesPlanned);
+
 			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
 			StructuredContent->SetStringField(TEXT("action"), TEXT("mcp_apply_scaffold"));
 			StructuredContent->SetStringField(TEXT("applyMode"), TEXT("descriptor_first"));
@@ -1389,6 +1978,7 @@ namespace UnrealMcp
 			StructuredContent->SetStringField(TEXT("categorySourceFile"), CategorySourceFile);
 			StructuredContent->SetStringField(TEXT("categoryTryExecute"), TryExecuteName);
 			StructuredContent->SetBoolField(TEXT("dryRun"), bDryRun);
+			StructuredContent->SetObjectField(TEXT("buildRequirements"), BuildRequirementsObject);
 			StructuredContent->SetBoolField(TEXT("canApply"), bCanApply);
 			StructuredContent->SetBoolField(TEXT("changed"), ChangedFiles.Num() > 0);
 			StructuredContent->SetBoolField(TEXT("validatePatches"), bValidatePatches);

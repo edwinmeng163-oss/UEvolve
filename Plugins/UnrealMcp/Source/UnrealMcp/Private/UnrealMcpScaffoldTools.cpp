@@ -1485,7 +1485,12 @@ namespace UnrealMcp
 			TEXT("  \"requiresRestart\": %s,\n")
 			TEXT("  \"requiresProjectMemory\": %s,\n")
 			TEXT("  \"requiresLock\": %s,\n")
-			TEXT("  \"dryRunSupport\": %s\n")
+			TEXT("  \"dryRunSupport\": %s,\n")
+			TEXT("  \"buildRequirements\": {\n")
+			TEXT("    \"requiredIncludes\": [],\n")
+			TEXT("    \"requiredModules\": []\n")
+			TEXT("  },\n")
+			TEXT("  \"dependsOn\": []\n")
 			TEXT("}\n"),
 			*ToolName,
 			*ToolId,
@@ -1553,6 +1558,9 @@ namespace UnrealMcp
 			TEXT("- `CategoryHandlerFunction.patch.cpp` targets `%s` before `%s`.\n")
 			TEXT("- `CategoryDispatcherBranch.patch.cpp` targets `%s`.\n")
 			TEXT("- `ToolRegistryPatch.json` is merged into `Tools/UnrealMcpToolRegistry/tools.json` and mirrored to plugin resources.\n")
+			TEXT("- Fill `ScaffoldMetadata.json` `buildRequirements.requiredIncludes` with `{ file, includes }` entries when a patch needs headers in a target under `Plugins/UnrealMcp/Source/UnrealMcp/Private` or `Public`; dry-run reports these under `buildRequirements.includesPlanned[]`.\n")
+			TEXT("- Fill `buildRequirements.requiredModules` with any Unreal module names that must be present in `UnrealMcp.Build.cs` `PrivateDependencyModuleNames`; dry-run reports these under `buildRequirements.modulesPlanned[]`.\n")
+			TEXT("- Fill `dependsOn` with prerequisite scaffold/tool IDs when this scaffold should be applied after another generated tool.\n")
 			TEXT("- Optionally apply `ChatCommand.patch.cpp` to `FUnrealMcpModule::ExecuteChatCommand`.\n")
 			TEXT("- Add a short example to `Plugins/UnrealMcp/README.md`.\n")
 			TEXT("- Run `python3 Tools/validate_tool_registry.py`.\n")

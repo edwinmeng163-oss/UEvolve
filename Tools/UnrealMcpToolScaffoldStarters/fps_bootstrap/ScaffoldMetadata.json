@@ -15,5 +15,21 @@
   "requiresProjectMemory": false,
   "requiresLock": false,
   "dryRunSupport": true,
+  "buildRequirements": {
+    "requiredIncludes": [
+      {
+        "file": "UnrealMcpEditorTools.cpp",
+        "includes": [
+          "GameFramework/InputSettings.h",
+          "GameFramework/PlayerInput.h",
+          "K2Node_InputAxisEvent.h"
+        ]
+      }
+    ],
+    "requiredModules": [
+      "BlueprintGraph"
+    ]
+  },
+  "dependsOn": [],
   "description": "Complete FPS character bring-up: registers axis mappings, wires Blueprint EventGraph nodes including forward/right vector sources for AddMovementInput.WorldDirection, sets Pawn bUseControllerRotationYaw + Camera bUsePawnControlRotation, compiles + saves, and optionally invokes unreal.simulation.verify_input_drives_pawn for self-test."
 }
