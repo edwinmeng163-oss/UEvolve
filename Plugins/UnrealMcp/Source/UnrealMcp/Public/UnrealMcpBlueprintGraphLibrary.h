@@ -22,6 +22,30 @@ public:
 		TArray<FString>& OutPinNames,
 		FString& OutFailureReason);
 
+	UFUNCTION(BlueprintCallable, Category="Unreal MCP|Graph", meta=(ScriptName="AddMovementInputCallNode"))
+	static bool AddMovementInputCallNode(
+		UBlueprint* Blueprint,
+		FVector2D Location,
+		FString& OutNodeGuid,
+		TArray<FString>& OutPinNames,
+		FString& OutFailureReason);
+
+	UFUNCTION(BlueprintCallable, Category="Unreal MCP|Graph", meta=(ScriptName="AddControllerYawInputCallNode"))
+	static bool AddControllerYawInputCallNode(
+		UBlueprint* Blueprint,
+		FVector2D Location,
+		FString& OutNodeGuid,
+		TArray<FString>& OutPinNames,
+		FString& OutFailureReason);
+
+	UFUNCTION(BlueprintCallable, Category="Unreal MCP|Graph", meta=(ScriptName="AddControllerPitchInputCallNode"))
+	static bool AddControllerPitchInputCallNode(
+		UBlueprint* Blueprint,
+		FVector2D Location,
+		FString& OutNodeGuid,
+		TArray<FString>& OutPinNames,
+		FString& OutFailureReason);
+
 	UFUNCTION(BlueprintCallable, Category="Unreal MCP|Graph", meta=(ScriptName="AddInputAxisEventNode"))
 	static bool AddInputAxisEventNode(
 		UBlueprint* Blueprint,

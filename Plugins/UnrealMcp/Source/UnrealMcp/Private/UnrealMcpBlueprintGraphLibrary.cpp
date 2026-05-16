@@ -9,6 +9,7 @@
 #include "EdGraphSchema_K2_Actions.h"
 #include "Engine/Blueprint.h"
 #include "GameFramework/Actor.h"
+#include "GameFramework/Pawn.h"
 #include "K2Node_CallFunction.h"
 #include "K2Node_InputAxisEvent.h"
 #include "Kismet2/BlueprintEditorUtils.h"
@@ -522,6 +523,60 @@ bool UUnrealMcpBlueprintGraphLibrary::AddCallFunctionNode(
 		OptionalContextClassPath,
 		Location,
 		LOCTEXT("AddCallFunctionNode", "Unreal MCP Add Call Function Node"),
+		OutNodeGuid,
+		OutPinNames,
+		OutFailureReason);
+}
+
+bool UUnrealMcpBlueprintGraphLibrary::AddMovementInputCallNode(
+	UBlueprint* Blueprint,
+	FVector2D Location,
+	FString& OutNodeGuid,
+	TArray<FString>& OutPinNames,
+	FString& OutFailureReason)
+{
+	return AddCallFunctionNodeInternal(
+		Blueprint,
+		GET_FUNCTION_NAME_CHECKED(APawn, AddMovementInput),
+		APawn::StaticClass()->GetPathName(),
+		Location,
+		LOCTEXT("AddMovementInputCallNode", "Unreal MCP Add AddMovementInput Call Node"),
+		OutNodeGuid,
+		OutPinNames,
+		OutFailureReason);
+}
+
+bool UUnrealMcpBlueprintGraphLibrary::AddControllerYawInputCallNode(
+	UBlueprint* Blueprint,
+	FVector2D Location,
+	FString& OutNodeGuid,
+	TArray<FString>& OutPinNames,
+	FString& OutFailureReason)
+{
+	return AddCallFunctionNodeInternal(
+		Blueprint,
+		GET_FUNCTION_NAME_CHECKED(APawn, AddControllerYawInput),
+		APawn::StaticClass()->GetPathName(),
+		Location,
+		LOCTEXT("AddControllerYawInputCallNode", "Unreal MCP Add AddControllerYawInput Call Node"),
+		OutNodeGuid,
+		OutPinNames,
+		OutFailureReason);
+}
+
+bool UUnrealMcpBlueprintGraphLibrary::AddControllerPitchInputCallNode(
+	UBlueprint* Blueprint,
+	FVector2D Location,
+	FString& OutNodeGuid,
+	TArray<FString>& OutPinNames,
+	FString& OutFailureReason)
+{
+	return AddCallFunctionNodeInternal(
+		Blueprint,
+		GET_FUNCTION_NAME_CHECKED(APawn, AddControllerPitchInput),
+		APawn::StaticClass()->GetPathName(),
+		Location,
+		LOCTEXT("AddControllerPitchInputCallNode", "Unreal MCP Add AddControllerPitchInput Call Node"),
 		OutNodeGuid,
 		OutPinNames,
 		OutFailureReason);
