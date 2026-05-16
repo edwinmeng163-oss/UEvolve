@@ -14,7 +14,7 @@ Usage: bash Tools/package_plugin.sh [--output <dir>] [--version <name>]
                                     [--bridge-bundle-path <dir-or-archive>]
                                     [--engine-tag <tag>]
 
-Builds a source-only UnrealMcp plugin zip for macOS UE 5.6/5.7 pilots.
+Builds a source-only project-root UnrealMcp zip for macOS UE 5.6/5.7 pilots.
 With --full-experience, builds a project-root zip that includes plugin source,
 prebuilt Win64 UE 5.6.1 binaries, Tools starters, docs, schemas, and the
 offline Codex bridge bundle.
@@ -151,6 +151,7 @@ case "$output_dir" in
 esac
 
 plugin_dir="$repo_root/Plugins/UnrealMcp"
+python_tools_dir="$repo_root/Tools/UnrealMcpPyTools"
 uplugin="$plugin_dir/UnrealMcp.uplugin"
 canonical_registry="$repo_root/Tools/UnrealMcpToolRegistry/tools.json"
 mirror_registry="$plugin_dir/Resources/ToolRegistry/tools.json"
@@ -181,6 +182,7 @@ fi
 [ -f "$mirror_registry" ] || die "Missing plugin registry mirror: Plugins/UnrealMcp/Resources/ToolRegistry/tools.json"
 [ ! -L "$mirror_registry" ] || die "Phase 1 fix not applied: see commit 00fbf5e"
 [ -f "$canonical_registry" ] || die "Missing canonical registry: Tools/UnrealMcpToolRegistry/tools.json"
+[ -d "$python_tools_dir" ] || die "Missing Python tool handlers: Tools/UnrealMcpPyTools"
 cmp -s "$mirror_registry" "$canonical_registry" || die 'Registry mirror mismatch; run `python3 Tools/validate_tool_registry.py` and resync'
 
 if ! (cd "$repo_root" && python3 Tools/validate_tool_registry.py); then
@@ -216,6 +218,8 @@ if [ "$full_experience" -eq 1 ]; then
   cp "$install_resource" "$stage_plugin/INSTALL.md"
 
   copy_clean_dir "$repo_root/Tools/UnrealMcpToolRegistry" "$stage_tools/UnrealMcpToolRegistry" --exclude '.DS_Store' --exclude 'Saved/'
+  copy_clean_dir "$python_tools_dir" "$stage_tools/UnrealMcpPyTools" \
+    --exclude '__pycache__/' --exclude '*.pyc' --exclude '.DS_Store'
   copy_clean_dir "$repo_root/Tools/UnrealMcpSkills/mcp-self-extension" "$stage_tools/UnrealMcpSkills/mcp-self-extension" --exclude '.DS_Store' --exclude 'Saved/'
   copy_clean_dir "$repo_root/Tools/UnrealMcpKnowledge/Sources" "$stage_tools/UnrealMcpKnowledge/Sources" --exclude '.DS_Store' --exclude 'Saved/'
   mkdir -p "$stage_tools/UnrealMcpKnowledge/Evals"
@@ -241,19 +245,23 @@ if [ "$full_experience" -eq 1 ]; then
   [ -f "$stage_plugin/Binaries/Win64/UnrealEditor.modules" ] || die "Staging integrity failure: missing bundled UnrealEditor.modules"
   cmp -s "$stage_plugin/Resources/ToolRegistry/tools.json" "$canonical_registry" || die "Staging integrity failure: staged plugin registry differs from canonical registry"
   cmp -s "$stage_tools/UnrealMcpToolRegistry/tools.json" "$canonical_registry" || die "Staging integrity failure: staged Tools registry differs from canonical registry"
+  [ -f "$stage_tools/UnrealMcpPyTools/editor_python_runtime_info/main.py" ] || die "Staging integrity failure: missing Tools/UnrealMcpPyTools/editor_python_runtime_info/main.py"
   assert_bridge_bundle "$stage_tools/UnrealMcpCodexBridge"
 
   excluded_paths="$(find "$stage_parent" \
-    \( -name Intermediate -o -name Saved -o -name DerivedDataCache -o -name .DS_Store \) \
+    \( -name Intermediate -o -name Saved -o -name DerivedDataCache -o -name .DS_Store -o -name __pycache__ -o -name '*.pyc' \) \
     -print)"
   [ -z "$excluded_paths" ] || die "Staging integrity failure: excluded path present: $(printf '%s' "$excluded_paths" | head -n 1)"
 
   zip_name="UnrealMcp-v${version_name}-full-win-${engine_tag}.zip"
 else
-  stage_plugin="$stage_parent/UnrealMcp"
+  stage_plugin="$stage_parent/Plugins/UnrealMcp"
+  stage_py_tools="$stage_parent/Tools/UnrealMcpPyTools"
+  stage_scaffold_starters="$stage_parent/Tools/UnrealMcpToolScaffoldStarters"
+  mkdir -p "$(dirname "$stage_plugin")" "$(dirname "$stage_py_tools")"
 
-  # Stage a clean source-only plugin tree. Automation tests and generated build
-  # products stay out of the pilot zip.
+  # Stage a clean source-only project-root overlay. Automation tests and
+  # generated build products stay out of the pilot zip.
   rsync --archive --delete \
     --exclude 'Binaries/' \
     --exclude 'Intermediate/' \
@@ -263,22 +271,34 @@ else
     --exclude 'Source/UnrealMcp/Private/Tests/' \
     "$plugin_dir/" "$stage_plugin/"
 
+  # Python handlers are resolved at runtime from
+  # <ProjectDir>/Tools/UnrealMcpPyTools/<handlerId>/main.py, so source-only
+  # pilots must include this project-root Tools tree alongside the plugin.
+  rsync --archive --delete \
+    --exclude '__pycache__/' \
+    --exclude '*.pyc' \
+    --exclude '.DS_Store' \
+    "$python_tools_dir/" "$stage_py_tools/"
+  copy_clean_dir "$repo_root/Tools/UnrealMcpToolScaffoldStarters" "$stage_scaffold_starters" --exclude '.DS_Store' --exclude 'Saved/'
+
   cp "$install_resource" "$stage_plugin/INSTALL.md"
 
   # Verify the staged tree rather than trusting rsync excludes blindly.
-  [ -f "$stage_plugin/UnrealMcp.uplugin" ] || die "Staging integrity failure: missing UnrealMcp/UnrealMcp.uplugin"
-  [ -f "$stage_plugin/Resources/ToolRegistry/tools.json" ] || die "Staging integrity failure: missing UnrealMcp/Resources/ToolRegistry/tools.json"
+  [ -f "$stage_plugin/UnrealMcp.uplugin" ] || die "Staging integrity failure: missing Plugins/UnrealMcp/UnrealMcp.uplugin"
+  [ -f "$stage_plugin/Resources/ToolRegistry/tools.json" ] || die "Staging integrity failure: missing Plugins/UnrealMcp/Resources/ToolRegistry/tools.json"
   [ ! -L "$stage_plugin/Resources/ToolRegistry/tools.json" ] || die "Staging integrity failure: staged registry is a symlink"
   cmp -s "$stage_plugin/Resources/ToolRegistry/tools.json" "$canonical_registry" || die "Staging integrity failure: staged registry differs from canonical registry"
-  [ -f "$stage_plugin/INSTALL.md" ] || die "Staging integrity failure: missing UnrealMcp/INSTALL.md"
+  [ -f "$stage_plugin/INSTALL.md" ] || die "Staging integrity failure: missing Plugins/UnrealMcp/INSTALL.md"
+  [ -f "$stage_py_tools/editor_python_runtime_info/main.py" ] || die "Staging integrity failure: missing Tools/UnrealMcpPyTools/editor_python_runtime_info/main.py"
+  [ -f "$stage_scaffold_starters/README.md" ] || die "Staging integrity failure: missing Tools/UnrealMcpToolScaffoldStarters/README.md"
 
-  excluded_paths="$(find "$stage_plugin" \
-    \( -name Binaries -o -name Intermediate -o -name Saved -o -name DerivedDataCache -o -name .DS_Store \) \
+  excluded_paths="$(find "$stage_parent" \
+    \( -name Binaries -o -name Intermediate -o -name Saved -o -name DerivedDataCache -o -name .DS_Store -o -name __pycache__ -o -name '*.pyc' \) \
     -print)"
   [ -z "$excluded_paths" ] || die "Staging integrity failure: excluded path present: $(printf '%s' "$excluded_paths" | head -n 1)"
-  [ ! -e "$stage_plugin/Source/UnrealMcp/Private/Tests" ] || die "Staging integrity failure: excluded path present: UnrealMcp/Source/UnrealMcp/Private/Tests"
+  [ ! -e "$stage_plugin/Source/UnrealMcp/Private/Tests" ] || die "Staging integrity failure: excluded path present: Plugins/UnrealMcp/Source/UnrealMcp/Private/Tests"
 
-  zip_name="UnrealMcp-v${version_name}-mac-ue56-ue57-source.zip"
+  zip_name="UnrealMcp-v${version_name}-mac-ue56-ue57-projectroot.zip"
 fi
 zip_path="$output_dir/$zip_name"
 sha_path="$zip_path.sha256"
@@ -290,14 +310,8 @@ rm -f "$zip_path" "$sha_path"
     find . -mindepth 1 -maxdepth 1 -print | sed 's#^\./##' | LC_ALL=C sort |
       zip -r -X "$zip_path" -@ >/dev/null
   else
-    zip -X "$zip_path" UnrealMcp/ >/dev/null
-    {
-      printf '%s\n' 'UnrealMcp/UnrealMcp.uplugin' 'UnrealMcp/INSTALL.md'
-      find UnrealMcp -mindepth 1 -maxdepth 1 \
-        ! -path 'UnrealMcp/UnrealMcp.uplugin' \
-        ! -path 'UnrealMcp/INSTALL.md' \
-        -print | LC_ALL=C sort
-    } | zip -r -X "$zip_path" -@ >/dev/null
+    find . -mindepth 1 -maxdepth 1 -print | sed 's#^\./##' | LC_ALL=C sort |
+      zip -r -X "$zip_path" -@ >/dev/null
   fi
 )
 
@@ -316,5 +330,5 @@ printf 'SHA-256: %s\n' "$sha_value"
 if [ "$full_experience" -eq 1 ]; then
   printf 'Done. Next: open this on a clean Windows UE 5.6.1 project; see Docs/FIRST_LAUNCH.md.\n'
 else
-  printf "Done. Next: drop the zip into a pilot user's <UserProject>/Plugins/ or <UE Install>/Engine/Plugins/. See INSTALL.md inside the zip.\n"
+  printf "Done. Next: extract the zip into a pilot user's <UserProject>/ root, next to the .uproject; do not extract it under Plugins/. See Plugins/UnrealMcp/INSTALL.md inside the zip.\n"
 fi

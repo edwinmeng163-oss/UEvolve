@@ -1,5 +1,5 @@
 <#
-Builds a source-only UnrealMcp plugin zip for Windows UE 5.6/5.7 pilots, or a
+Builds a source-only project-root UnrealMcp zip for Windows UE 5.6/5.7 pilots, or a
 project-root full-experience zip with prebuilt UE 5.6.1 Win64 binaries.
 
 This PowerShell port is syntax-only verified on macOS. Stage 2 real Win64
@@ -76,7 +76,10 @@ function Copy-CleanDirectory {
     Copy-Item -Path (Join-Path $Source "*") -Destination $Destination -Recurse -Force -Exclude $ExcludeNames
     if ($null -ne $ExcludeNames -and $ExcludeNames.Count -gt 0) {
         Get-ChildItem -LiteralPath $Destination -Force -Recurse |
-            Where-Object { $ExcludeNames -contains $_.Name } |
+            Where-Object {
+                $itemName = $_.Name
+                $null -ne ($ExcludeNames | Where-Object { $itemName -like $_ } | Select-Object -First 1)
+            } |
             Sort-Object -Property FullName -Descending |
             ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
     }
@@ -195,6 +198,7 @@ if ([System.IO.Path]::IsPathRooted($Output)) {
     $outputDir = Join-Path $repoRoot $Output
 }
 $pluginDir = Join-Path $repoRoot "Plugins/UnrealMcp"
+$pythonToolsDir = Join-Path $repoRoot "Tools/UnrealMcpPyTools"
 $uplugin = Join-Path $pluginDir "UnrealMcp.uplugin"
 $canonicalRegistry = Join-Path $repoRoot "Tools/UnrealMcpToolRegistry/tools.json"
 $mirrorRegistry = Join-Path $pluginDir "Resources/ToolRegistry/tools.json"
@@ -227,6 +231,9 @@ try {
         "Phase 1 fix not applied: see commit 00fbf5e"
     if (-not (Test-Path -LiteralPath $canonicalRegistry -PathType Leaf)) {
         Die "Missing canonical registry: Tools/UnrealMcpToolRegistry/tools.json"
+    }
+    if (-not (Test-Path -LiteralPath $pythonToolsDir -PathType Container)) {
+        Die "Missing Python tool handlers: Tools/UnrealMcpPyTools"
     }
     Assert-SameFileHash $mirrorRegistry $canonicalRegistry `
         'Registry mirror mismatch; run `python3 Tools/validate_tool_registry.py` and resync'
@@ -271,6 +278,7 @@ try {
         $stageTools = Join-Path $stageParent "Tools"
         New-Item -ItemType Directory -Force -Path $stageTools | Out-Null
         Copy-CleanDirectory (Join-Path $repoRoot "Tools/UnrealMcpToolRegistry") (Join-Path $stageTools "UnrealMcpToolRegistry") @(".DS_Store", "Saved")
+        Copy-CleanDirectory $pythonToolsDir (Join-Path $stageTools "UnrealMcpPyTools") @("__pycache__", "*.pyc", ".DS_Store")
         Copy-CleanDirectory (Join-Path $repoRoot "Tools/UnrealMcpSkills/mcp-self-extension") (Join-Path $stageTools "UnrealMcpSkills/mcp-self-extension") @(".DS_Store", "Saved")
         Copy-CleanDirectory (Join-Path $repoRoot "Tools/UnrealMcpKnowledge/Sources") (Join-Path $stageTools "UnrealMcpKnowledge/Sources") @(".DS_Store", "Saved")
         New-Item -ItemType Directory -Force -Path (Join-Path $stageTools "UnrealMcpKnowledge/Evals") | Out-Null
@@ -316,10 +324,13 @@ try {
             $canonicalRegistry "Staging integrity failure: staged plugin registry differs from canonical registry"
         Assert-SameFileHash (Join-Path $stageTools "UnrealMcpToolRegistry/tools.json") `
             $canonicalRegistry "Staging integrity failure: staged Tools registry differs from canonical registry"
+        Assert-PlainFile (Join-Path $stageTools "UnrealMcpPyTools/editor_python_runtime_info/main.py") `
+            "Staging integrity failure: missing Tools/UnrealMcpPyTools/editor_python_runtime_info/main.py" `
+            "Staging integrity failure: staged Python handler is a symlink"
         Assert-BridgeBundle -BridgeRoot (Join-Path $stageTools "UnrealMcpCodexBridge")
 
         $excludedPath = Get-ChildItem -LiteralPath $stageParent -Force -Recurse |
-            Where-Object { @("Intermediate", "Saved", "DerivedDataCache", ".DS_Store") -contains $_.Name } |
+            Where-Object { (@("Intermediate", "Saved", "DerivedDataCache", ".DS_Store", "__pycache__") -contains $_.Name) -or ($_.Name -like "*.pyc") } |
             Select-Object -First 1
         if ($null -ne $excludedPath) {
             Die "Staging integrity failure: excluded path present: $($excludedPath.FullName)"
@@ -327,45 +338,58 @@ try {
 
         $zipName = "UnrealMcp-v$Version-full-win-$EngineTag.zip"
     } else {
-        $stagePlugin = Join-Path $stageParent "UnrealMcp"
+        $stagePlugin = Join-Path $stageParent "Plugins/UnrealMcp"
+        $stagePyTools = Join-Path $stageParent "Tools/UnrealMcpPyTools"
+        $stageScaffoldStarters = Join-Path $stageParent "Tools/UnrealMcpToolScaffoldStarters"
 
-        # Stage a clean source-only plugin tree. Automation tests and generated build
-        # products stay out of the pilot zip.
-        Copy-Item -LiteralPath $pluginDir -Destination $stageParent -Recurse -Force `
-            -Exclude "Binaries", "Intermediate", "Saved", "DerivedDataCache", ".DS_Store", "Tests"
+        # Stage a clean source-only project-root overlay. Automation tests and
+        # generated build products stay out of the pilot zip.
+        Copy-CleanDirectory $pluginDir $stagePlugin @("Binaries", "Intermediate", "Saved", "DerivedDataCache", ".DS_Store")
 
         $stageTests = Join-Path $stagePlugin "Source/UnrealMcp/Private/Tests"
         if (Test-Path -LiteralPath $stageTests) {
             Remove-Item -LiteralPath $stageTests -Recurse -Force
         }
 
+        # Python handlers are resolved at runtime from
+        # <ProjectDir>/Tools/UnrealMcpPyTools/<handlerId>/main.py, so source-only
+        # pilots must include this project-root Tools tree alongside the plugin.
+        Copy-CleanDirectory $pythonToolsDir $stagePyTools @("__pycache__", "*.pyc", ".DS_Store")
+        Copy-CleanDirectory (Join-Path $repoRoot "Tools/UnrealMcpToolScaffoldStarters") $stageScaffoldStarters @(".DS_Store", "Saved")
+
         Copy-Item -LiteralPath $installResource -Destination (Join-Path $stagePlugin "INSTALL.md") -Force
 
-        # Verify the staged tree rather than trusting Copy-Item excludes blindly.
+        # Verify the staged tree rather than trusting copy excludes blindly.
         if (-not (Test-Path -LiteralPath (Join-Path $stagePlugin "UnrealMcp.uplugin") -PathType Leaf)) {
-            Die "Staging integrity failure: missing UnrealMcp/UnrealMcp.uplugin"
+            Die "Staging integrity failure: missing Plugins/UnrealMcp/UnrealMcp.uplugin"
         }
         Assert-PlainFile (Join-Path $stagePlugin "Resources/ToolRegistry/tools.json") `
-            "Staging integrity failure: missing UnrealMcp/Resources/ToolRegistry/tools.json" `
+            "Staging integrity failure: missing Plugins/UnrealMcp/Resources/ToolRegistry/tools.json" `
             "Staging integrity failure: staged registry is a symlink"
         Assert-SameFileHash (Join-Path $stagePlugin "Resources/ToolRegistry/tools.json") `
             $canonicalRegistry "Staging integrity failure: staged registry differs from canonical registry"
         if (-not (Test-Path -LiteralPath (Join-Path $stagePlugin "INSTALL.md") -PathType Leaf)) {
-            Die "Staging integrity failure: missing UnrealMcp/INSTALL.md"
+            Die "Staging integrity failure: missing Plugins/UnrealMcp/INSTALL.md"
         }
+        Assert-PlainFile (Join-Path $stagePyTools "editor_python_runtime_info/main.py") `
+            "Staging integrity failure: missing Tools/UnrealMcpPyTools/editor_python_runtime_info/main.py" `
+            "Staging integrity failure: staged Python handler is a symlink"
+        Assert-PlainFile (Join-Path $stageScaffoldStarters "README.md") `
+            "Staging integrity failure: missing Tools/UnrealMcpToolScaffoldStarters/README.md" `
+            "Staging integrity failure: staged scaffold starters README is a symlink"
 
         $excludedNames = @("Binaries", "Intermediate", "Saved", "DerivedDataCache", ".DS_Store")
-        $excludedPath = Get-ChildItem -LiteralPath $stagePlugin -Force -Recurse |
-            Where-Object { $excludedNames -contains $_.Name } |
+        $excludedPath = Get-ChildItem -LiteralPath $stageParent -Force -Recurse |
+            Where-Object { ($excludedNames -contains $_.Name) -or ($_.Name -eq "__pycache__") -or ($_.Name -like "*.pyc") } |
             Select-Object -First 1
         if ($null -ne $excludedPath) {
             Die "Staging integrity failure: excluded path present: $($excludedPath.FullName)"
         }
         if (Test-Path -LiteralPath $stageTests) {
-            Die "Staging integrity failure: excluded path present: UnrealMcp/Source/UnrealMcp/Private/Tests"
+            Die "Staging integrity failure: excluded path present: Plugins/UnrealMcp/Source/UnrealMcp/Private/Tests"
         }
 
-        $zipName = "UnrealMcp-v$Version-win-ue56-ue57-source.zip"
+        $zipName = "UnrealMcp-v$Version-win-ue56-ue57-projectroot.zip"
     }
     $zipPath = Join-Path $outputDir $zipName
     $shaPath = "$zipPath.sha256"
@@ -374,7 +398,7 @@ try {
     if ($FullExperience) {
         Compress-Archive -Path (Join-Path $stageParent "*") -DestinationPath $zipPath -CompressionLevel Optimal
     } else {
-        Compress-Archive -Path $stagePlugin -DestinationPath $zipPath -CompressionLevel Optimal
+        Compress-Archive -Path (Join-Path $stageParent "*") -DestinationPath $zipPath -CompressionLevel Optimal
     }
 
     # The sidecar uses the same two-space format produced by shasum.
@@ -388,7 +412,7 @@ try {
     if ($FullExperience) {
         Write-Host "Done. Next: open this on a clean Windows UE 5.6.1 project; see Docs/FIRST_LAUNCH.md."
     } else {
-        Write-Host "Done. Next: drop the zip into a pilot user's <UserProject>/Plugins/ or <UE Install>/Engine/Plugins/. See INSTALL.md inside the zip."
+        Write-Host "Done. Next: extract the zip into a pilot user's <UserProject> root, next to the .uproject; do not extract it under Plugins/. See Plugins/UnrealMcp/INSTALL.md inside the zip."
     }
 } catch {
     Write-Error -Message "Error: $($_.Exception.Message)" -ErrorAction Continue
