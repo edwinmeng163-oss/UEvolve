@@ -1,0 +1,25 @@
+{
+  "name": "project_settings_get_smoke",
+  "description": "Read a common input project setting from UInputSettings.",
+  "category": "happy_path",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": false,
+  "expectToolCallStructuredFields": {
+    "category": "input",
+    "key": "DefaultPlayerInputClass",
+    "sourceConfig": "DefaultInput.ini"
+  },
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 132,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.project_settings_get",
+      "arguments": {
+        "category": "input",
+        "key": "DefaultPlayerInputClass"
+      }
+    }
+  }
+}

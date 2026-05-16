@@ -14,6 +14,9 @@ Read-only and context tools:
 - `unreal.list_selected_assets`
 - `unreal.list_level_actors`
 - `unreal.list_selected_actors`
+- `unreal.actor_get_property`
+- `unreal.actor_get_transform`
+- `unreal.project_settings_get`
 
 Editor action tools:
 

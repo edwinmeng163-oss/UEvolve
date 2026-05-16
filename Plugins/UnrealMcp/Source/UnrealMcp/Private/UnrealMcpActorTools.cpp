@@ -1,6 +1,7 @@
 #include "UnrealMcpActorTools.h"
 
 #include "Components/PointLightComponent.h"
+#include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -14,6 +15,7 @@
 #include "Subsystems/EditorActorSubsystem.h"
 #include "Subsystems/EditorAssetSubsystem.h"
 #include "UnrealMcpModule.h"
+#include "UObject/UnrealType.h"
 
 namespace UnrealMcp
 {
@@ -26,6 +28,15 @@ namespace UnrealMcp
 		TArray<TSharedPtr<FJsonValue>>& OutEditResults,
 		int32& OutSuccessCount,
 		int32& OutFailureCount);
+	bool ResolveObjectPropertyPath(
+		UObject* RootObject,
+		const FString& PropertyPath,
+		UObject*& OutOwnerObject,
+		FProperty*& OutLeafProperty,
+		FProperty*& OutNotifyProperty,
+		void*& OutValuePtr,
+		FString& OutFailureReason);
+	TSharedPtr<FJsonValue> PropertyValueToJson(FProperty* Property, const void* ValuePtr);
 
 	namespace
 	{
@@ -163,6 +174,132 @@ namespace UnrealMcp
 			ActorObject->SetObjectField(TEXT("location"), ActorToolMakeVectorObject(Actor->GetActorLocation()));
 			ActorObject->SetObjectField(TEXT("rotation"), ActorToolMakeRotatorObject(Actor->GetActorRotation()));
 			return ActorObject;
+		}
+
+		void ActorToolAttachError(TSharedPtr<FJsonObject> StructuredContent, const FString& Code, const FString& Message)
+		{
+			if (!StructuredContent.IsValid())
+			{
+				return;
+			}
+
+			TSharedPtr<FJsonObject> ErrorObject = MakeShared<FJsonObject>();
+			ErrorObject->SetStringField(TEXT("code"), Code);
+			ErrorObject->SetStringField(TEXT("message"), Message);
+			StructuredContent->SetObjectField(TEXT("error"), ErrorObject);
+		}
+
+		bool ActorToolIsContainerProperty(const FProperty* Property)
+		{
+			return Property
+				&& (Property->IsA<FArrayProperty>()
+					|| Property->IsA<FSetProperty>()
+					|| Property->IsA<FMapProperty>());
+		}
+
+		FString ActorToolGetPropertyTypeName(const FProperty* Property)
+		{
+			if (!Property)
+			{
+				return FString();
+			}
+
+			const FString CppType = Property->GetCPPType();
+			return CppType.IsEmpty() ? Property->GetClass()->GetName() : CppType;
+		}
+
+		AActor* ActorToolResolveActorPathOrLabel(
+			UEditorActorSubsystem* EditorActorSubsystem,
+			const FString& ActorPathOrLabel,
+			FString& OutFailureReason)
+		{
+			OutFailureReason.Reset();
+
+			if (!EditorActorSubsystem)
+			{
+				OutFailureReason = TEXT("EditorActorSubsystem is unavailable.");
+				return nullptr;
+			}
+
+			const FString RequestedActor = ActorPathOrLabel.TrimStartAndEnd();
+			if (RequestedActor.IsEmpty())
+			{
+				OutFailureReason = TEXT("actorPath is required.");
+				return nullptr;
+			}
+
+			const TArray<AActor*> AllActors = EditorActorSubsystem->GetAllLevelActors();
+			for (AActor* Actor : AllActors)
+			{
+				if (Actor && Actor->GetPathName().Equals(RequestedActor, ESearchCase::IgnoreCase))
+				{
+					return Actor;
+				}
+			}
+
+			AActor* LabelMatch = nullptr;
+			for (AActor* Actor : AllActors)
+			{
+				if (!Actor || !Actor->GetActorLabel().Equals(RequestedActor, ESearchCase::IgnoreCase))
+				{
+					continue;
+				}
+
+				if (LabelMatch)
+				{
+					OutFailureReason = FString::Printf(TEXT("Multiple actors matched actorPath label '%s'. Use the unique actor path instead."), *RequestedActor);
+					return nullptr;
+				}
+
+				LabelMatch = Actor;
+			}
+
+			if (LabelMatch)
+			{
+				return LabelMatch;
+			}
+
+			AActor* NameMatch = nullptr;
+			for (AActor* Actor : AllActors)
+			{
+				if (!Actor || !Actor->GetName().Equals(RequestedActor, ESearchCase::IgnoreCase))
+				{
+					continue;
+				}
+
+				if (NameMatch)
+				{
+					OutFailureReason = FString::Printf(TEXT("Multiple actors matched actorPath name '%s'. Use the unique actor path instead."), *RequestedActor);
+					return nullptr;
+				}
+
+				NameMatch = Actor;
+			}
+
+			if (NameMatch)
+			{
+				return NameMatch;
+			}
+
+			OutFailureReason = FString::Printf(TEXT("No actor matched actorPath '%s'."), *RequestedActor);
+			return nullptr;
+		}
+
+		FUnrealMcpExecutionResult ActorToolMakeReadbackError(
+			const FString& Text,
+			const FString& Code,
+			const FString& Message,
+			const FString& ActorPath,
+			const FString& PropertyName = FString())
+		{
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("actorPath"), ActorPath);
+			if (!PropertyName.IsEmpty())
+			{
+				StructuredContent->SetStringField(TEXT("propertyName"), PropertyName);
+			}
+			ActorToolAttachError(StructuredContent, Code, Message);
+			return ActorToolMakeExecutionResult(Text, StructuredContent, true);
 		}
 
 		FString ActorToolDescribeActor(AActor* Actor)
@@ -649,6 +786,111 @@ namespace UnrealMcp
 			}
 
 			return ActorToolMakeExecutionResult(Text, StructuredContent, false);
+		}
+
+		FUnrealMcpExecutionResult ExecuteActorGetProperty(const FJsonObject& Arguments)
+		{
+			FString ActorPath;
+			FString PropertyName;
+			Arguments.TryGetStringField(TEXT("actorPath"), ActorPath);
+			Arguments.TryGetStringField(TEXT("propertyName"), PropertyName);
+			ActorPath = ActorPath.TrimStartAndEnd();
+			PropertyName = PropertyName.TrimStartAndEnd();
+
+			UEditorActorSubsystem* EditorActorSubsystem = ActorToolGetEditorActorSubsystem();
+			FString FailureReason;
+			AActor* Actor = ActorToolResolveActorPathOrLabel(EditorActorSubsystem, ActorPath, FailureReason);
+			if (!Actor)
+			{
+				const FString Message = FailureReason.IsEmpty() ? TEXT("Actor was not found.") : FailureReason;
+				return ActorToolMakeReadbackError(Message, TEXT("ACTOR_NOT_FOUND"), Message, ActorPath, PropertyName);
+			}
+
+			if (PropertyName.IsEmpty())
+			{
+				const FString Message = TEXT("propertyName is required.");
+				return ActorToolMakeReadbackError(Message, TEXT("PROPERTY_NOT_FOUND"), Message, ActorPath, PropertyName);
+			}
+
+			UObject* OwnerObject = nullptr;
+			FProperty* LeafProperty = nullptr;
+			FProperty* NotifyProperty = nullptr;
+			void* ValuePtr = nullptr;
+			if (!ResolveObjectPropertyPath(Actor, PropertyName, OwnerObject, LeafProperty, NotifyProperty, ValuePtr, FailureReason))
+			{
+				const FString Message = FailureReason.IsEmpty()
+					? FString::Printf(TEXT("Property '%s' was not found on actor '%s'."), *PropertyName, *Actor->GetActorLabel())
+					: FailureReason;
+				return ActorToolMakeReadbackError(Message, TEXT("PROPERTY_NOT_FOUND"), Message, ActorPath, PropertyName);
+			}
+
+			const TSharedPtr<FJsonValue> JsonValue = PropertyValueToJson(LeafProperty, ValuePtr);
+			if (!JsonValue.IsValid())
+			{
+				const FString Message = FString::Printf(TEXT("Property '%s' could not be serialized."), *PropertyName);
+				return ActorToolMakeReadbackError(Message, TEXT("UNSUPPORTED_PROPERTY_TYPE"), Message, ActorPath, PropertyName);
+			}
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("actorPath"), ActorPath);
+			StructuredContent->SetStringField(TEXT("propertyName"), PropertyName);
+			StructuredContent->SetStringField(TEXT("propertyType"), ActorToolGetPropertyTypeName(LeafProperty));
+			StructuredContent->SetField(TEXT("value"), JsonValue);
+			StructuredContent->SetBoolField(TEXT("isContainer"), ActorToolIsContainerProperty(LeafProperty));
+
+			return ActorToolMakeExecutionResult(
+				FString::Printf(TEXT("Read property '%s' from actor '%s'."), *PropertyName, *Actor->GetActorLabel()),
+				StructuredContent,
+				false);
+		}
+
+		FUnrealMcpExecutionResult ExecuteActorGetTransform(const FJsonObject& Arguments)
+		{
+			FString ActorPath;
+			FString Space = TEXT("world");
+			Arguments.TryGetStringField(TEXT("actorPath"), ActorPath);
+			Arguments.TryGetStringField(TEXT("space"), Space);
+			ActorPath = ActorPath.TrimStartAndEnd();
+			Space = Space.TrimStartAndEnd().ToLower();
+			if (Space.IsEmpty())
+			{
+				Space = TEXT("world");
+			}
+
+			if (Space != TEXT("world") && Space != TEXT("relative"))
+			{
+				const FString Message = FString::Printf(TEXT("Invalid transform space '%s'. Use 'world' or 'relative'."), *Space);
+				return ActorToolMakeReadbackError(Message, TEXT("INVALID_SPACE"), Message, ActorPath);
+			}
+
+			UEditorActorSubsystem* EditorActorSubsystem = ActorToolGetEditorActorSubsystem();
+			FString FailureReason;
+			AActor* Actor = ActorToolResolveActorPathOrLabel(EditorActorSubsystem, ActorPath, FailureReason);
+			if (!Actor)
+			{
+				const FString Message = FailureReason.IsEmpty() ? TEXT("Actor was not found.") : FailureReason;
+				return ActorToolMakeReadbackError(Message, TEXT("ACTOR_NOT_FOUND"), Message, ActorPath);
+			}
+
+			const bool bRelative = Space == TEXT("relative");
+			const FTransform Transform = bRelative && Actor->GetRootComponent()
+				? Actor->GetRootComponent()->GetRelativeTransform()
+				: Actor->GetActorTransform();
+			const FRotator Rotation = Transform.GetRotation().Rotator();
+			AActor* ParentActor = Actor->GetAttachParentActor();
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("actorPath"), ActorPath);
+			StructuredContent->SetStringField(TEXT("space"), Space);
+			StructuredContent->SetObjectField(TEXT("location"), ActorToolMakeVectorObject(Transform.GetLocation()));
+			StructuredContent->SetObjectField(TEXT("rotation"), ActorToolMakeRotatorObject(Rotation));
+			StructuredContent->SetObjectField(TEXT("scale"), ActorToolMakeVectorObject(Transform.GetScale3D()));
+			StructuredContent->SetStringField(TEXT("parentActorPath"), ParentActor ? ParentActor->GetPathName() : FString());
+
+			return ActorToolMakeExecutionResult(
+				FString::Printf(TEXT("Read %s transform for actor '%s'."), *Space, *Actor->GetActorLabel()),
+				StructuredContent,
+				false);
 		}
 
 		FUnrealMcpExecutionResult ExecuteSetActorTransform(const FString& ToolName, const FJsonObject& Arguments)
@@ -2269,6 +2511,18 @@ namespace UnrealMcp
 		if (ToolName == TEXT("unreal.select_actors"))
 		{
 			OutResult = ExecuteSelectActors(ToolName, Arguments);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.actor_get_property"))
+		{
+			OutResult = ExecuteActorGetProperty(Arguments);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.actor_get_transform"))
+		{
+			OutResult = ExecuteActorGetTransform(Arguments);
 			return true;
 		}
 

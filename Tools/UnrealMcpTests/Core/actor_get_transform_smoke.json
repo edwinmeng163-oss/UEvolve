@@ -1,0 +1,25 @@
+{
+  "name": "actor_get_transform_smoke",
+  "description": "Read the sample map Cube actor world transform without mutating editor state.",
+  "category": "happy_path",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": false,
+  "expectToolCallStructuredFields": {
+    "actorPath": "Cube",
+    "space": "world",
+    "parentActorPath": ""
+  },
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 131,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.actor_get_transform",
+      "arguments": {
+        "actorPath": "Cube",
+        "space": "world"
+      }
+    }
+  }
+}

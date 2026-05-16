@@ -62,6 +62,29 @@ namespace UnrealMcp
 					TEXT("UnrealMcpEditorEngineVersionTool.cpp")),
 				MakeObjectSchema());
 
+			{
+				TSharedPtr<FJsonObject> Properties = MakeShared<FJsonObject>();
+				Properties->SetObjectField(TEXT("category"), MakeStringProperty(TEXT("Project settings category: engine, editor, game, input, rendering, or physics."), TEXT("engine")));
+				Properties->SetObjectField(TEXT("key"), MakeStringProperty(TEXT("Project settings key or dot-path inside the category, for example DefaultGameMode, DefaultInputAxisMappings, or DefaultRHI."), FString()));
+				TArray<TSharedPtr<FJsonValue>> Required;
+				Required.Add(MakeShared<FJsonValueString>(TEXT("category")));
+				Required.Add(MakeShared<FJsonValueString>(TEXT("key")));
+				TSharedPtr<FJsonObject> Schema = MakeObjectSchema();
+				Schema->SetObjectField(TEXT("properties"), Properties);
+				Schema->SetArrayField(TEXT("required"), Required);
+
+				FUnrealMcpToolDescriptor Descriptor = MakeDescriptor(
+					TEXT("unreal.project_settings_get"),
+					TEXT("Get Project Setting"),
+					TEXT("Reads a single project-settings key from a supported UDeveloperSettings object or config-backed category."),
+					TEXT("editor"),
+					TEXT("UnrealMcpEditorTools.cpp"),
+					EUnrealMcpToolRisk::Low);
+				Descriptor.TestCoverage = EUnrealMcpToolTestCoverage::Core;
+				Descriptor.Reason = TEXT("Descriptor: read-only project settings inspector for v0.15 C++ readback coverage.");
+				Registrar.Add(Descriptor, Schema);
+			}
+
 			Registrar.Add(
 				MakeDescriptor(
 					TEXT("unreal.list_maps"),
@@ -83,6 +106,51 @@ namespace UnrealMcp
 
 		void RegisterActorMcpToolDescriptors(FUnrealMcpToolRegistrar& Registrar)
 		{
+			{
+				TSharedPtr<FJsonObject> Properties = MakeShared<FJsonObject>();
+				Properties->SetObjectField(TEXT("actorPath"), MakeStringProperty(TEXT("Full actor label, actor name, or unique actor path to inspect."), FString()));
+				Properties->SetObjectField(TEXT("propertyName"), MakeStringProperty(TEXT("UProperty name or dot-path, for example bHidden, Tags, or StaticMeshComponent.StaticMesh."), FString()));
+				TArray<TSharedPtr<FJsonValue>> Required;
+				Required.Add(MakeShared<FJsonValueString>(TEXT("actorPath")));
+				Required.Add(MakeShared<FJsonValueString>(TEXT("propertyName")));
+				TSharedPtr<FJsonObject> Schema = MakeObjectSchema();
+				Schema->SetObjectField(TEXT("properties"), Properties);
+				Schema->SetArrayField(TEXT("required"), Required);
+
+				FUnrealMcpToolDescriptor Descriptor = MakeDescriptor(
+					TEXT("unreal.actor_get_property"),
+					TEXT("Get Actor Property"),
+					TEXT("Reads a single UProperty value from a named actor, including supported dot-paths through struct or object properties."),
+					TEXT("actors"),
+					TEXT("UnrealMcpActorTools.cpp"),
+					EUnrealMcpToolRisk::Low);
+				Descriptor.TestCoverage = EUnrealMcpToolTestCoverage::Core;
+				Descriptor.Reason = TEXT("Descriptor: read-only actor property inspector for v0.15 C++ readback coverage.");
+				Registrar.Add(Descriptor, Schema);
+			}
+
+			{
+				TSharedPtr<FJsonObject> Properties = MakeShared<FJsonObject>();
+				Properties->SetObjectField(TEXT("actorPath"), MakeStringProperty(TEXT("Full actor label, actor name, or unique actor path to inspect."), FString()));
+				Properties->SetObjectField(TEXT("space"), MakeStringProperty(TEXT("Transform space to read: world or relative."), TEXT("world")));
+				TArray<TSharedPtr<FJsonValue>> Required;
+				Required.Add(MakeShared<FJsonValueString>(TEXT("actorPath")));
+				TSharedPtr<FJsonObject> Schema = MakeObjectSchema();
+				Schema->SetObjectField(TEXT("properties"), Properties);
+				Schema->SetArrayField(TEXT("required"), Required);
+
+				FUnrealMcpToolDescriptor Descriptor = MakeDescriptor(
+					TEXT("unreal.actor_get_transform"),
+					TEXT("Get Actor Transform"),
+					TEXT("Reads an actor transform in world or relative space without mutating editor state."),
+					TEXT("actors"),
+					TEXT("UnrealMcpActorTools.cpp"),
+					EUnrealMcpToolRisk::Low);
+				Descriptor.TestCoverage = EUnrealMcpToolTestCoverage::Core;
+				Descriptor.Reason = TEXT("Descriptor: read-only actor transform inspector for v0.15 C++ readback coverage.");
+				Registrar.Add(Descriptor, Schema);
+			}
+
 			Registrar.Add(
 				MakeDescriptor(
 					TEXT("unreal.list_selected_actors"),

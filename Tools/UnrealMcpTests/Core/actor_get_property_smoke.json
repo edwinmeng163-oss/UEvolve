@@ -1,0 +1,26 @@
+{
+  "name": "actor_get_property_smoke",
+  "description": "Read a reflected property from the sample map Cube actor without mutating editor state.",
+  "category": "happy_path",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": false,
+  "expectToolCallStructuredFields": {
+    "actorPath": "Cube",
+    "propertyName": "bHidden",
+    "propertyType": "bool",
+    "isContainer": false
+  },
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 130,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.actor_get_property",
+      "arguments": {
+        "actorPath": "Cube",
+        "propertyName": "bHidden"
+      }
+    }
+  }
+}

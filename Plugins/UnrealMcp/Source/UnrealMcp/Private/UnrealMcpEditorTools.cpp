@@ -7,14 +7,17 @@
 #include "Dom/JsonValue.h"
 #include "Editor.h"
 #include "EditorScriptingHelpers.h"
+#include "Engine/RendererSettings.h"
 #include "Engine/World.h"
 #include "FileHelpers.h"
+#include "GameFramework/InputSettings.h"
 #include "GenericPlatform/GenericPlatformOutputDevices.h"
 #include "IContentBrowserSingleton.h"
 #include "IPythonScriptPlugin.h"
 #include "Logging/MessageLog.h"
 #include "Modules/ModuleManager.h"
 #include "Misc/App.h"
+#include "Misc/ConfigCacheIni.h"
 #include "Misc/EngineVersion.h"
 #include "Misc/FileHelper.h"
 #include "Misc/OutputDevice.h"
@@ -26,6 +29,7 @@
 #include "UnrealMcpEngineCompat.h"
 #include "UnrealMcpModule.h"
 #include "UnrealMcpSettings.h"
+#include "UObject/UnrealType.h"
 
 namespace UnrealMcp
 {
@@ -36,10 +40,137 @@ namespace UnrealMcp
 	TArray<FAssetData> GetSelectedAssets();
 	TSharedPtr<FJsonObject> MakeAssetObject(const FAssetData& Asset);
 	FString DescribeAsset(const FAssetData& Asset);
+	bool ResolveObjectPropertyPath(
+		UObject* RootObject,
+		const FString& PropertyPath,
+		UObject*& OutOwnerObject,
+		FProperty*& OutLeafProperty,
+		FProperty*& OutNotifyProperty,
+		void*& OutValuePtr,
+		FString& OutFailureReason);
+	TSharedPtr<FJsonValue> PropertyValueToJson(FProperty* Property, const void* ValuePtr);
 
 	namespace
 	{
 		static constexpr int32 EditorToolDefaultListLimit = 200;
+
+		void EditorToolAttachError(TSharedPtr<FJsonObject> StructuredContent, const FString& Code, const FString& Message)
+		{
+			if (!StructuredContent.IsValid())
+			{
+				return;
+			}
+
+			TSharedPtr<FJsonObject> ErrorObject = MakeShared<FJsonObject>();
+			ErrorObject->SetStringField(TEXT("code"), Code);
+			ErrorObject->SetStringField(TEXT("message"), Message);
+			StructuredContent->SetObjectField(TEXT("error"), ErrorObject);
+		}
+
+		FUnrealMcpExecutionResult MakeProjectSettingsError(
+			const FString& Code,
+			const FString& Message,
+			const FString& Category,
+			const FString& Key,
+			const FString& SourceConfig = FString())
+		{
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("category"), Category);
+			StructuredContent->SetStringField(TEXT("key"), Key);
+			if (!SourceConfig.IsEmpty())
+			{
+				StructuredContent->SetStringField(TEXT("sourceConfig"), SourceConfig);
+			}
+			EditorToolAttachError(StructuredContent, Code, Message);
+			return MakeExecutionResult(Message, StructuredContent, true);
+		}
+
+		bool EditorToolIsContainerProperty(const FProperty* Property)
+		{
+			return Property
+				&& (Property->IsA<FArrayProperty>()
+					|| Property->IsA<FSetProperty>()
+					|| Property->IsA<FMapProperty>());
+		}
+
+		TArray<TSharedPtr<FJsonValue>> EditorToolMakeJsonStringArray(const TArray<FString>& Values)
+		{
+			TArray<TSharedPtr<FJsonValue>> JsonValues;
+			for (const FString& Value : Values)
+			{
+				JsonValues.Add(MakeShared<FJsonValueString>(Value));
+			}
+			return JsonValues;
+		}
+
+		void AddProjectSettingsSection(TArray<FString>& Sections, const FString& Section)
+		{
+			if (!Section.IsEmpty())
+			{
+				Sections.Add(Section);
+			}
+		}
+
+		FString NormalizeProjectSettingsKey(const FString& Category, const FString& Key, FString& OutNotes)
+		{
+			OutNotes.Reset();
+
+			if (Category == TEXT("input"))
+			{
+				if (Key.Equals(TEXT("DefaultInputAxisMappings"), ESearchCase::IgnoreCase))
+				{
+					OutNotes = TEXT("Resolved DefaultInputAxisMappings to UInputSettings.AxisMappings.");
+					return TEXT("AxisMappings");
+				}
+				if (Key.Equals(TEXT("DefaultInputActionMappings"), ESearchCase::IgnoreCase))
+				{
+					OutNotes = TEXT("Resolved DefaultInputActionMappings to UInputSettings.ActionMappings.");
+					return TEXT("ActionMappings");
+				}
+			}
+
+			if (Category == TEXT("game") && Key.Equals(TEXT("DefaultGameMode"), ESearchCase::IgnoreCase))
+			{
+				OutNotes = TEXT("Resolved DefaultGameMode to GameMapsSettings.GlobalDefaultGameMode.");
+				return TEXT("GlobalDefaultGameMode");
+			}
+
+			return Key;
+		}
+
+		bool TryReadConfigSetting(
+			const FString& ConfigFilename,
+			const TArray<FString>& Sections,
+			const FString& Key,
+			TSharedPtr<FJsonValue>& OutValue,
+			FString& OutSection)
+		{
+			if (!GConfig || ConfigFilename.IsEmpty() || Key.IsEmpty())
+			{
+				return false;
+			}
+
+			for (const FString& Section : Sections)
+			{
+				FString StringValue;
+				if (GConfig->GetString(*Section, *Key, StringValue, ConfigFilename))
+				{
+					OutValue = MakeShared<FJsonValueString>(StringValue);
+					OutSection = Section;
+					return true;
+				}
+
+				TArray<FString> ArrayValues;
+				if (GConfig->GetArray(*Section, *Key, ArrayValues, ConfigFilename) > 0)
+				{
+					OutValue = MakeShared<FJsonValueArray>(EditorToolMakeJsonStringArray(ArrayValues));
+					OutSection = Section;
+					return true;
+				}
+			}
+
+			return false;
+		}
 
 		FUnrealMcpExecutionResult ExecuteEditorStatus()
 		{
@@ -81,6 +212,147 @@ namespace UnrealMcp
 				*EndpointUrl);
 
 			return MakeExecutionResult(Text, StructuredContent, false);
+		}
+
+		FUnrealMcpExecutionResult ExecuteProjectSettingsGet(const FJsonObject& Arguments)
+		{
+			FString Category;
+			FString Key;
+			Arguments.TryGetStringField(TEXT("category"), Category);
+			Arguments.TryGetStringField(TEXT("key"), Key);
+			Category = Category.TrimStartAndEnd().ToLower();
+			Key = Key.TrimStartAndEnd();
+
+			if (Key.IsEmpty())
+			{
+				return MakeProjectSettingsError(TEXT("KEY_NOT_FOUND"), TEXT("key is required."), Category, Key);
+			}
+
+			UObject* SettingsObject = nullptr;
+			FString SourceConfig;
+			FString ConfigFilename;
+			TArray<FString> ConfigSections;
+
+			if (Category == TEXT("input"))
+			{
+				SettingsObject = GetMutableDefault<UInputSettings>();
+				SourceConfig = TEXT("DefaultInput.ini");
+				ConfigFilename = GInputIni;
+				AddProjectSettingsSection(ConfigSections, TEXT("/Script/Engine.InputSettings"));
+			}
+			else if (Category == TEXT("rendering"))
+			{
+				SettingsObject = GetMutableDefault<URendererSettings>();
+				SourceConfig = TEXT("DefaultEngine.ini");
+				ConfigFilename = GEngineIni;
+				AddProjectSettingsSection(ConfigSections, TEXT("/Script/Engine.RendererSettings"));
+				AddProjectSettingsSection(ConfigSections, TEXT("/Script/WindowsTargetPlatform.WindowsTargetSettings"));
+				AddProjectSettingsSection(ConfigSections, TEXT("/Script/MacTargetPlatform.MacTargetSettings"));
+				AddProjectSettingsSection(ConfigSections, TEXT("/Script/LinuxTargetPlatform.LinuxTargetSettings"));
+			}
+			else if (Category == TEXT("game"))
+			{
+				SourceConfig = TEXT("DefaultEngine.ini");
+				ConfigFilename = GEngineIni;
+				AddProjectSettingsSection(ConfigSections, TEXT("/Script/EngineSettings.GameMapsSettings"));
+			}
+			else if (Category == TEXT("engine"))
+			{
+				SourceConfig = TEXT("DefaultEngine.ini");
+				ConfigFilename = GEngineIni;
+				AddProjectSettingsSection(ConfigSections, TEXT("/Script/Engine.Engine"));
+				AddProjectSettingsSection(ConfigSections, TEXT("/Script/EngineSettings.GameMapsSettings"));
+				AddProjectSettingsSection(ConfigSections, TEXT("/Script/Engine.RendererSettings"));
+				AddProjectSettingsSection(ConfigSections, TEXT("/Script/WindowsTargetPlatform.WindowsTargetSettings"));
+				AddProjectSettingsSection(ConfigSections, TEXT("/Script/MacTargetPlatform.MacTargetSettings"));
+				AddProjectSettingsSection(ConfigSections, TEXT("/Script/LinuxTargetPlatform.LinuxTargetSettings"));
+			}
+			else if (Category == TEXT("editor"))
+			{
+				SourceConfig = TEXT("DefaultEditor.ini");
+				ConfigFilename = GEditorIni;
+				AddProjectSettingsSection(ConfigSections, TEXT("/Script/UnrealEd.EditorLoadingSavingSettings"));
+				AddProjectSettingsSection(ConfigSections, TEXT("/Script/UnrealEd.LevelEditorViewportSettings"));
+				AddProjectSettingsSection(ConfigSections, TEXT("/Script/UnrealEd.EditorPerformanceSettings"));
+				AddProjectSettingsSection(ConfigSections, TEXT("/Script/UnrealEd.EditorExperimentalSettings"));
+			}
+			else if (Category == TEXT("physics"))
+			{
+				SourceConfig = TEXT("DefaultEngine.ini");
+				ConfigFilename = GEngineIni;
+				AddProjectSettingsSection(ConfigSections, TEXT("/Script/Engine.PhysicsSettings"));
+				AddProjectSettingsSection(ConfigSections, TEXT("/Script/PhysicsCore.PhysicsSettings"));
+			}
+			else
+			{
+				const FString Message = FString::Printf(TEXT("Unknown project settings category '%s'."), *Category);
+				return MakeProjectSettingsError(TEXT("UNKNOWN_CATEGORY"), Message, Category, Key);
+			}
+
+			FString Notes;
+			const FString LookupKey = NormalizeProjectSettingsKey(Category, Key, Notes);
+
+			if (SettingsObject)
+			{
+				UObject* OwnerObject = nullptr;
+				FProperty* LeafProperty = nullptr;
+				FProperty* NotifyProperty = nullptr;
+				void* ValuePtr = nullptr;
+				FString FailureReason;
+				if (ResolveObjectPropertyPath(SettingsObject, LookupKey, OwnerObject, LeafProperty, NotifyProperty, ValuePtr, FailureReason))
+				{
+					const TSharedPtr<FJsonValue> JsonValue = PropertyValueToJson(LeafProperty, ValuePtr);
+					if (!JsonValue.IsValid())
+					{
+						const FString Message = FString::Printf(TEXT("Failed to serialize project setting '%s': unsupported property type."), *Key);
+						return MakeProjectSettingsError(TEXT("READ_FAILED"), Message, Category, Key, SourceConfig);
+					}
+
+					TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+					StructuredContent->SetStringField(TEXT("category"), Category);
+					StructuredContent->SetStringField(TEXT("key"), Key);
+					StructuredContent->SetField(TEXT("value"), JsonValue);
+					StructuredContent->SetStringField(TEXT("sourceConfig"), SourceConfig);
+					if (!Notes.IsEmpty())
+					{
+						StructuredContent->SetStringField(TEXT("notes"), Notes);
+					}
+					if (EditorToolIsContainerProperty(LeafProperty) && Notes.IsEmpty())
+					{
+						StructuredContent->SetStringField(TEXT("notes"), TEXT("Value serialized from a container UDeveloperSettings property."));
+					}
+
+					return MakeExecutionResult(
+						FString::Printf(TEXT("Read project setting %s.%s from %s."), *Category, *Key, *SourceConfig),
+						StructuredContent,
+						false);
+				}
+			}
+
+			TSharedPtr<FJsonValue> ConfigValue;
+			FString SourceSection;
+			if (TryReadConfigSetting(ConfigFilename, ConfigSections, LookupKey, ConfigValue, SourceSection) && ConfigValue.IsValid())
+			{
+				TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+				StructuredContent->SetStringField(TEXT("category"), Category);
+				StructuredContent->SetStringField(TEXT("key"), Key);
+				StructuredContent->SetField(TEXT("value"), ConfigValue);
+				StructuredContent->SetStringField(TEXT("sourceConfig"), SourceConfig);
+				FString ConfigNotes = FString::Printf(TEXT("Read config key '%s' from section '%s'."), *LookupKey, *SourceSection);
+				if (!Notes.IsEmpty())
+				{
+					ConfigNotes = Notes + TEXT(" ") + ConfigNotes;
+				}
+				StructuredContent->SetStringField(TEXT("notes"), ConfigNotes);
+
+				return MakeExecutionResult(
+					FString::Printf(TEXT("Read project setting %s.%s from %s."), *Category, *Key, *SourceConfig),
+					StructuredContent,
+					false);
+			}
+
+			const FString Message = FString::Printf(TEXT("Project setting key '%s' was not found in category '%s'."), *Key, *Category);
+			return MakeProjectSettingsError(TEXT("KEY_NOT_FOUND"), Message, Category, Key, SourceConfig);
 		}
 
 		FUnrealMcpExecutionResult ExecuteTailLog(const FJsonObject& Arguments)
@@ -1018,6 +1290,12 @@ namespace UnrealMcp
 		if (ToolName == TEXT("unreal.editor.engine_version"))
 		{
 			OutResult = ExecuteEditorEngineVersion();
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.project_settings_get"))
+		{
+			OutResult = ExecuteProjectSettingsGet(Arguments);
 			return true;
 		}
 

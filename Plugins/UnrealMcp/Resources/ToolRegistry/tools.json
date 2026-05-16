@@ -2727,6 +2727,333 @@
         ]
       },
       "notes": "Read-only canonical first Python-track smoke tool; use to verify PythonScriptPlugin bridge execution and handler hash enforcement."
+    },
+    {
+      "name": "unreal.actor_get_property",
+      "category": "actors",
+      "handlerName": "unreal.actor_get_property",
+      "title": "Get Actor Property",
+      "description": "Reads a single UProperty value from a named actor, including supported dot-paths through struct or object properties.",
+      "exposure": "visible",
+      "riskLevel": "low",
+      "requiresWrite": false,
+      "requiresBuild": false,
+      "requiresExternalProcess": false,
+      "requiresRestart": false,
+      "requiresProjectMemory": false,
+      "requiresLock": false,
+      "dryRunSupport": false,
+      "preflightSupport": false,
+      "postcheckSupport": false,
+      "testCoverage": "core",
+      "owner": "UEvolve Core",
+      "docsPath": "README.md#tool-coverage",
+      "reason": "v0.15 chunk 1 C++ readback inspector: read-only actor property access closes the get/inspect gap without Python.",
+      "summaryTemplate": "Read actor property {args.propertyName} from {args.actorPath}",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "actorPath",
+          "propertyName"
+        ],
+        "properties": {
+          "actorPath": {
+            "type": "string",
+            "description": "Full actor label, actor name, or unique actor path to inspect."
+          },
+          "propertyName": {
+            "type": "string",
+            "description": "UProperty name or dot-path, for example bHidden, Tags, or StaticMeshComponent.StaticMesh."
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "actorPath",
+          "propertyName",
+          "propertyType",
+          "value",
+          "isContainer"
+        ],
+        "properties": {
+          "actorPath": {
+            "type": "string"
+          },
+          "propertyName": {
+            "type": "string"
+          },
+          "propertyType": {
+            "type": "string"
+          },
+          "value": {
+            "description": "Serialized property value."
+          },
+          "isContainer": {
+            "type": "boolean"
+          },
+          "notes": {
+            "type": "string"
+          },
+          "error": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "notes": "C++ only. Supports dot notation through reflected struct and object properties; unsupported values fall back to exported text where possible."
+    },
+    {
+      "name": "unreal.actor_get_transform",
+      "category": "actors",
+      "handlerName": "unreal.actor_get_transform",
+      "title": "Get Actor Transform",
+      "description": "Reads an actor transform in world or relative space without mutating editor state.",
+      "exposure": "visible",
+      "riskLevel": "low",
+      "requiresWrite": false,
+      "requiresBuild": false,
+      "requiresExternalProcess": false,
+      "requiresRestart": false,
+      "requiresProjectMemory": false,
+      "requiresLock": false,
+      "dryRunSupport": false,
+      "preflightSupport": false,
+      "postcheckSupport": false,
+      "testCoverage": "core",
+      "owner": "UEvolve Core",
+      "docsPath": "README.md#tool-coverage",
+      "reason": "v0.15 chunk 1 C++ readback inspector: read-only actor transform access closes the get/inspect gap without Python.",
+      "summaryTemplate": "Read {args.space} transform for {args.actorPath}",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "actorPath"
+        ],
+        "properties": {
+          "actorPath": {
+            "type": "string",
+            "description": "Full actor label, actor name, or unique actor path to inspect."
+          },
+          "space": {
+            "type": "string",
+            "description": "Transform space to read.",
+            "enum": [
+              "world",
+              "relative"
+            ],
+            "default": "world"
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "actorPath",
+          "space",
+          "location",
+          "rotation",
+          "scale",
+          "parentActorPath"
+        ],
+        "properties": {
+          "actorPath": {
+            "type": "string"
+          },
+          "space": {
+            "type": "string"
+          },
+          "location": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "x",
+              "y",
+              "z"
+            ],
+            "properties": {
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              },
+              "z": {
+                "type": "number"
+              }
+            }
+          },
+          "rotation": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "pitch",
+              "yaw",
+              "roll"
+            ],
+            "properties": {
+              "pitch": {
+                "type": "number"
+              },
+              "yaw": {
+                "type": "number"
+              },
+              "roll": {
+                "type": "number"
+              }
+            }
+          },
+          "scale": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "x",
+              "y",
+              "z"
+            ],
+            "properties": {
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              },
+              "z": {
+                "type": "number"
+              }
+            }
+          },
+          "parentActorPath": {
+            "type": "string"
+          },
+          "error": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "notes": "C++ only. Reads during PIE because it does not mutate editor or world state."
+    },
+    {
+      "name": "unreal.project_settings_get",
+      "category": "editor",
+      "handlerName": "unreal.project_settings_get",
+      "title": "Get Project Setting",
+      "description": "Reads a single project-settings key from a supported UDeveloperSettings object or config-backed category.",
+      "exposure": "visible",
+      "riskLevel": "low",
+      "requiresWrite": false,
+      "requiresBuild": false,
+      "requiresExternalProcess": false,
+      "requiresRestart": false,
+      "requiresProjectMemory": false,
+      "requiresLock": false,
+      "dryRunSupport": false,
+      "preflightSupport": false,
+      "postcheckSupport": false,
+      "testCoverage": "core",
+      "owner": "UEvolve Core",
+      "docsPath": "README.md#tool-coverage",
+      "reason": "v0.15 chunk 1 C++ readback inspector: read-only project settings access closes the get/inspect gap without Python.",
+      "summaryTemplate": "Read project setting {args.category}.{args.key}",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "key"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "description": "Project settings category.",
+            "enum": [
+              "engine",
+              "editor",
+              "game",
+              "input",
+              "rendering",
+              "physics"
+            ]
+          },
+          "key": {
+            "type": "string",
+            "description": "Project settings key or dot-path inside the category, for example DefaultGameMode, DefaultInputAxisMappings, or DefaultRHI."
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "key",
+          "value",
+          "sourceConfig"
+        ],
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "value": {
+            "description": "Serialized settings value."
+          },
+          "sourceConfig": {
+            "type": "string"
+          },
+          "notes": {
+            "type": "string"
+          },
+          "error": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "notes": "C++ only. MVP maps common categories to UInputSettings, URendererSettings, and hardcoded config sections, returning KEY_NOT_FOUND for unsupported edge cases."
     }
   ]
 }

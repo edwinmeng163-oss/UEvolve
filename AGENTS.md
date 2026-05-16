@@ -230,6 +230,7 @@ Editor and inspection:
 
 - `unreal.editor_status`
 - `unreal.editor.engine_version`
+- `unreal.project_settings_get`
 - `unreal.tail_log`
 - `unreal.map_check`
 - map, asset, selected asset, actor, and selected actor listing
@@ -242,6 +243,8 @@ Editor and inspection:
 
 Actor tools:
 
+- read actor property and transform state with `unreal.actor_get_property` and
+  `unreal.actor_get_transform`
 - select actors
 - set transforms
 - spawn actors with fixed schemas
@@ -353,7 +356,7 @@ Tools/UnrealMcpToolRegistry/schema.json
 Schemas/UnrealMcpToolRegistry.schema.json
 ```
 
-At the time this file was written, the registry contained 119 entries across:
+At the time this file was written, the registry contained 123 entries across:
 
 - actors
 - blueprint
@@ -363,6 +366,15 @@ At the time this file was written, the registry contained 119 entries across:
 - self-extension
 - skills
 - widget
+
+This count includes the v0.14 Python runtime smoke tool plus the three v0.15
+chunk 1 C++ readback inspectors: `unreal.actor_get_property`,
+`unreal.actor_get_transform`, and `unreal.project_settings_get`. Earlier
+handoff text lagged at 119 entries.
+
+Current project status: v0.15 chunk 1 landed. The previous Lane V
+get/inspect-tool gap for actor property, actor transform, and project settings
+readback is done in C++.
 
 `unreal.configure_fps_settings` and
 `unreal.bp_add_input_axis_event_node` were moved back to scaffold-only status
