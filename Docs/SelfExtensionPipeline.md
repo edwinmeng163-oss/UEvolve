@@ -11,7 +11,9 @@ The self-extension pipeline lets Unreal MCP add new MCP tools from inside Editor
 - `unreal.mcp_validate_cpp_patch`: static-check generated C++ patch fragments.
 - `unreal.mcp_patch_scaffold_patch`: edit scaffold patch fragments with dry run and backup.
 - `unreal.mcp_apply_scaffold`: apply `ToolRegistryPatch.json`, registrar descriptor, category handler, and dispatcher patches with dry run, backup, and idempotence checks.
-- `unreal.mcp_build_editor`: run UBT and parse build logs.
+- `unreal.mcp_build_editor`: run UBT for the editor target and parse build logs.
+- `unreal.mcp_build_game`, `unreal.mcp_build_server`, `unreal.mcp_build_client`: run UBT for non-editor target coverage and parse build logs.
+- `unreal.mcp_build_packaged`: run RunUAT BuildCookRun for cooked packaged output and parse UAT logs.
 - `unreal.mcp_run_tool_test`: run one generated test request.
 - `unreal.mcp_run_test_suite`: run a generated test directory.
 - `unreal.mcp_rollback_last_extension`: restore the latest apply backup.

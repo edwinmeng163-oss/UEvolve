@@ -92,6 +92,10 @@ Editor action tools:
 - `unreal.mcp_supervisor_install`
 - `unreal.mcp_generate_tests`
 - `unreal.mcp_build_editor`
+- `unreal.mcp_build_game`
+- `unreal.mcp_build_server`
+- `unreal.mcp_build_client`
+- `unreal.mcp_build_packaged`
 - `unreal.mcp_run_tool_test`
 - `unreal.mcp_run_test_suite`
 - `unreal.mcp_extension_pipeline`
@@ -502,7 +506,7 @@ Build the editor after applying patches:
 /tool unreal.mcp_build_editor {"toolName":"unreal.my_custom_tool","scaffoldDir":"Tools/UnrealMcpToolScaffolds/my_custom_tool","writeProjectMemory":true}
 ```
 
-`unreal.mcp_build_editor` captures UBT output under `Saved/UnrealMcp/BuildLogs`, parses success/failure plus key error lines, and writes a restart handoff memory entry. Since this command runs from an already-open editor, newly built plugin code still requires an Unreal Editor restart before fresh tools appear in `tools/list`.
+`unreal.mcp_build_editor`, `unreal.mcp_build_game`, `unreal.mcp_build_server`, and `unreal.mcp_build_client` capture UBT output under `Saved/UnrealMcp/BuildLogs`, parse success/failure plus key error lines, and write build status memory entries. `unreal.mcp_build_packaged` runs RunUAT BuildCookRun and writes packaged output under `Saved/StagedBuilds/<Platform>` or a project-local archive directory. Since the editor build command runs from an already-open editor, newly built plugin code still requires an Unreal Editor restart before fresh tools appear in `tools/list`.
 
 If the build fails, generate a fix plan:
 

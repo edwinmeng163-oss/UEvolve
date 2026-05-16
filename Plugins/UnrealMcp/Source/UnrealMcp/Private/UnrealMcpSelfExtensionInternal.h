@@ -79,6 +79,7 @@ namespace UnrealMcp
 	FUnrealMcpExecutionResult BackupProjectState(const FJsonObject& Arguments);
 	FUnrealMcpExecutionResult RollbackToManifest(const FJsonObject& Arguments);
 	FUnrealMcpExecutionResult BuildEditor(const FJsonObject& Arguments);
+	bool TryExecuteSelfExtensionBuildTool(const FString& ToolName, const FJsonObject& Arguments, FUnrealMcpExecutionResult& OutResult);
 	FUnrealMcpExecutionResult SupervisorInstall(const FJsonObject& Arguments);
 	FUnrealMcpExecutionResult ListMcpScaffolds(const FJsonObject& Arguments, const TArray<TSharedPtr<FJsonValue>>& ToolsArray);
 	FUnrealMcpExecutionResult InspectMcpScaffold(const FJsonObject& Arguments, const TArray<TSharedPtr<FJsonValue>>& ToolsArray);

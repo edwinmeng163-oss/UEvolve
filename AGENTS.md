@@ -294,7 +294,7 @@ Self-extension:
 - C++ patch validation
 - patch-fragment editing
 - scaffold apply with dry run, backup, manifest, and idempotence checks
-- build editor
+- build editor/game/server/client targets and packaged BuildCookRun
 - run one tool test or a suite
 - generate tests
 - pipeline orchestration/status
@@ -361,7 +361,7 @@ Tools/UnrealMcpToolRegistry/schema.json
 Schemas/UnrealMcpToolRegistry.schema.json
 ```
 
-At the time this file was written, the registry contained 132 entries across:
+At the time this file was written, the registry contained 136 entries across:
 
 - actors
 - blueprint
@@ -380,9 +380,13 @@ v0.15 chunk 2a C++ Blueprint refactor basics (`unreal.bp_delete_node`,
 `unreal.bp_rename_variable`, and `unreal.bp_rename_function`), and the four
 v0.15 chunk 2b Blueprint macro/interface tools (`unreal.bp_add_macro_graph`,
 `unreal.bp_delete_macro_graph`, `unreal.bp_interface_add`, and
-`unreal.bp_interface_remove`). Earlier handoff text lagged at 119 entries.
+`unreal.bp_interface_remove`), and the four v0.15 chunk 4 UBT target matrix
+tools (`unreal.mcp_build_game`, `unreal.mcp_build_server`,
+`unreal.mcp_build_client`, and `unreal.mcp_build_packaged`). Earlier handoff
+text lagged at 119 entries.
 
-Current project status: v0.15 chunk 3 landed; recipe catalog now lists 7 named
+Current project status: v0.15 chunk 4 landed; UBT target matrix is complete
+(editor + game + server + client + packaged), recipe catalog lists 7 named
 recipes, and Lane Z Blueprint refactor is complete. The previous Lane V
 get/inspect-tool gap for actor property, actor transform, and project settings
 readback is done in C++; Blueprint delete + rename basics are done in C++,

@@ -1,0 +1,16 @@
+{
+  "name": "mcp_build_game_smoke",
+  "description": "List-only smoke test for the standalone game UBT build tool.",
+  "category": "manual_smoke",
+  "expectToolListed": true,
+  "executeTool": false,
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 133,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.mcp_build_game",
+      "arguments": {}
+    }
+  }
+}

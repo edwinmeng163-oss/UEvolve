@@ -2,6 +2,7 @@
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
+#include "Misc/App.h"
 #include "UnrealMcpToolRegistry.h"
 
 namespace UnrealMcp
@@ -17,6 +18,7 @@ namespace UnrealMcp
 		const FString& Title,
 		const FString& Description,
 		const TSharedPtr<FJsonObject>& InputSchema);
+	FString GetHostBuildPlatformName();
 
 	namespace
 	{
@@ -40,6 +42,42 @@ namespace UnrealMcp
 			Descriptor.DocsPath = TEXT("README.md#tool-coverage");
 			Descriptor.Reason = TEXT("Code descriptor default; reviewed registry JSON may override exposure, risk, owner, docs, and test metadata.");
 			return Descriptor;
+		}
+
+		TSharedPtr<FJsonObject> MakeBuildTargetSchema(const FString& DefaultTarget, const FString& DefaultMemoryKey)
+		{
+			TSharedPtr<FJsonObject> Properties = MakeShared<FJsonObject>();
+			Properties->SetObjectField(TEXT("target"), MakeStringProperty(TEXT("UBT target to build."), DefaultTarget));
+			Properties->SetObjectField(TEXT("platform"), MakeStringProperty(TEXT("UBT platform. Empty/default uses the host editor platform."), GetHostBuildPlatformName()));
+			Properties->SetObjectField(TEXT("configuration"), MakeStringProperty(TEXT("UBT configuration."), TEXT("Development")));
+			Properties->SetObjectField(TEXT("extraArgs"), MakeStringProperty(TEXT("Optional additional UBT arguments appended to the build command."), FString()));
+			Properties->SetObjectField(TEXT("toolName"), MakeStringProperty(TEXT("Optional tool name to persist into project memory with the build result."), FString()));
+			Properties->SetObjectField(TEXT("testRequestPath"), MakeStringProperty(TEXT("Optional project-local TestRequest.json path to persist in project memory."), FString()));
+			Properties->SetObjectField(TEXT("testsDir"), MakeStringProperty(TEXT("Optional project-local Tests directory to persist in project memory."), FString()));
+			Properties->SetObjectField(TEXT("scaffoldDir"), MakeStringProperty(TEXT("Optional scaffold directory. If testRequestPath is empty, scaffoldDir/TestRequest.json is remembered."), FString()));
+			Properties->SetObjectField(TEXT("memoryKey"), MakeStringProperty(TEXT("Project memory key used for build status handoff."), DefaultMemoryKey));
+			Properties->SetObjectField(TEXT("writeProjectMemory"), MakeBoolProperty(TEXT("Whether to write build status before and after the build."), true));
+
+			TSharedPtr<FJsonObject> Schema = MakeObjectSchema();
+			Schema->SetObjectField(TEXT("properties"), Properties);
+			return Schema;
+		}
+
+		TSharedPtr<FJsonObject> MakePackagedBuildSchema()
+		{
+			TSharedPtr<FJsonObject> Properties = MakeShared<FJsonObject>();
+			Properties->SetObjectField(TEXT("platform"), MakeStringProperty(TEXT("Alias for targetPlatform. Empty/default uses the host editor platform."), GetHostBuildPlatformName()));
+			Properties->SetObjectField(TEXT("targetPlatform"), MakeStringProperty(TEXT("Target platform for BuildCookRun: Win64, Mac, Linux, Android, or IOS."), GetHostBuildPlatformName()));
+			Properties->SetObjectField(TEXT("configuration"), MakeStringProperty(TEXT("BuildCookRun configuration."), TEXT("Development")));
+			Properties->SetObjectField(TEXT("extraArgs"), MakeStringProperty(TEXT("Optional additional RunUAT arguments appended to the BuildCookRun command."), FString()));
+			Properties->SetObjectField(TEXT("outputDirectory"), MakeStringProperty(TEXT("Optional project-local archive directory. Defaults to Saved/StagedBuilds."), FString()));
+			Properties->SetObjectField(TEXT("map"), MakeStringProperty(TEXT("Optional single map to cook. If omitted, BuildCookRun uses configured maps to cook."), FString()));
+			Properties->SetObjectField(TEXT("memoryKey"), MakeStringProperty(TEXT("Project memory key used for packaged build status."), TEXT("mcp.extension.build_packaged")));
+			Properties->SetObjectField(TEXT("writeProjectMemory"), MakeBoolProperty(TEXT("Whether to write packaged build status before and after BuildCookRun."), true));
+
+			TSharedPtr<FJsonObject> Schema = MakeObjectSchema();
+			Schema->SetObjectField(TEXT("properties"), Properties);
+			return Schema;
 		}
 
 		void RegisterEditorMcpToolDescriptors(FUnrealMcpToolRegistrar& Registrar)
@@ -623,6 +661,70 @@ namespace UnrealMcp
 					TEXT("self-extension"),
 					TEXT("UnrealMcpSelfExtensionTools.cpp")),
 				WorkbenchSchema);
+
+			{
+				FUnrealMcpToolDescriptor Descriptor = MakeDescriptor(
+					TEXT("unreal.mcp_build_game"),
+					TEXT("Build Game Target"),
+					TEXT("Runs Unreal Build Tool for the standalone game target, captures logs, parses errors, and writes build status memory."),
+					TEXT("self-extension"),
+					TEXT("UnrealMcpSelfExtensionBuildTools.cpp"),
+					EUnrealMcpToolRisk::Medium);
+				Descriptor.bRequiresExternalProcess = true;
+				Descriptor.bRequiresProjectMemory = true;
+				Descriptor.bRequiresLock = true;
+				Descriptor.TestCoverage = EUnrealMcpToolTestCoverage::Manual;
+				Descriptor.Reason = TEXT("Descriptor: v0.15 chunk 4 UBT target matrix tool for standalone game compile coverage.");
+				Registrar.Add(Descriptor, MakeBuildTargetSchema(FApp::GetProjectName(), TEXT("mcp.extension.build_game")));
+			}
+
+			{
+				FUnrealMcpToolDescriptor Descriptor = MakeDescriptor(
+					TEXT("unreal.mcp_build_server"),
+					TEXT("Build Server Target"),
+					TEXT("Runs Unreal Build Tool for the dedicated-server target, captures logs, parses errors, and writes build status memory."),
+					TEXT("self-extension"),
+					TEXT("UnrealMcpSelfExtensionBuildTools.cpp"),
+					EUnrealMcpToolRisk::Medium);
+				Descriptor.bRequiresExternalProcess = true;
+				Descriptor.bRequiresProjectMemory = true;
+				Descriptor.bRequiresLock = true;
+				Descriptor.TestCoverage = EUnrealMcpToolTestCoverage::Manual;
+				Descriptor.Reason = TEXT("Descriptor: v0.15 chunk 4 UBT target matrix tool for dedicated-server compile coverage.");
+				Registrar.Add(Descriptor, MakeBuildTargetSchema(FString::Printf(TEXT("%sServer"), FApp::GetProjectName()), TEXT("mcp.extension.build_server")));
+			}
+
+			{
+				FUnrealMcpToolDescriptor Descriptor = MakeDescriptor(
+					TEXT("unreal.mcp_build_client"),
+					TEXT("Build Client Target"),
+					TEXT("Runs Unreal Build Tool for the dedicated-client target, captures logs, parses errors, and writes build status memory."),
+					TEXT("self-extension"),
+					TEXT("UnrealMcpSelfExtensionBuildTools.cpp"),
+					EUnrealMcpToolRisk::Medium);
+				Descriptor.bRequiresExternalProcess = true;
+				Descriptor.bRequiresProjectMemory = true;
+				Descriptor.bRequiresLock = true;
+				Descriptor.TestCoverage = EUnrealMcpToolTestCoverage::Manual;
+				Descriptor.Reason = TEXT("Descriptor: v0.15 chunk 4 UBT target matrix tool for dedicated-client compile coverage.");
+				Registrar.Add(Descriptor, MakeBuildTargetSchema(FString::Printf(TEXT("%sClient"), FApp::GetProjectName()), TEXT("mcp.extension.build_client")));
+			}
+
+			{
+				FUnrealMcpToolDescriptor Descriptor = MakeDescriptor(
+					TEXT("unreal.mcp_build_packaged"),
+					TEXT("Build Packaged Target"),
+					TEXT("Runs RunUAT BuildCookRun for a cooked packaged build under Saved/StagedBuilds or a project-local archive directory."),
+					TEXT("self-extension"),
+					TEXT("UnrealMcpSelfExtensionBuildTools.cpp"),
+					EUnrealMcpToolRisk::High);
+				Descriptor.bRequiresExternalProcess = true;
+				Descriptor.bRequiresProjectMemory = true;
+				Descriptor.bRequiresLock = true;
+				Descriptor.TestCoverage = EUnrealMcpToolTestCoverage::Manual;
+				Descriptor.Reason = TEXT("Descriptor: v0.15 chunk 4 packaged BuildCookRun tool for full UAT build/cook/stage/package coverage.");
+				Registrar.Add(Descriptor, MakePackagedBuildSchema());
+			}
 
 			{
 				TSharedPtr<FJsonObject> Properties = MakeShared<FJsonObject>();

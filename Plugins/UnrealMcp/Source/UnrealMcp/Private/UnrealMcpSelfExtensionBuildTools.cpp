@@ -42,6 +42,16 @@ namespace UnrealMcp
 #endif
 		}
 
+		FString GetUnrealAutomationScriptPath()
+		{
+			const FString EngineDir = FPaths::ConvertRelativePathToFull(FPaths::EngineDir());
+#if PLATFORM_WINDOWS
+			return FPaths::Combine(EngineDir, TEXT("Build/BatchFiles/RunUAT.bat"));
+#else
+			return FPaths::Combine(EngineDir, TEXT("Build/BatchFiles/RunUAT.sh"));
+#endif
+		}
+
 		FString QuoteCommandLineArgument(const FString& Value)
 		{
 			FString Escaped = Value;
@@ -473,6 +483,398 @@ namespace UnrealMcp
 				}
 			}
 			return StepObject;
+		}
+
+		FString GetProjectFilePathForBuild()
+		{
+			FString ProjectFilePath = FPaths::GetProjectFilePath();
+			if (ProjectFilePath.IsEmpty())
+			{
+				ProjectFilePath = FPaths::Combine(FPaths::ProjectDir(), FString::Printf(TEXT("%s.uproject"), FApp::GetProjectName()));
+			}
+			return FPaths::ConvertRelativePathToFull(ProjectFilePath);
+		}
+
+		FUnrealMcpExecutionResult BuildNonEditorTarget(
+			const FJsonObject& Arguments,
+			const FString& ActionTag,
+			const FString& DefaultTarget,
+			const FString& MemoryKeyDefault)
+		{
+			FString Target = DefaultTarget;
+			FString Platform = GetHostBuildPlatformName();
+			FString Configuration = TEXT("Development");
+			FString ExtraArgs;
+			FString ToolName;
+			FString TestRequestPath;
+			FString TestsDir;
+			FString ScaffoldDir;
+			FString MemoryKey = MemoryKeyDefault;
+			bool bWriteProjectMemory = true;
+
+			Arguments.TryGetStringField(TEXT("target"), Target);
+			Arguments.TryGetStringField(TEXT("platform"), Platform);
+			Arguments.TryGetStringField(TEXT("configuration"), Configuration);
+			Arguments.TryGetStringField(TEXT("extraArgs"), ExtraArgs);
+			Arguments.TryGetStringField(TEXT("toolName"), ToolName);
+			Arguments.TryGetStringField(TEXT("testRequestPath"), TestRequestPath);
+			Arguments.TryGetStringField(TEXT("testsDir"), TestsDir);
+			Arguments.TryGetStringField(TEXT("scaffoldDir"), ScaffoldDir);
+			Arguments.TryGetStringField(TEXT("memoryKey"), MemoryKey);
+			Arguments.TryGetBoolField(TEXT("writeProjectMemory"), bWriteProjectMemory);
+
+			Target = Target.TrimStartAndEnd();
+			Platform = Platform.TrimStartAndEnd();
+			Configuration = Configuration.TrimStartAndEnd();
+			ExtraArgs = ExtraArgs.TrimStartAndEnd();
+			MemoryKey = MemoryKey.TrimStartAndEnd();
+			if (Target.IsEmpty() || Platform.IsEmpty() || Configuration.IsEmpty())
+			{
+				return MakeExecutionResult(TEXT("target, platform, and configuration must not be empty."), nullptr, true);
+			}
+			if (MemoryKey.IsEmpty())
+			{
+				MemoryKey = MemoryKeyDefault;
+			}
+
+			FString ExtraArgsValidationFailure;
+			if (!SanitizeBuildExtraArgs(ExtraArgs, ExtraArgs, ExtraArgsValidationFailure))
+			{
+				return MakeExecutionResult(ExtraArgsValidationFailure, nullptr, true);
+			}
+
+			const FString BuildScriptPath = GetUnrealBuildScriptPath();
+			if (!FPaths::FileExists(BuildScriptPath))
+			{
+				return MakeExecutionResult(FString::Printf(TEXT("Unreal Build script was not found: %s"), *BuildScriptPath), nullptr, true);
+			}
+
+			const FString ProjectFilePath = GetProjectFilePathForBuild();
+			const FString Timestamp = FDateTime::UtcNow().ToString(TEXT("%Y%m%d-%H%M%S"));
+			const FString BuildLogDirectory = FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UnrealMcp/BuildLogs")));
+			IFileManager::Get().MakeDirectory(*BuildLogDirectory, true);
+			const FString BuildLogPath = FPaths::Combine(BuildLogDirectory, FString::Printf(TEXT("Build_%s_%s_%s.log"), *Target, *Configuration, *Timestamp));
+
+			if (TestRequestPath.TrimStartAndEnd().IsEmpty() && !ScaffoldDir.TrimStartAndEnd().IsEmpty())
+			{
+				FString ResolvedScaffoldDir;
+				FString ResolveFailure;
+				if (ResolveProjectPathInsideProject(ScaffoldDir, ResolvedScaffoldDir, ResolveFailure))
+				{
+					TestRequestPath = FPaths::Combine(ResolvedScaffoldDir, TEXT("TestRequest.json"));
+					if (TestsDir.TrimStartAndEnd().IsEmpty())
+					{
+						TestsDir = FPaths::Combine(ResolvedScaffoldDir, TEXT("Tests"));
+					}
+				}
+			}
+
+			TSharedPtr<FJsonObject> MemoryContent = MakeShared<FJsonObject>();
+			MemoryContent->SetStringField(TEXT("action"), ActionTag);
+			MemoryContent->SetStringField(TEXT("target"), Target);
+			MemoryContent->SetStringField(TEXT("platform"), Platform);
+			MemoryContent->SetStringField(TEXT("configuration"), Configuration);
+			MemoryContent->SetStringField(TEXT("toolName"), ToolName);
+			MemoryContent->SetStringField(TEXT("testRequestPath"), TestRequestPath);
+			MemoryContent->SetStringField(TEXT("testsDir"), TestsDir);
+			MemoryContent->SetStringField(TEXT("scaffoldDir"), ScaffoldDir);
+			MemoryContent->SetStringField(TEXT("buildLogPath"), BuildLogPath);
+			MemoryContent->SetBoolField(TEXT("editorWasRunningDuringBuild"), true);
+			MemoryContent->SetBoolField(TEXT("editorRestartRequiredBeforeTestingNewTools"), false);
+			MemoryContent->SetStringField(TEXT("recommendation"), TEXT("The editor can remain open while this non-editor target builds. Use the parsed log as compile coverage evidence."));
+
+			if (bWriteProjectMemory)
+			{
+				WriteBuildTestMemory(
+					MemoryKey,
+					FString::Printf(TEXT("Waiting for %s build result."), *Target),
+					TEXT("build_running"),
+					FString::Printf(TEXT("Inspect %s after the build completes."), *BuildLogPath),
+					MemoryContent);
+			}
+
+			const FString Params = FString::Printf(
+				TEXT("%s %s %s -Project=%s -WaitMutex%s%s"),
+				*Target,
+				*Platform,
+				*Configuration,
+				*QuoteCommandLineArgument(ProjectFilePath),
+				ExtraArgs.IsEmpty() ? TEXT("") : TEXT(" "),
+				*ExtraArgs);
+
+			int32 ReturnCode = -1;
+			FString StdOut;
+			FString StdErr;
+			const bool bLaunched = FPlatformProcess::ExecProcess(
+				*BuildScriptPath,
+				*Params,
+				&ReturnCode,
+				&StdOut,
+				&StdErr,
+				*FPaths::ConvertRelativePathToFull(FPaths::EngineDir()));
+
+			const FString CombinedLog = StdOut + (StdErr.IsEmpty() ? FString() : FString::Printf(TEXT("\n\n[stderr]\n%s"), *StdErr));
+			FFileHelper::SaveStringToFile(CombinedLog, *BuildLogPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("action"), ActionTag);
+			StructuredContent->SetStringField(TEXT("target"), Target);
+			StructuredContent->SetStringField(TEXT("platform"), Platform);
+			StructuredContent->SetStringField(TEXT("configuration"), Configuration);
+			StructuredContent->SetStringField(TEXT("extraArgs"), ExtraArgs);
+			StructuredContent->SetStringField(TEXT("projectFile"), ProjectFilePath);
+			StructuredContent->SetStringField(TEXT("buildScript"), BuildScriptPath);
+			StructuredContent->SetStringField(TEXT("buildLogPath"), BuildLogPath);
+			StructuredContent->SetBoolField(TEXT("launched"), bLaunched);
+			StructuredContent->SetBoolField(TEXT("editorRunningDuringBuild"), true);
+			StructuredContent->SetBoolField(TEXT("editorRestartRequiredBeforeTestingNewTools"), false);
+			StructuredContent->SetStringField(TEXT("restartAdvice"), TEXT("The editor can remain open while this non-editor target builds. This target alone does not require an editor restart."));
+
+			ParseBuildLog(CombinedLog, bLaunched ? ReturnCode : -1, StructuredContent);
+			const bool bSucceeded = StructuredContent->GetBoolField(TEXT("succeeded"));
+
+			MemoryContent->SetBoolField(TEXT("buildSucceeded"), bSucceeded);
+			MemoryContent->SetNumberField(TEXT("returnCode"), bLaunched ? ReturnCode : -1);
+			if (bWriteProjectMemory)
+			{
+				WriteBuildTestMemory(
+					MemoryKey,
+					bSucceeded ? FString::Printf(TEXT("%s build succeeded."), *Target) : FString::Printf(TEXT("%s build failed; inspect parsed errors and build log."), *Target),
+					bSucceeded ? TEXT("build_succeeded") : TEXT("build_failed"),
+					bSucceeded ? TEXT("Use this result as non-editor compile coverage evidence.") : FString::Printf(TEXT("Fix compile errors, then rerun unreal.%s."), *ActionTag),
+					MemoryContent);
+			}
+
+			const FString Text = bSucceeded
+				? FString::Printf(TEXT("Build succeeded for %s %s %s."), *Target, *Platform, *Configuration)
+				: FString::Printf(TEXT("Build failed for %s %s %s. See parsed errors and log: %s"), *Target, *Platform, *Configuration, *BuildLogPath);
+			return MakeExecutionResult(Text, StructuredContent, !bSucceeded);
+		}
+
+		FUnrealMcpExecutionResult BuildGame(const FJsonObject& Arguments)
+		{
+			return BuildNonEditorTarget(
+				Arguments,
+				TEXT("mcp_build_game"),
+				FApp::GetProjectName(),
+				TEXT("mcp.extension.build_game"));
+		}
+
+		FUnrealMcpExecutionResult BuildServer(const FJsonObject& Arguments)
+		{
+			return BuildNonEditorTarget(
+				Arguments,
+				TEXT("mcp_build_server"),
+				FString::Printf(TEXT("%sServer"), FApp::GetProjectName()),
+				TEXT("mcp.extension.build_server"));
+		}
+
+		FUnrealMcpExecutionResult BuildClient(const FJsonObject& Arguments)
+		{
+			return BuildNonEditorTarget(
+				Arguments,
+				TEXT("mcp_build_client"),
+				FString::Printf(TEXT("%sClient"), FApp::GetProjectName()),
+				TEXT("mcp.extension.build_client"));
+		}
+
+		FUnrealMcpExecutionResult BuildPackaged(const FJsonObject& Arguments)
+		{
+			FString TargetPlatform = GetHostBuildPlatformName();
+			FString Configuration = TEXT("Development");
+			FString ExtraArgs;
+			FString OutputDirectory;
+			FString Map;
+			FString MemoryKey = TEXT("mcp.extension.build_packaged");
+			bool bWriteProjectMemory = true;
+
+			Arguments.TryGetStringField(TEXT("platform"), TargetPlatform);
+			Arguments.TryGetStringField(TEXT("targetPlatform"), TargetPlatform);
+			Arguments.TryGetStringField(TEXT("configuration"), Configuration);
+			Arguments.TryGetStringField(TEXT("extraArgs"), ExtraArgs);
+			const bool bHasOutputDirectory = Arguments.TryGetStringField(TEXT("outputDirectory"), OutputDirectory);
+			Arguments.TryGetStringField(TEXT("map"), Map);
+			Arguments.TryGetStringField(TEXT("memoryKey"), MemoryKey);
+			Arguments.TryGetBoolField(TEXT("writeProjectMemory"), bWriteProjectMemory);
+
+			TargetPlatform = TargetPlatform.TrimStartAndEnd();
+			Configuration = Configuration.TrimStartAndEnd();
+			ExtraArgs = ExtraArgs.TrimStartAndEnd();
+			Map = Map.TrimStartAndEnd();
+			MemoryKey = MemoryKey.TrimStartAndEnd();
+			if (TargetPlatform.IsEmpty() || Configuration.IsEmpty())
+			{
+				return MakeExecutionResult(TEXT("targetPlatform and configuration must not be empty."), nullptr, true);
+			}
+			if (MemoryKey.IsEmpty())
+			{
+				MemoryKey = TEXT("mcp.extension.build_packaged");
+			}
+
+			FString ExtraArgsValidationFailure;
+			if (!SanitizeBuildExtraArgs(ExtraArgs, ExtraArgs, ExtraArgsValidationFailure))
+			{
+				return MakeExecutionResult(ExtraArgsValidationFailure, nullptr, true);
+			}
+
+			const FString AutomationScriptPath = GetUnrealAutomationScriptPath();
+			if (!FPaths::FileExists(AutomationScriptPath))
+			{
+				return MakeExecutionResult(FString::Printf(TEXT("Unreal Automation Tool script was not found: %s"), *AutomationScriptPath), nullptr, true);
+			}
+
+			if (bHasOutputDirectory && !OutputDirectory.TrimStartAndEnd().IsEmpty())
+			{
+				FString ResolvedOutputDirectory;
+				FString FailureReason;
+				if (!ResolveProjectPathInsideProject(OutputDirectory, ResolvedOutputDirectory, FailureReason))
+				{
+					return MakeExecutionResult(FailureReason, nullptr, true);
+				}
+				OutputDirectory = ResolvedOutputDirectory;
+			}
+			else
+			{
+				OutputDirectory = FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("StagedBuilds")));
+			}
+			FPaths::NormalizeDirectoryName(OutputDirectory);
+			FPaths::CollapseRelativeDirectories(OutputDirectory);
+			IFileManager::Get().MakeDirectory(*OutputDirectory, true);
+
+			const FString ProjectFilePath = GetProjectFilePathForBuild();
+			const FString Timestamp = FDateTime::UtcNow().ToString(TEXT("%Y%m%d-%H%M%S"));
+			const FString BuildLogDirectory = FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UnrealMcp/BuildLogs")));
+			IFileManager::Get().MakeDirectory(*BuildLogDirectory, true);
+			const FString BuildLogPath = FPaths::Combine(BuildLogDirectory, FString::Printf(TEXT("PackagedBuild_%s_%s_%s.log"), *TargetPlatform, *Configuration, *Timestamp));
+			const FString StagedBuildDirectory = FPaths::Combine(OutputDirectory, TargetPlatform);
+
+			TSharedPtr<FJsonObject> MemoryContent = MakeShared<FJsonObject>();
+			MemoryContent->SetStringField(TEXT("action"), TEXT("mcp_build_packaged"));
+			MemoryContent->SetStringField(TEXT("platform"), TargetPlatform);
+			MemoryContent->SetStringField(TEXT("targetPlatform"), TargetPlatform);
+			MemoryContent->SetStringField(TEXT("configuration"), Configuration);
+			MemoryContent->SetStringField(TEXT("map"), Map);
+			MemoryContent->SetStringField(TEXT("outputDirectory"), OutputDirectory);
+			MemoryContent->SetStringField(TEXT("stagedBuildDirectory"), StagedBuildDirectory);
+			MemoryContent->SetStringField(TEXT("buildLogPath"), BuildLogPath);
+			MemoryContent->SetStringField(TEXT("recommendation"), TEXT("Inspect the packaged output directory and parsed UAT log after completion."));
+
+			if (bWriteProjectMemory)
+			{
+				WriteBuildTestMemory(
+					MemoryKey,
+					FString::Printf(TEXT("Waiting for packaged %s build result."), *TargetPlatform),
+					TEXT("packaged_build_running"),
+					FString::Printf(TEXT("Inspect %s after BuildCookRun completes."), *BuildLogPath),
+					MemoryContent);
+			}
+
+			TArray<FString> ParamParts;
+			ParamParts.Add(TEXT("BuildCookRun"));
+			ParamParts.Add(FString::Printf(TEXT("-project=%s"), *QuoteCommandLineArgument(ProjectFilePath)));
+			ParamParts.Add(FString::Printf(TEXT("-platform=%s"), *TargetPlatform));
+			ParamParts.Add(FString::Printf(TEXT("-configuration=%s"), *Configuration));
+			ParamParts.Add(TEXT("-cook"));
+			ParamParts.Add(TEXT("-build"));
+			ParamParts.Add(TEXT("-stage"));
+			ParamParts.Add(TEXT("-package"));
+			ParamParts.Add(TEXT("-pak"));
+			ParamParts.Add(TEXT("-archive"));
+			ParamParts.Add(FString::Printf(TEXT("-archivedirectory=%s"), *QuoteCommandLineArgument(OutputDirectory)));
+			if (!Map.IsEmpty())
+			{
+				ParamParts.Add(FString::Printf(TEXT("-map=%s"), *QuoteCommandLineArgument(Map)));
+			}
+			if (!ExtraArgs.IsEmpty())
+			{
+				ParamParts.Add(ExtraArgs);
+			}
+			const FString Params = FString::Join(ParamParts, TEXT(" "));
+
+			int32 ReturnCode = -1;
+			FString StdOut;
+			FString StdErr;
+			const bool bLaunched = FPlatformProcess::ExecProcess(
+				*AutomationScriptPath,
+				*Params,
+				&ReturnCode,
+				&StdOut,
+				&StdErr,
+				*FPaths::ConvertRelativePathToFull(FPaths::EngineDir()));
+
+			const FString CombinedLog = StdOut + (StdErr.IsEmpty() ? FString() : FString::Printf(TEXT("\n\n[stderr]\n%s"), *StdErr));
+			FFileHelper::SaveStringToFile(CombinedLog, *BuildLogPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("action"), TEXT("mcp_build_packaged"));
+			StructuredContent->SetStringField(TEXT("platform"), TargetPlatform);
+			StructuredContent->SetStringField(TEXT("targetPlatform"), TargetPlatform);
+			StructuredContent->SetStringField(TEXT("configuration"), Configuration);
+			StructuredContent->SetStringField(TEXT("extraArgs"), ExtraArgs);
+			StructuredContent->SetStringField(TEXT("map"), Map);
+			StructuredContent->SetStringField(TEXT("outputDirectory"), OutputDirectory);
+			StructuredContent->SetStringField(TEXT("stagedBuildDirectory"), StagedBuildDirectory);
+			StructuredContent->SetStringField(TEXT("projectFile"), ProjectFilePath);
+			StructuredContent->SetStringField(TEXT("buildScript"), AutomationScriptPath);
+			StructuredContent->SetStringField(TEXT("automationScript"), AutomationScriptPath);
+			StructuredContent->SetStringField(TEXT("buildLogPath"), BuildLogPath);
+			StructuredContent->SetStringField(TEXT("params"), Params);
+			StructuredContent->SetBoolField(TEXT("launched"), bLaunched);
+
+			ParseBuildLog(CombinedLog, bLaunched ? ReturnCode : -1, StructuredContent);
+			const bool bSucceeded = StructuredContent->GetBoolField(TEXT("succeeded"));
+
+			MemoryContent->SetBoolField(TEXT("buildSucceeded"), bSucceeded);
+			MemoryContent->SetNumberField(TEXT("returnCode"), bLaunched ? ReturnCode : -1);
+			if (bWriteProjectMemory)
+			{
+				WriteBuildTestMemory(
+					MemoryKey,
+					bSucceeded ? FString::Printf(TEXT("Packaged %s build succeeded."), *TargetPlatform) : FString::Printf(TEXT("Packaged %s build failed; inspect parsed errors and UAT log."), *TargetPlatform),
+					bSucceeded ? TEXT("packaged_build_succeeded") : TEXT("packaged_build_failed"),
+					bSucceeded ? FString::Printf(TEXT("Inspect packaged output under %s."), *StagedBuildDirectory) : TEXT("Fix cook/package errors, then rerun unreal.mcp_build_packaged."),
+					MemoryContent);
+			}
+
+			const FString Text = bSucceeded
+				? FString::Printf(TEXT("Packaged build succeeded for %s %s. Output: %s"), *TargetPlatform, *Configuration, *StagedBuildDirectory)
+				: FString::Printf(TEXT("Packaged build failed for %s %s. See parsed errors and log: %s"), *TargetPlatform, *Configuration, *BuildLogPath);
+			return MakeExecutionResult(Text, StructuredContent, !bSucceeded);
+		}
+
+		bool TryExecuteSelfExtensionBuildTool(const FString& ToolName, const FJsonObject& Arguments, FUnrealMcpExecutionResult& OutResult)
+		{
+			if (ToolName == TEXT("unreal.mcp_build_editor"))
+			{
+				OutResult = BuildEditor(Arguments);
+				return true;
+			}
+
+			if (ToolName == TEXT("unreal.mcp_build_game"))
+			{
+				OutResult = BuildGame(Arguments);
+				return true;
+			}
+
+			if (ToolName == TEXT("unreal.mcp_build_server"))
+			{
+				OutResult = BuildServer(Arguments);
+				return true;
+			}
+
+			if (ToolName == TEXT("unreal.mcp_build_client"))
+			{
+				OutResult = BuildClient(Arguments);
+				return true;
+			}
+
+			if (ToolName == TEXT("unreal.mcp_build_packaged"))
+			{
+				OutResult = BuildPackaged(Arguments);
+				return true;
+			}
+
+			return false;
 		}
 
 			FUnrealMcpExecutionResult BuildEditor(const FJsonObject& Arguments)

@@ -92,6 +92,10 @@ namespace UnrealMcp
 				|| ToolName == TEXT("unreal.mcp_supervisor_install")
 				|| ToolName == TEXT("unreal.mcp_generate_tests")
 				|| ToolName == TEXT("unreal.mcp_build_editor")
+				|| ToolName == TEXT("unreal.mcp_build_game")
+				|| ToolName == TEXT("unreal.mcp_build_server")
+				|| ToolName == TEXT("unreal.mcp_build_client")
+				|| ToolName == TEXT("unreal.mcp_build_packaged")
 				|| ToolName == TEXT("unreal.mcp_run_tool_test")
 				|| ToolName == TEXT("unreal.mcp_run_test_suite")
 				|| ToolName == TEXT("unreal.mcp_extension_pipeline");
@@ -344,6 +348,11 @@ namespace UnrealMcp
 			if (ToolName == TEXT("unreal.mcp_generate_tests"))
 			{
 				OutResult = GenerateMcpTests(Arguments, ToolsArray);
+				return true;
+			}
+
+			if (TryExecuteSelfExtensionBuildTool(ToolName, Arguments, OutResult))
+			{
 				return true;
 			}
 
