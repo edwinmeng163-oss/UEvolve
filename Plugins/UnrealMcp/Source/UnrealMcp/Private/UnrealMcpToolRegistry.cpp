@@ -125,7 +125,7 @@ namespace UnrealMcp
 			return nullptr;
 		}
 
-		TArray<TSharedPtr<FJsonValue>> MakeStringArrayValues(const TArray<FString>& Strings)
+		TArray<TSharedPtr<FJsonValue>> MakeStringJsonArray(const TArray<FString>& Strings)
 		{
 			TArray<TSharedPtr<FJsonValue>> Values;
 			for (const FString& StringValue : Strings)
@@ -185,7 +185,7 @@ namespace UnrealMcp
 			Object->SetStringField(TEXT("implementationTrack"), Entry ? UnrealMcp::LexToString(Entry->ImplementationTrack) : FString(TEXT("cpp")));
 			Object->SetStringField(TEXT("pythonHandlerPath"), Entry ? Entry->PythonHandlerPath : FString());
 			Object->SetStringField(TEXT("pythonHandlerSha256"), Entry ? Entry->PythonHandlerSha256 : FString());
-			Object->SetArrayField(TEXT("pythonImportAllowList"), Entry ? MakeStringArrayValues(Entry->PythonImportAllowList) : TArray<TSharedPtr<FJsonValue>>());
+			Object->SetArrayField(TEXT("pythonImportAllowList"), Entry ? MakeStringJsonArray(Entry->PythonImportAllowList) : TArray<TSharedPtr<FJsonValue>>());
 		}
 
 		void AddValidationIssue(
