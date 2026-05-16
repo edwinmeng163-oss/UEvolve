@@ -473,8 +473,11 @@ namespace UnrealMcpPythonToolBridge
 			AppendLine(OutStdout, PythonCommand.CommandResult);
 			for (const FPythonLogOutputEntry& LogEntry : PythonCommand.LogOutput)
 			{
-				const FString LogType = LexToString(LogEntry.Type);
-				if (LogType.Contains(TEXT("Error"), ESearchCase::IgnoreCase))
+				// Renamed from `LogType` to avoid C4459 (shadows UE global `LogType`
+				// from UObject/UnrealType.h) on UE 5.6 Windows MSVC where the warning
+				// is treated as an error. macOS clang does not flag this. See issue #2.
+				const FString LogEntryType = LexToString(LogEntry.Type);
+				if (LogEntryType.Contains(TEXT("Error"), ESearchCase::IgnoreCase))
 				{
 					AppendLine(OutStderr, LogEntry.Output);
 				}

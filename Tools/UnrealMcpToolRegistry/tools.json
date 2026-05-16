@@ -2606,7 +2606,10 @@
       "pythonHandlerPath": "Tools/UnrealMcpPyTools/editor_python_runtime_info/main.py",
       "pythonHandlerSha256": "56f6f019a385406e59571db5d781cf5532d7225516c78253c1ce47bae7facb39",
       "pythonImportAllowList": [
-        "unreal"
+        "unreal",
+        "sys",
+        "platform",
+        "subprocess"
       ],
       "exposure": "visible",
       "riskLevel": "critical",
@@ -2807,7 +2810,10 @@
         "pythonHandlerPath": "Tools/UnrealMcpPyTools/editor_python_runtime_info/main.py",
         "pythonHandlerSha256": "56f6f019a385406e59571db5d781cf5532d7225516c78253c1ce47bae7facb39",
         "pythonImportAllowList": [
-          "unreal"
+          "unreal",
+          "sys",
+          "platform",
+          "subprocess"
         ]
       },
       "notes": "Read-only canonical first Python-track smoke tool; use to verify PythonScriptPlugin bridge execution and handler hash enforcement."

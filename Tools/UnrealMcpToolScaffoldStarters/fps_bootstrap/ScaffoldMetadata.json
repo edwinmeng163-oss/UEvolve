@@ -30,6 +30,8 @@
       "BlueprintGraph"
     ]
   },
-  "dependsOn": [],
+  "dependsOn": [
+    "unreal.simulation.verify_input_drives_pawn"
+  ],
   "description": "Complete FPS character bring-up: registers axis mappings, wires Blueprint EventGraph nodes including forward/right vector sources for AddMovementInput.WorldDirection, sets Pawn bUseControllerRotationYaw + Camera bUsePawnControlRotation, compiles + saves, and optionally invokes unreal.simulation.verify_input_drives_pawn for self-test."
 }
