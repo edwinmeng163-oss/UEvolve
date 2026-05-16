@@ -1,0 +1,22 @@
+{
+  "name": "asset_move_smoke",
+  "description": "List-only smoke for moving or renaming one asset. The write call is not executed in CI.",
+  "category": "manual_smoke",
+  "expectToolListed": true,
+  "executeTool": false,
+  "expectToolCallError": false,
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 137,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.asset_move",
+      "arguments": {
+        "sourcePath": "/Game/__UEvolveMcpTest_Migration/SourceAsset",
+        "destinationPath": "/Game/__UEvolveMcpTest_Migration/MovedAsset",
+        "createRedirector": true,
+        "dryRun": true
+      }
+    }
+  }
+}

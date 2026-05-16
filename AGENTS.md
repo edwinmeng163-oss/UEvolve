@@ -240,6 +240,7 @@ Editor and inspection:
 - map/asset opening
 - Content Browser sync
 - save dirty packages
+- asset move, redirector fixup, dependency remap, and project version migration
 
 Actor tools:
 
@@ -361,7 +362,7 @@ Tools/UnrealMcpToolRegistry/schema.json
 Schemas/UnrealMcpToolRegistry.schema.json
 ```
 
-At the time this file was written, the registry contained 136 entries across:
+At the time this file was written, the registry contained 140 entries across:
 
 - actors
 - blueprint
@@ -382,15 +383,21 @@ v0.15 chunk 2b Blueprint macro/interface tools (`unreal.bp_add_macro_graph`,
 `unreal.bp_delete_macro_graph`, `unreal.bp_interface_add`, and
 `unreal.bp_interface_remove`), and the four v0.15 chunk 4 UBT target matrix
 tools (`unreal.mcp_build_game`, `unreal.mcp_build_server`,
-`unreal.mcp_build_client`, and `unreal.mcp_build_packaged`). Earlier handoff
-text lagged at 119 entries.
+`unreal.mcp_build_client`, and `unreal.mcp_build_packaged`), and the four
+v0.15 chunk 5 migration tools (`unreal.asset_move`,
+`unreal.redirector_fixup`, `unreal.dependency_remap`, and
+`unreal.project_version_migration`). Earlier handoff text lagged at 119
+entries.
 
-Current project status: v0.15 chunk 4 landed; UBT target matrix is complete
-(editor + game + server + client + packaged), recipe catalog lists 7 named
-recipes, and Lane Z Blueprint refactor is complete. The previous Lane V
-get/inspect-tool gap for actor property, actor transform, and project settings
-readback is done in C++; Blueprint delete + rename basics are done in C++,
-and macro + interface editing is now done in C++.
+Current project status: v0.15 chunk 5 landed; migration toolchain is complete
+(`asset_move` + `redirector_fixup` + `dependency_remap` +
+`project_version_migration`), and v0.15 chunks 1-5 close all Known Limitations
+from v0.14.0-python-track. UBT target matrix is complete (editor + game +
+server + client + packaged), recipe catalog lists 7 named recipes, and Lane Z
+Blueprint refactor is complete. The previous Lane V get/inspect-tool gap for
+actor property, actor transform, and project settings readback is done in C++;
+Blueprint delete + rename basics are done in C++, and macro + interface editing
+is now done in C++.
 
 `unreal.configure_fps_settings` and
 `unreal.bp_add_input_axis_event_node` were moved back to scaffold-only status

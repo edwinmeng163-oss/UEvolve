@@ -123,6 +123,116 @@ namespace UnrealMcp
 				Registrar.Add(Descriptor, Schema);
 			}
 
+			{
+				TSharedPtr<FJsonObject> Properties = MakeShared<FJsonObject>();
+				Properties->SetObjectField(TEXT("sourcePath"), MakeStringProperty(TEXT("Source asset package/object path under /Game, for example /Game/Foo/OldAsset or /Game/Foo/OldAsset.OldAsset."), FString()));
+				Properties->SetObjectField(TEXT("destinationPath"), MakeStringProperty(TEXT("Full destination package/object path under /Game including the new asset name."), FString()));
+				Properties->SetObjectField(TEXT("createRedirector"), MakeBoolProperty(TEXT("Whether the move may leave an UObjectRedirector at the old path for unresolved referencers."), true));
+				Properties->SetObjectField(TEXT("dryRun"), MakeBoolProperty(TEXT("Preview referencers, path validity, and destination collision without moving the asset."), false));
+				TArray<TSharedPtr<FJsonValue>> Required;
+				Required.Add(MakeShared<FJsonValueString>(TEXT("sourcePath")));
+				Required.Add(MakeShared<FJsonValueString>(TEXT("destinationPath")));
+				TSharedPtr<FJsonObject> Schema = MakeObjectSchema();
+				Schema->SetObjectField(TEXT("properties"), Properties);
+				Schema->SetArrayField(TEXT("required"), Required);
+
+				FUnrealMcpToolDescriptor Descriptor = MakeDescriptor(
+					TEXT("unreal.asset_move"),
+					TEXT("Move Asset"),
+					TEXT("Moves or renames one asset to a new /Game package path using Unreal AssetTools, with optional dry-run planning."),
+					TEXT("editor"),
+					TEXT("UnrealMcpEditorTools.cpp"),
+					EUnrealMcpToolRisk::Medium);
+				Descriptor.bRequiresWrite = true;
+				Descriptor.bDryRunSupport = true;
+				Descriptor.bPreflightSupport = true;
+				Descriptor.bPostcheckSupport = true;
+				Descriptor.TestCoverage = EUnrealMcpToolTestCoverage::Core;
+				Descriptor.Reason = TEXT("Descriptor: v0.15 chunk 5 migration tool for single-asset rename/move through AssetTools.");
+				Registrar.Add(Descriptor, Schema);
+			}
+
+			{
+				TSharedPtr<FJsonObject> Properties = MakeShared<FJsonObject>();
+				Properties->SetObjectField(TEXT("path"), MakeStringProperty(TEXT("Content Browser subtree to scan for UObjectRedirector assets."), TEXT("/Game")));
+				Properties->SetObjectField(TEXT("dryRun"), MakeBoolProperty(TEXT("Preview redirectors and affected referencers without mutating packages."), true));
+				Properties->SetObjectField(TEXT("recursive"), MakeBoolProperty(TEXT("Whether to include child folders."), true));
+				Properties->SetObjectField(TEXT("failOnAnyError"), MakeBoolProperty(TEXT("Return FIXUP_FAILED when any redirector remains after a real fixup."), false));
+				TSharedPtr<FJsonObject> Schema = MakeObjectSchema();
+				Schema->SetObjectField(TEXT("properties"), Properties);
+
+				FUnrealMcpToolDescriptor Descriptor = MakeDescriptor(
+					TEXT("unreal.redirector_fixup"),
+					TEXT("Fix Up Redirectors"),
+					TEXT("Scans a /Game subtree for UObjectRedirector assets and runs AssetTools fixup to rewrite referencers and remove fixed redirectors."),
+					TEXT("editor"),
+					TEXT("UnrealMcpEditorTools.cpp"),
+					EUnrealMcpToolRisk::High);
+				Descriptor.bRequiresWrite = true;
+				Descriptor.bDryRunSupport = true;
+				Descriptor.bPreflightSupport = true;
+				Descriptor.bPostcheckSupport = true;
+				Descriptor.TestCoverage = EUnrealMcpToolTestCoverage::Core;
+				Descriptor.Reason = TEXT("Descriptor: v0.15 chunk 5 migration tool for Content Browser redirector cleanup.");
+				Registrar.Add(Descriptor, Schema);
+			}
+
+			{
+				TSharedPtr<FJsonObject> Properties = MakeShared<FJsonObject>();
+				Properties->SetObjectField(TEXT("fromAssetPath"), MakeStringProperty(TEXT("Source asset whose referencers should be rewritten."), FString()));
+				Properties->SetObjectField(TEXT("toAssetPath"), MakeStringProperty(TEXT("Destination asset that should replace source references."), FString()));
+				Properties->SetObjectField(TEXT("dryRun"), MakeBoolProperty(TEXT("Preview type compatibility and referencing asset count without rewriting references."), true));
+				Properties->SetObjectField(TEXT("deleteSourceAfter"), MakeBoolProperty(TEXT("Delete the source asset after references are consolidated in a real run."), false));
+				TArray<TSharedPtr<FJsonValue>> Required;
+				Required.Add(MakeShared<FJsonValueString>(TEXT("fromAssetPath")));
+				Required.Add(MakeShared<FJsonValueString>(TEXT("toAssetPath")));
+				TSharedPtr<FJsonObject> Schema = MakeObjectSchema();
+				Schema->SetObjectField(TEXT("properties"), Properties);
+				Schema->SetArrayField(TEXT("required"), Required);
+
+				FUnrealMcpToolDescriptor Descriptor = MakeDescriptor(
+					TEXT("unreal.dependency_remap"),
+					TEXT("Remap Asset Dependencies"),
+					TEXT("Replaces references to one asset with references to another asset using ObjectTools consolidation without deleting the source by default."),
+					TEXT("editor"),
+					TEXT("UnrealMcpEditorTools.cpp"),
+					EUnrealMcpToolRisk::High);
+				Descriptor.bRequiresWrite = true;
+				Descriptor.bDryRunSupport = true;
+				Descriptor.bPreflightSupport = true;
+				Descriptor.bPostcheckSupport = true;
+				Descriptor.TestCoverage = EUnrealMcpToolTestCoverage::Core;
+				Descriptor.Reason = TEXT("Descriptor: v0.15 chunk 5 migration tool for replacing asset referencers.");
+				Registrar.Add(Descriptor, Schema);
+			}
+
+			{
+				TSharedPtr<FJsonObject> Properties = MakeShared<FJsonObject>();
+				Properties->SetObjectField(TEXT("targetEngineVersion"), MakeStringProperty(TEXT("Target EngineAssociation value. Supported values: 5.6 or 5.7."), FString()));
+				Properties->SetObjectField(TEXT("dryRun"), MakeBoolProperty(TEXT("Preview the EngineAssociation edit and compatibility warnings without writing the .uproject."), true));
+				Properties->SetObjectField(TEXT("projectFilePath"), MakeStringProperty(TEXT("Absolute .uproject path to edit. Defaults to the current project file."), FString()));
+				TArray<TSharedPtr<FJsonValue>> Required;
+				Required.Add(MakeShared<FJsonValueString>(TEXT("targetEngineVersion")));
+				TSharedPtr<FJsonObject> Schema = MakeObjectSchema();
+				Schema->SetObjectField(TEXT("properties"), Properties);
+				Schema->SetArrayField(TEXT("required"), Required);
+
+				FUnrealMcpToolDescriptor Descriptor = MakeDescriptor(
+					TEXT("unreal.project_version_migration"),
+					TEXT("Project Version Migration"),
+					TEXT("Updates a .uproject EngineAssociation between UE 5.6 and UE 5.7 and reports remaining manual rebuild steps."),
+					TEXT("editor"),
+					TEXT("UnrealMcpEditorTools.cpp"),
+					EUnrealMcpToolRisk::High);
+				Descriptor.bRequiresWrite = true;
+				Descriptor.bDryRunSupport = true;
+				Descriptor.bPreflightSupport = true;
+				Descriptor.bPostcheckSupport = true;
+				Descriptor.TestCoverage = EUnrealMcpToolTestCoverage::Core;
+				Descriptor.Reason = TEXT("Descriptor: v0.15 chunk 5 migration tool for reversible .uproject EngineAssociation changes.");
+				Registrar.Add(Descriptor, Schema);
+			}
+
 			Registrar.Add(
 				MakeDescriptor(
 					TEXT("unreal.list_maps"),

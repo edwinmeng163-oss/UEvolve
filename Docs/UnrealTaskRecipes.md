@@ -67,6 +67,26 @@ Important checks:
 - Always re-list graph nodes after adding nodes.
 - A compile success is necessary but not sufficient; also trace key pin connections.
 
+## Asset Migration
+
+Goal: move assets, remove redirectors, or replace references without losing track of package-level side effects.
+
+Recommended flow:
+
+1. Inspect the current content with `unreal.list_assets` and capture a before snapshot with `unreal.capture_project_snapshot`.
+2. For one asset move or rename, call `unreal.asset_move` with `dryRun=true` first and check `referencingAssets` plus destination collision status.
+3. After a real move, run `unreal.redirector_fixup` with `dryRun=true` on the affected subtree, then run it for real only when the redirector count is expected.
+4. To replace all references to one asset with another, call `unreal.dependency_remap` with `dryRun=true` and confirm both assets have the same class.
+5. Save dirty packages with `unreal.save_dirty_packages` after a successful real migration.
+6. Capture an after snapshot and use `unreal.diff_project_snapshot` plus `unreal.verify_task_outcome` for objective verification.
+
+Important checks:
+
+- Do not run migration tools while PIE is active.
+- Keep `deleteSourceAfter=false` for dependency remaps unless the user explicitly wants the source removed.
+- Treat redirector fixup as high risk on broad paths like `/Game`; prefer the narrowest subtree that contains the moved assets.
+- `unreal.project_version_migration` only changes `.uproject` `EngineAssociation`; rebuilding, regenerating project files, and reopening in the target engine remain manual steps.
+
 ## Self-Extension Tool
 
 Goal: add a new MCP tool without destabilizing the plugin.
@@ -89,4 +109,3 @@ Important checks:
 - Generated patch files are independent during scaffold review, but applied tools currently merge into core plugin source.
 - Keep tool schema OpenAI-compatible: object root, explicit properties, required fields when needed, and `additionalProperties=false`.
 - Add at least one happy-path test and one invalid-argument test.
-

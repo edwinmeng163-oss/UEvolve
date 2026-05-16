@@ -1,0 +1,20 @@
+{
+  "name": "project_version_migration_smoke",
+  "description": "List-only smoke for previewing a .uproject EngineAssociation change. The write call is not executed in CI.",
+  "category": "manual_smoke",
+  "expectToolListed": true,
+  "executeTool": false,
+  "expectToolCallError": false,
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 140,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.project_version_migration",
+      "arguments": {
+        "targetEngineVersion": "5.7",
+        "dryRun": true
+      }
+    }
+  }
+}

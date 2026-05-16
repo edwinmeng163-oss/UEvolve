@@ -1,0 +1,21 @@
+{
+  "name": "redirector_fixup_smoke",
+  "description": "List-only smoke for fixing redirectors under a content subtree. The write call is not executed in CI.",
+  "category": "manual_smoke",
+  "expectToolListed": true,
+  "executeTool": false,
+  "expectToolCallError": false,
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 138,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.redirector_fixup",
+      "arguments": {
+        "path": "/Game",
+        "recursive": true,
+        "dryRun": true
+      }
+    }
+  }
+}

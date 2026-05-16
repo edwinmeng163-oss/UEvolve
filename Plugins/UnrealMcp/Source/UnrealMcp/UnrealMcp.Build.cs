@@ -16,6 +16,7 @@ public class UnrealMcp : ModuleRules
 			"AIModule",
 			"ApplicationCore",
 			"AssetRegistry",
+			"AssetTools",
 			"BlueprintGraph",
 			"ContentBrowser",
 			"CoreUObject",

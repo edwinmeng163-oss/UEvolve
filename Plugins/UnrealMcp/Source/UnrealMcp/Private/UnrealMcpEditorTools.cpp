@@ -1,7 +1,9 @@
 #include "UnrealMcpEditorTools.h"
 
 #include "AssetRegistry/AssetData.h"
+#include "AssetRegistry/IAssetRegistry.h"
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "AssetToolsModule.h"
 #include "ContentBrowserModule.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -13,6 +15,7 @@
 #include "GameFramework/InputSettings.h"
 #include "GenericPlatform/GenericPlatformOutputDevices.h"
 #include "IContentBrowserSingleton.h"
+#include "IAssetTools.h"
 #include "IPythonScriptPlugin.h"
 #include "Logging/MessageLog.h"
 #include "Modules/ModuleManager.h"
@@ -21,14 +24,21 @@
 #include "Misc/EngineVersion.h"
 #include "Misc/FileHelper.h"
 #include "Misc/OutputDevice.h"
+#include "Misc/PackageName.h"
 #include "Misc/Paths.h"
+#include "ObjectTools.h"
+#include "Policies/PrettyJsonPrintPolicy.h"
 #include "PlayInEditorDataTypes.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonWriter.h"
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "Subsystems/EditorActorSubsystem.h"
 #include "Subsystems/EditorAssetSubsystem.h"
 #include "UnrealMcpEngineCompat.h"
 #include "UnrealMcpModule.h"
 #include "UnrealMcpSettings.h"
+#include "UObject/ObjectRedirector.h"
 #include "UObject/UnrealType.h"
 
 namespace UnrealMcp
@@ -54,6 +64,22 @@ namespace UnrealMcp
 	{
 		static constexpr int32 EditorToolDefaultListLimit = 200;
 
+		// Forward decls so the chunk 5 migration tools (asset_move,
+		// redirector_fixup, dependency_remap, project_version_migration) at
+		// lines ~675/797/932/1071 can reference the PIE-block helpers whose
+		// definitions live below at ~1271/1279 in this same anonymous
+		// namespace.
+		bool IsEditorPlaying();
+		FUnrealMcpExecutionResult MakePieBlockedResult(const FString& ToolName);
+
+		struct FEditorToolAssetPath
+		{
+			FString PackageName;
+			FString ObjectPath;
+			FString PackagePath;
+			FString AssetName;
+		};
+
 		void EditorToolAttachError(TSharedPtr<FJsonObject> StructuredContent, const FString& Code, const FString& Message)
 		{
 			if (!StructuredContent.IsValid())
@@ -65,6 +91,19 @@ namespace UnrealMcp
 			ErrorObject->SetStringField(TEXT("code"), Code);
 			ErrorObject->SetStringField(TEXT("message"), Message);
 			StructuredContent->SetObjectField(TEXT("error"), ErrorObject);
+		}
+
+		FUnrealMcpExecutionResult MakeEditorToolStructuredError(
+			const FString& Code,
+			const FString& Message,
+			TSharedPtr<FJsonObject> StructuredContent)
+		{
+			if (!StructuredContent.IsValid())
+			{
+				StructuredContent = MakeShared<FJsonObject>();
+			}
+			EditorToolAttachError(StructuredContent, Code, Message);
+			return MakeExecutionResult(Message, StructuredContent, true);
 		}
 
 		FUnrealMcpExecutionResult MakeProjectSettingsError(
@@ -170,6 +209,290 @@ namespace UnrealMcp
 			}
 
 			return false;
+		}
+
+		bool EditorToolTryNormalizeAssetPath(const FString& RawPath, FEditorToolAssetPath& OutPath, FString& OutFailureReason)
+		{
+			OutPath = FEditorToolAssetPath();
+			OutFailureReason.Reset();
+
+			FString Path = RawPath.TrimStartAndEnd();
+			Path.ReplaceInline(TEXT("\\"), TEXT("/"));
+
+			if (Path.IsEmpty())
+			{
+				OutFailureReason = TEXT("Asset path is required.");
+				return false;
+			}
+
+			if (Path.EndsWith(TEXT(".uasset"), ESearchCase::IgnoreCase))
+			{
+				OutFailureReason = TEXT("Use a UE package/object path without the .uasset extension.");
+				return false;
+			}
+
+			if (Path.Contains(TEXT(":")))
+			{
+				OutFailureReason = TEXT("Subobject paths are not supported; provide a top-level asset path.");
+				return false;
+			}
+
+			if (!Path.StartsWith(TEXT("/Game/"), ESearchCase::CaseSensitive))
+			{
+				OutFailureReason = TEXT("Asset path must start with /Game/.");
+				return false;
+			}
+
+			int32 LastSlashIndex = INDEX_NONE;
+			Path.FindLastChar(TEXT('/'), LastSlashIndex);
+
+			int32 DotIndex = INDEX_NONE;
+			const bool bHasObjectName = Path.FindChar(TEXT('.'), DotIndex) && DotIndex > LastSlashIndex;
+			FString PackageName = bHasObjectName ? Path.Left(DotIndex) : Path;
+
+			FText InvalidPackageReason;
+			if (!FPackageName::IsValidLongPackageName(PackageName, false, &InvalidPackageReason))
+			{
+				OutFailureReason = InvalidPackageReason.IsEmpty()
+					? FString::Printf(TEXT("Invalid long package name '%s'."), *PackageName)
+					: InvalidPackageReason.ToString();
+				return false;
+			}
+
+			const FString AssetName = FPackageName::GetLongPackageAssetName(PackageName);
+			if (AssetName.IsEmpty())
+			{
+				OutFailureReason = FString::Printf(TEXT("Asset path '%s' does not include an asset name."), *Path);
+				return false;
+			}
+
+			if (bHasObjectName)
+			{
+				const FString ObjectName = Path.Mid(DotIndex + 1);
+				if (!ObjectName.Equals(AssetName, ESearchCase::CaseSensitive))
+				{
+					OutFailureReason = FString::Printf(
+						TEXT("Object name '%s' must match package asset name '%s'."),
+						*ObjectName,
+						*AssetName);
+					return false;
+				}
+			}
+
+			OutPath.PackageName = PackageName;
+			OutPath.ObjectPath = FString::Printf(TEXT("%s.%s"), *PackageName, *AssetName);
+			OutPath.PackagePath = FPackageName::GetLongPackagePath(PackageName);
+			OutPath.AssetName = AssetName;
+			return true;
+		}
+
+		bool EditorToolTryNormalizeGameContentPath(const FString& RawPath, FString& OutPath, FString& OutFailureReason)
+		{
+			OutPath.Reset();
+			OutFailureReason.Reset();
+
+			FString Path = RawPath.TrimStartAndEnd();
+			Path.ReplaceInline(TEXT("\\"), TEXT("/"));
+			if (Path.IsEmpty())
+			{
+				Path = TEXT("/Game");
+			}
+			while (Path.Len() > 5 && Path.EndsWith(TEXT("/")))
+			{
+				Path.LeftChopInline(1);
+			}
+
+			if (Path != TEXT("/Game") && !Path.StartsWith(TEXT("/Game/"), ESearchCase::CaseSensitive))
+			{
+				OutFailureReason = TEXT("Path must be /Game or a /Game/... content subtree.");
+				return false;
+			}
+
+			if (Path.Contains(TEXT(".")) || Path.Contains(TEXT(":")))
+			{
+				OutFailureReason = TEXT("Path must be a Content Browser folder path, not an asset or subobject path.");
+				return false;
+			}
+
+			const FString ProbePackageName = Path == TEXT("/Game")
+				? TEXT("/Game/__UEvolvePathProbe")
+				: Path / TEXT("__UEvolvePathProbe");
+			FText InvalidPackageReason;
+			if (!FPackageName::IsValidLongPackageName(ProbePackageName, false, &InvalidPackageReason))
+			{
+				OutFailureReason = InvalidPackageReason.IsEmpty()
+					? FString::Printf(TEXT("Invalid content path '%s'."), *Path)
+					: InvalidPackageReason.ToString();
+				return false;
+			}
+
+			OutPath = Path;
+			return true;
+		}
+
+		TArray<FName> EditorToolGetReferencingPackages(IAssetRegistry& AssetRegistry, const FString& PackageName)
+		{
+			TArray<FName> Referencers;
+			AssetRegistry.GetReferencers(
+				FName(*PackageName),
+				Referencers,
+				UE::AssetRegistry::EDependencyCategory::Package,
+				UE::AssetRegistry::FDependencyQuery());
+			return Referencers;
+		}
+
+		UObjectRedirector* EditorToolLoadRedirectorAtPath(IAssetRegistry& AssetRegistry, const FString& ObjectPath)
+		{
+			if (UObjectRedirector* LoadedRedirector = FindObject<UObjectRedirector>(nullptr, *ObjectPath))
+			{
+				return LoadedRedirector;
+			}
+
+			const FAssetData RedirectorData = AssetRegistry.GetAssetByObjectPath(FSoftObjectPath(ObjectPath));
+			if (RedirectorData.IsValid() && RedirectorData.AssetClassPath == UObjectRedirector::StaticClass()->GetClassPathName())
+			{
+				return Cast<UObjectRedirector>(RedirectorData.GetAsset());
+			}
+
+			return nullptr;
+		}
+
+		bool EditorToolRedirectorExistsAtPath(IAssetRegistry& AssetRegistry, const FString& ObjectPath)
+		{
+			return EditorToolLoadRedirectorAtPath(AssetRegistry, ObjectPath) != nullptr;
+		}
+
+		UObject* EditorToolLoadAssetForMigration(
+			UEditorAssetSubsystem* EditorAssetSubsystem,
+			const FString& ObjectPath,
+			FString& OutFailureReason)
+		{
+			if (!EditorAssetSubsystem)
+			{
+				OutFailureReason = TEXT("EditorAssetSubsystem is unavailable.");
+				return nullptr;
+			}
+
+			UObject* LoadedAsset = EditorAssetSubsystem->LoadAsset(ObjectPath);
+			if (!LoadedAsset)
+			{
+				OutFailureReason = FString::Printf(TEXT("Asset '%s' was not found or could not be loaded."), *ObjectPath);
+			}
+			return LoadedAsset;
+		}
+
+		bool EditorToolIsAssetDeletedOrRedirected(IAssetRegistry& AssetRegistry, UEditorAssetSubsystem* EditorAssetSubsystem, const FString& ObjectPath)
+		{
+			const FAssetData AssetData = AssetRegistry.GetAssetByObjectPath(FSoftObjectPath(ObjectPath));
+			if (AssetData.IsValid() && AssetData.AssetClassPath == UObjectRedirector::StaticClass()->GetClassPathName())
+			{
+				return true;
+			}
+
+			return !EditorAssetSubsystem || !EditorAssetSubsystem->DoesAssetExist(ObjectPath);
+		}
+
+		TArray<TSharedPtr<FJsonValue>> EditorToolMakeRedirectorFailureArray(const TArray<TPair<FString, FString>>& Failures)
+		{
+			TArray<TSharedPtr<FJsonValue>> FailureValues;
+			for (const TPair<FString, FString>& Failure : Failures)
+			{
+				TSharedPtr<FJsonObject> FailureObject = MakeShared<FJsonObject>();
+				FailureObject->SetStringField(TEXT("redirectorPath"), Failure.Key);
+				FailureObject->SetStringField(TEXT("reason"), Failure.Value);
+				FailureValues.Add(MakeShared<FJsonValueObject>(FailureObject));
+			}
+			return FailureValues;
+		}
+
+		bool EditorToolTryParseVersionTriplet(const FString& Version, int32& OutMajor, int32& OutMinor, int32& OutPatch)
+		{
+			TArray<FString> Parts;
+			Version.ParseIntoArray(Parts, TEXT("."), true);
+			if (Parts.Num() < 2 || !LexTryParseString(OutMajor, *Parts[0]) || !LexTryParseString(OutMinor, *Parts[1]))
+			{
+				return false;
+			}
+
+			OutPatch = 0;
+			if (Parts.Num() >= 3 && !LexTryParseString(OutPatch, *Parts[2]))
+			{
+				return false;
+			}
+			return true;
+		}
+
+		int32 EditorToolCompareVersionTriplets(const FString& Left, const FString& Right)
+		{
+			int32 LeftMajor = 0;
+			int32 LeftMinor = 0;
+			int32 LeftPatch = 0;
+			int32 RightMajor = 0;
+			int32 RightMinor = 0;
+			int32 RightPatch = 0;
+			if (!EditorToolTryParseVersionTriplet(Left, LeftMajor, LeftMinor, LeftPatch)
+				|| !EditorToolTryParseVersionTriplet(Right, RightMajor, RightMinor, RightPatch))
+			{
+				return 0;
+			}
+
+			if (LeftMajor != RightMajor)
+			{
+				return LeftMajor < RightMajor ? -1 : 1;
+			}
+			if (LeftMinor != RightMinor)
+			{
+				return LeftMinor < RightMinor ? -1 : 1;
+			}
+			if (LeftPatch != RightPatch)
+			{
+				return LeftPatch < RightPatch ? -1 : 1;
+			}
+			return 0;
+		}
+
+		bool EditorToolTryLoadJsonObjectFromFile(const FString& FilePath, TSharedPtr<FJsonObject>& OutObject, FString& OutFailureReason)
+		{
+			OutObject.Reset();
+			OutFailureReason.Reset();
+
+			FString JsonText;
+			if (!FFileHelper::LoadFileToString(JsonText, *FilePath))
+			{
+				OutFailureReason = FString::Printf(TEXT("Failed to read JSON file '%s'."), *FilePath);
+				return false;
+			}
+
+			const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonText);
+			if (!FJsonSerializer::Deserialize(Reader, OutObject) || !OutObject.IsValid())
+			{
+				OutFailureReason = FString::Printf(TEXT("Invalid JSON in '%s'."), *FilePath);
+				return false;
+			}
+
+			return true;
+		}
+
+		bool EditorToolTrySaveJsonObjectToFile(const FString& FilePath, const TSharedRef<FJsonObject>& JsonObject, FString& OutFailureReason)
+		{
+			OutFailureReason.Reset();
+
+			FString JsonText;
+			const TSharedRef<TJsonWriter<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>> Writer =
+				TJsonWriterFactory<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>::Create(&JsonText);
+			if (!FJsonSerializer::Serialize(JsonObject, Writer))
+			{
+				OutFailureReason = TEXT("Failed to serialize project JSON.");
+				return false;
+			}
+
+			if (!FFileHelper::SaveStringToFile(JsonText, *FilePath))
+			{
+				OutFailureReason = FString::Printf(TEXT("Failed to write '%s'."), *FilePath);
+				return false;
+			}
+
+			return true;
 		}
 
 		FUnrealMcpExecutionResult ExecuteEditorStatus()
@@ -355,6 +678,540 @@ namespace UnrealMcp
 			return MakeProjectSettingsError(TEXT("KEY_NOT_FOUND"), Message, Category, Key, SourceConfig);
 		}
 
+		FUnrealMcpExecutionResult ExecuteAssetMove(const FString& ToolName, const FJsonObject& Arguments)
+		{
+			if (IsEditorPlaying())
+			{
+				return MakePieBlockedResult(ToolName);
+			}
+
+			FString SourcePath;
+			FString DestinationPath;
+			Arguments.TryGetStringField(TEXT("sourcePath"), SourcePath);
+			Arguments.TryGetStringField(TEXT("destinationPath"), DestinationPath);
+			bool bCreateRedirector = true;
+			bool bDryRun = false;
+			Arguments.TryGetBoolField(TEXT("createRedirector"), bCreateRedirector);
+			Arguments.TryGetBoolField(TEXT("dryRun"), bDryRun);
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("sourcePath"), SourcePath);
+			StructuredContent->SetStringField(TEXT("destinationPath"), DestinationPath);
+			StructuredContent->SetBoolField(TEXT("createRedirector"), bCreateRedirector);
+			StructuredContent->SetBoolField(TEXT("dryRun"), bDryRun);
+			StructuredContent->SetBoolField(TEXT("redirectorCreated"), false);
+			StructuredContent->SetNumberField(TEXT("referencingAssets"), 0);
+			StructuredContent->SetNumberField(TEXT("referencesUpdated"), 0);
+
+			FEditorToolAssetPath Source;
+			FString FailureReason;
+			if (!EditorToolTryNormalizeAssetPath(SourcePath, Source, FailureReason))
+			{
+				const FString Message = FString::Printf(TEXT("Source asset path is invalid or missing: %s"), *FailureReason);
+				return MakeEditorToolStructuredError(TEXT("SOURCE_NOT_FOUND"), Message, StructuredContent);
+			}
+
+			FEditorToolAssetPath Destination;
+			if (!EditorToolTryNormalizeAssetPath(DestinationPath, Destination, FailureReason))
+			{
+				const FString Message = FString::Printf(TEXT("Destination asset path is invalid: %s"), *FailureReason);
+				return MakeEditorToolStructuredError(TEXT("DESTINATION_INVALID"), Message, StructuredContent);
+			}
+
+			FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+			IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
+			UEditorAssetSubsystem* EditorAssetSubsystem = GEditor ? GEditor->GetEditorSubsystem<UEditorAssetSubsystem>() : nullptr;
+
+			UObject* SourceAsset = EditorToolLoadAssetForMigration(EditorAssetSubsystem, Source.ObjectPath, FailureReason);
+			if (!SourceAsset)
+			{
+				return MakeEditorToolStructuredError(TEXT("SOURCE_NOT_FOUND"), FailureReason, StructuredContent);
+			}
+
+			const TArray<FName> PreRenameReferencers = EditorToolGetReferencingPackages(AssetRegistry, Source.PackageName);
+			StructuredContent->SetNumberField(TEXT("referencingAssets"), PreRenameReferencers.Num());
+
+			const FAssetData DestinationData = AssetRegistry.GetAssetByObjectPath(FSoftObjectPath(Destination.ObjectPath));
+			if (DestinationData.IsValid() || (EditorAssetSubsystem && EditorAssetSubsystem->DoesAssetExist(Destination.ObjectPath)))
+			{
+				const FString Message = FString::Printf(TEXT("Destination asset '%s' already exists."), *Destination.ObjectPath);
+				return MakeEditorToolStructuredError(TEXT("DESTINATION_OCCUPIED"), Message, StructuredContent);
+			}
+
+			if (bDryRun)
+			{
+				StructuredContent->SetStringField(TEXT("normalizedSourcePath"), Source.ObjectPath);
+				StructuredContent->SetStringField(TEXT("normalizedDestinationPath"), Destination.ObjectPath);
+				return MakeExecutionResult(
+					FString::Printf(TEXT("Dry run: would move %s to %s. referencingAssets=%d"),
+						*Source.ObjectPath,
+						*Destination.ObjectPath,
+						PreRenameReferencers.Num()),
+					StructuredContent,
+					false);
+			}
+
+			FAssetToolsModule& AssetToolsModule = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools"));
+			IAssetTools& AssetTools = AssetToolsModule.Get();
+			TArray<FAssetRenameData> AssetsToRename;
+			AssetsToRename.Add(FAssetRenameData(SourceAsset, Destination.PackagePath, Destination.AssetName));
+
+			bool bRenameSucceeded = false;
+			{
+				TGuardValue<bool> UnattendedScriptGuard(GIsRunningUnattendedScript, true);
+				bRenameSucceeded = AssetTools.RenameAssets(AssetsToRename);
+			}
+
+			if (!bRenameSucceeded)
+			{
+				const FString Message = FString::Printf(
+					TEXT("IAssetTools::RenameAssets failed while moving '%s' to '%s'."),
+					*Source.ObjectPath,
+					*Destination.ObjectPath);
+				return MakeEditorToolStructuredError(TEXT("RENAME_FAILED"), Message, StructuredContent);
+			}
+
+			if (!bCreateRedirector)
+			{
+				if (UObjectRedirector* Redirector = EditorToolLoadRedirectorAtPath(AssetRegistry, Source.ObjectPath))
+				{
+					TArray<UObjectRedirector*> RedirectorsToFix;
+					RedirectorsToFix.Add(Redirector);
+					TGuardValue<bool> UnattendedScriptGuard(GIsRunningUnattendedScript, true);
+					AssetTools.FixupReferencers(RedirectorsToFix, false, ERedirectFixupMode::DeleteFixedUpRedirectors);
+				}
+			}
+
+			const bool bRedirectorCreated = EditorToolRedirectorExistsAtPath(AssetRegistry, Source.ObjectPath);
+			const TArray<FName> PostRenameReferencers = EditorToolGetReferencingPackages(AssetRegistry, Source.PackageName);
+			StructuredContent->SetBoolField(TEXT("redirectorCreated"), bRedirectorCreated);
+			StructuredContent->SetNumberField(TEXT("referencesUpdated"), FMath::Max(0, PreRenameReferencers.Num() - PostRenameReferencers.Num()));
+			StructuredContent->SetStringField(TEXT("normalizedSourcePath"), Source.ObjectPath);
+			StructuredContent->SetStringField(TEXT("normalizedDestinationPath"), Destination.ObjectPath);
+
+			return MakeExecutionResult(
+				FString::Printf(
+					TEXT("Moved asset %s to %s. redirectorCreated=%s referencesUpdated=%d"),
+					*Source.ObjectPath,
+					*Destination.ObjectPath,
+					bRedirectorCreated ? TEXT("true") : TEXT("false"),
+					static_cast<int32>(StructuredContent->GetNumberField(TEXT("referencesUpdated")))),
+				StructuredContent,
+				false);
+		}
+
+		FUnrealMcpExecutionResult ExecuteRedirectorFixup(const FString& ToolName, const FJsonObject& Arguments)
+		{
+			if (IsEditorPlaying())
+			{
+				return MakePieBlockedResult(ToolName);
+			}
+
+			FString RequestedPath = TEXT("/Game");
+			bool bDryRun = true;
+			bool bRecursive = true;
+			bool bFailOnAnyError = false;
+			Arguments.TryGetStringField(TEXT("path"), RequestedPath);
+			Arguments.TryGetBoolField(TEXT("dryRun"), bDryRun);
+			Arguments.TryGetBoolField(TEXT("recursive"), bRecursive);
+			Arguments.TryGetBoolField(TEXT("failOnAnyError"), bFailOnAnyError);
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("path"), RequestedPath);
+			StructuredContent->SetBoolField(TEXT("dryRun"), bDryRun);
+			StructuredContent->SetBoolField(TEXT("recursive"), bRecursive);
+			StructuredContent->SetNumberField(TEXT("redirectorsFound"), 0);
+			StructuredContent->SetNumberField(TEXT("redirectorsFixed"), 0);
+			StructuredContent->SetNumberField(TEXT("affectedAssets"), 0);
+			StructuredContent->SetArrayField(TEXT("failures"), TArray<TSharedPtr<FJsonValue>>());
+
+			FString NormalizedPath;
+			FString FailureReason;
+			if (!EditorToolTryNormalizeGameContentPath(RequestedPath, NormalizedPath, FailureReason))
+			{
+				return MakeEditorToolStructuredError(TEXT("INVALID_PATH"), FailureReason, StructuredContent);
+			}
+			StructuredContent->SetStringField(TEXT("path"), NormalizedPath);
+
+			FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+			IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
+			if (AssetRegistry.IsLoadingAssets() || AssetRegistry.IsGathering())
+			{
+				return MakeEditorToolStructuredError(
+					TEXT("ASSET_REGISTRY_NOT_READY"),
+					TEXT("The asset registry is still discovering or scanning assets; retry after discovery completes."),
+					StructuredContent);
+			}
+
+			FARFilter Filter;
+			Filter.PackagePaths.Add(*NormalizedPath);
+			Filter.ClassPaths.Add(UObjectRedirector::StaticClass()->GetClassPathName());
+			Filter.bRecursivePaths = bRecursive;
+
+			TArray<FAssetData> RedirectorAssets;
+			AssetRegistry.GetAssets(Filter, RedirectorAssets);
+			StructuredContent->SetNumberField(TEXT("redirectorsFound"), RedirectorAssets.Num());
+
+			TSet<FName> AffectedPackages;
+			TArray<UObjectRedirector*> RedirectorsToFix;
+			TArray<FString> RedirectorObjectPaths;
+			TArray<TPair<FString, FString>> Failures;
+			for (const FAssetData& RedirectorAsset : RedirectorAssets)
+			{
+				const FString RedirectorObjectPath = RedirectorAsset.GetSoftObjectPath().ToString();
+				RedirectorObjectPaths.Add(RedirectorObjectPath);
+				for (const FName& Referencer : EditorToolGetReferencingPackages(AssetRegistry, RedirectorAsset.PackageName.ToString()))
+				{
+					AffectedPackages.Add(Referencer);
+				}
+
+				if (!bDryRun)
+				{
+					if (UObjectRedirector* Redirector = Cast<UObjectRedirector>(RedirectorAsset.GetAsset()))
+					{
+						RedirectorsToFix.Add(Redirector);
+					}
+					else
+					{
+						Failures.Add(TPair<FString, FString>(RedirectorObjectPath, TEXT("Failed to load redirector object.")));
+					}
+				}
+			}
+			StructuredContent->SetNumberField(TEXT("affectedAssets"), AffectedPackages.Num());
+
+			if (bDryRun)
+			{
+				return MakeExecutionResult(
+					FString::Printf(TEXT("Dry run: found %d redirector(s) under %s affecting %d asset package(s)."),
+						RedirectorAssets.Num(),
+						*NormalizedPath,
+						AffectedPackages.Num()),
+					StructuredContent,
+					false);
+			}
+
+			if (RedirectorsToFix.Num() > 0)
+			{
+				FAssetToolsModule& AssetToolsModule = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools"));
+				TGuardValue<bool> UnattendedScriptGuard(GIsRunningUnattendedScript, true);
+				AssetToolsModule.Get().FixupReferencers(RedirectorsToFix, false, ERedirectFixupMode::DeleteFixedUpRedirectors);
+			}
+
+			int32 RedirectorsFixed = 0;
+			for (const FString& RedirectorObjectPath : RedirectorObjectPaths)
+			{
+				if (EditorToolRedirectorExistsAtPath(AssetRegistry, RedirectorObjectPath))
+				{
+					if (!Failures.ContainsByPredicate([&RedirectorObjectPath](const TPair<FString, FString>& Failure)
+					{
+						return Failure.Key == RedirectorObjectPath;
+					}))
+					{
+						Failures.Add(TPair<FString, FString>(RedirectorObjectPath, TEXT("Redirector still exists after fixup.")));
+					}
+				}
+				else
+				{
+					++RedirectorsFixed;
+				}
+			}
+
+			StructuredContent->SetNumberField(TEXT("redirectorsFixed"), RedirectorsFixed);
+			StructuredContent->SetArrayField(TEXT("failures"), EditorToolMakeRedirectorFailureArray(Failures));
+
+			const FString Text = FString::Printf(
+				TEXT("Fixed %d of %d redirector(s) under %s. affectedAssets=%d failures=%d"),
+				RedirectorsFixed,
+				RedirectorAssets.Num(),
+				*NormalizedPath,
+				AffectedPackages.Num(),
+				Failures.Num());
+
+			if (bFailOnAnyError && Failures.Num() > 0)
+			{
+				return MakeEditorToolStructuredError(TEXT("FIXUP_FAILED"), Text, StructuredContent);
+			}
+
+			return MakeExecutionResult(Text, StructuredContent, false);
+		}
+
+		FUnrealMcpExecutionResult ExecuteDependencyRemap(const FString& ToolName, const FJsonObject& Arguments)
+		{
+			if (IsEditorPlaying())
+			{
+				return MakePieBlockedResult(ToolName);
+			}
+
+			FString FromAssetPath;
+			FString ToAssetPath;
+			Arguments.TryGetStringField(TEXT("fromAssetPath"), FromAssetPath);
+			Arguments.TryGetStringField(TEXT("toAssetPath"), ToAssetPath);
+			bool bDryRun = true;
+			bool bDeleteSourceAfter = false;
+			Arguments.TryGetBoolField(TEXT("dryRun"), bDryRun);
+			Arguments.TryGetBoolField(TEXT("deleteSourceAfter"), bDeleteSourceAfter);
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("fromAssetPath"), FromAssetPath);
+			StructuredContent->SetStringField(TEXT("toAssetPath"), ToAssetPath);
+			StructuredContent->SetBoolField(TEXT("dryRun"), bDryRun);
+			StructuredContent->SetBoolField(TEXT("deleteSourceAfter"), bDeleteSourceAfter);
+			StructuredContent->SetNumberField(TEXT("referencingAssets"), 0);
+			StructuredContent->SetNumberField(TEXT("referencesRemapped"), 0);
+			StructuredContent->SetBoolField(TEXT("sourceDeleted"), false);
+
+			FEditorToolAssetPath Source;
+			FString FailureReason;
+			if (!EditorToolTryNormalizeAssetPath(FromAssetPath, Source, FailureReason))
+			{
+				return MakeEditorToolStructuredError(TEXT("SOURCE_NOT_FOUND"), FailureReason, StructuredContent);
+			}
+
+			FEditorToolAssetPath Target;
+			if (!EditorToolTryNormalizeAssetPath(ToAssetPath, Target, FailureReason))
+			{
+				return MakeEditorToolStructuredError(TEXT("DESTINATION_NOT_FOUND"), FailureReason, StructuredContent);
+			}
+
+			if (Source.ObjectPath == Target.ObjectPath)
+			{
+				return MakeEditorToolStructuredError(TEXT("REMAP_FAILED"), TEXT("fromAssetPath and toAssetPath must refer to different assets."), StructuredContent);
+			}
+
+			FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+			IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
+			UEditorAssetSubsystem* EditorAssetSubsystem = GEditor ? GEditor->GetEditorSubsystem<UEditorAssetSubsystem>() : nullptr;
+
+			UObject* SourceAsset = EditorToolLoadAssetForMigration(EditorAssetSubsystem, Source.ObjectPath, FailureReason);
+			if (!SourceAsset)
+			{
+				return MakeEditorToolStructuredError(TEXT("SOURCE_NOT_FOUND"), FailureReason, StructuredContent);
+			}
+
+			UObject* TargetAsset = EditorToolLoadAssetForMigration(EditorAssetSubsystem, Target.ObjectPath, FailureReason);
+			if (!TargetAsset)
+			{
+				return MakeEditorToolStructuredError(TEXT("DESTINATION_NOT_FOUND"), FailureReason, StructuredContent);
+			}
+
+			if (SourceAsset->GetClass() != TargetAsset->GetClass())
+			{
+				const FString Message = FString::Printf(
+					TEXT("Cannot remap %s (%s) to %s (%s) because their classes differ."),
+					*Source.ObjectPath,
+					*SourceAsset->GetClass()->GetPathName(),
+					*Target.ObjectPath,
+					*TargetAsset->GetClass()->GetPathName());
+				return MakeEditorToolStructuredError(TEXT("TYPE_MISMATCH"), Message, StructuredContent);
+			}
+
+			const TArray<FName> PreRemapReferencers = EditorToolGetReferencingPackages(AssetRegistry, Source.PackageName);
+			StructuredContent->SetNumberField(TEXT("referencingAssets"), PreRemapReferencers.Num());
+
+			if (bDryRun)
+			{
+				return MakeExecutionResult(
+					FString::Printf(TEXT("Dry run: would remap %d asset package(s) from %s to %s."),
+						PreRemapReferencers.Num(),
+						*Source.ObjectPath,
+						*Target.ObjectPath),
+					StructuredContent,
+					false);
+			}
+
+			TArray<UObject*> ObjectsToConsolidate;
+			ObjectsToConsolidate.Add(SourceAsset);
+			TSet<UObject*> ObjectsToConsolidateWithin;
+			TSet<UObject*> ObjectsToNotConsolidateWithin;
+			TGuardValue<bool> UnattendedScriptGuard(GIsRunningUnattendedScript, true);
+			ObjectTools::FConsolidationResults ConsolidationResults = ObjectTools::ConsolidateObjects(
+				TargetAsset,
+				ObjectsToConsolidate,
+				ObjectsToConsolidateWithin,
+				ObjectsToNotConsolidateWithin,
+				bDeleteSourceAfter,
+				true);
+
+			if (ConsolidationResults.InvalidConsolidationObjs.Num() > 0 || ConsolidationResults.FailedConsolidationObjs.Num() > 0)
+			{
+				const FString Message = FString::Printf(
+					TEXT("Reference consolidation failed. invalid=%d failed=%d"),
+					ConsolidationResults.InvalidConsolidationObjs.Num(),
+					ConsolidationResults.FailedConsolidationObjs.Num());
+				return MakeEditorToolStructuredError(TEXT("REMAP_FAILED"), Message, StructuredContent);
+			}
+
+			const TArray<FName> PostRemapReferencers = EditorToolGetReferencingPackages(AssetRegistry, Source.PackageName);
+			StructuredContent->SetNumberField(TEXT("referencesRemapped"), FMath::Max(0, PreRemapReferencers.Num() - PostRemapReferencers.Num()));
+
+			const bool bSourceDeleted = bDeleteSourceAfter
+				&& EditorToolIsAssetDeletedOrRedirected(AssetRegistry, EditorAssetSubsystem, Source.ObjectPath);
+			StructuredContent->SetBoolField(TEXT("sourceDeleted"), bSourceDeleted);
+
+			if (bDeleteSourceAfter && PostRemapReferencers.Num() > 0)
+			{
+				const FString Message = FString::Printf(
+					TEXT("Source asset '%s' still has %d referencer(s) after consolidation."),
+					*Source.ObjectPath,
+					PostRemapReferencers.Num());
+				return MakeEditorToolStructuredError(TEXT("SOURCE_STILL_REFERENCED"), Message, StructuredContent);
+			}
+
+			if (bDeleteSourceAfter && !bSourceDeleted)
+			{
+				const FString Message = FString::Printf(TEXT("Source asset '%s' was not deleted after consolidation."), *Source.ObjectPath);
+				return MakeEditorToolStructuredError(TEXT("REMAP_FAILED"), Message, StructuredContent);
+			}
+
+			return MakeExecutionResult(
+				FString::Printf(
+					TEXT("Remapped references from %s to %s. referencesRemapped=%d sourceDeleted=%s"),
+					*Source.ObjectPath,
+					*Target.ObjectPath,
+					static_cast<int32>(StructuredContent->GetNumberField(TEXT("referencesRemapped"))),
+					bSourceDeleted ? TEXT("true") : TEXT("false")),
+				StructuredContent,
+				false);
+		}
+
+		FUnrealMcpExecutionResult ExecuteProjectVersionMigration(const FString& ToolName, const FJsonObject& Arguments)
+		{
+			if (IsEditorPlaying())
+			{
+				return MakePieBlockedResult(ToolName);
+			}
+
+			FString TargetEngineVersion;
+			Arguments.TryGetStringField(TEXT("targetEngineVersion"), TargetEngineVersion);
+			TargetEngineVersion = TargetEngineVersion.TrimStartAndEnd();
+			bool bDryRun = true;
+			Arguments.TryGetBoolField(TEXT("dryRun"), bDryRun);
+
+			FString ProjectFilePath = FPaths::GetProjectFilePath();
+			Arguments.TryGetStringField(TEXT("projectFilePath"), ProjectFilePath);
+			ProjectFilePath = FPaths::ConvertRelativePathToFull(ProjectFilePath);
+			FPaths::NormalizeFilename(ProjectFilePath);
+
+			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
+			StructuredContent->SetStringField(TEXT("projectFilePath"), ProjectFilePath);
+			StructuredContent->SetStringField(TEXT("currentEngineVersion"), FString());
+			StructuredContent->SetStringField(TEXT("targetEngineVersion"), TargetEngineVersion);
+			StructuredContent->SetBoolField(TEXT("dryRun"), bDryRun);
+			StructuredContent->SetBoolField(TEXT("migrationApplied"), false);
+			StructuredContent->SetBoolField(TEXT("restartRecommended"), false);
+
+			TArray<FString> CompatibilityWarnings;
+			TArray<FString> ManualSteps;
+			ManualSteps.Add(TEXT("Close Unreal Editor before rebuilding against the target engine."));
+			ManualSteps.Add(TEXT("Switch Engine Version on the .uproject if UnrealVersionSelector is required on this machine."));
+			ManualSteps.Add(TEXT("Regenerate project files for the target engine."));
+			ManualSteps.Add(TEXT("Rebuild plugin binaries against the target engine."));
+			ManualSteps.Add(FString::Printf(TEXT("Reopen the project with Unreal Engine %s."), *TargetEngineVersion));
+
+			auto FinalizeArrays = [&StructuredContent, &CompatibilityWarnings, &ManualSteps]()
+			{
+				StructuredContent->SetArrayField(TEXT("compatibilityWarnings"), EditorToolMakeJsonStringArray(CompatibilityWarnings));
+				StructuredContent->SetArrayField(TEXT("manualSteps"), EditorToolMakeJsonStringArray(ManualSteps));
+			};
+
+			if (TargetEngineVersion != TEXT("5.6") && TargetEngineVersion != TEXT("5.7"))
+			{
+				FinalizeArrays();
+				return MakeEditorToolStructuredError(
+					TEXT("INVALID_TARGET_VERSION"),
+					TEXT("targetEngineVersion must be either \"5.6\" or \"5.7\"."),
+					StructuredContent);
+			}
+
+			if (!FPaths::FileExists(ProjectFilePath))
+			{
+				FinalizeArrays();
+				return MakeEditorToolStructuredError(
+					TEXT("PROJECT_FILE_NOT_FOUND"),
+					FString::Printf(TEXT("Project file '%s' was not found."), *ProjectFilePath),
+					StructuredContent);
+			}
+
+			TSharedPtr<FJsonObject> ProjectJson;
+			FString FailureReason;
+			if (!EditorToolTryLoadJsonObjectFromFile(ProjectFilePath, ProjectJson, FailureReason))
+			{
+				FinalizeArrays();
+				return MakeEditorToolStructuredError(TEXT("PROJECT_FILE_INVALID_JSON"), FailureReason, StructuredContent);
+			}
+
+			FString CurrentEngineVersion;
+			ProjectJson->TryGetStringField(TEXT("EngineAssociation"), CurrentEngineVersion);
+			StructuredContent->SetStringField(TEXT("currentEngineVersion"), CurrentEngineVersion);
+
+			const FString ProjectModuleName = FPaths::GetBaseFilename(ProjectFilePath);
+			bool bFoundProjectModule = false;
+			const TArray<TSharedPtr<FJsonValue>>* ModulesArray = nullptr;
+			if (ProjectJson->TryGetArrayField(TEXT("Modules"), ModulesArray) && ModulesArray)
+			{
+				for (const TSharedPtr<FJsonValue>& ModuleValue : *ModulesArray)
+				{
+					const TSharedPtr<FJsonObject> ModuleObject = ModuleValue.IsValid() ? ModuleValue->AsObject() : nullptr;
+					FString ModuleName;
+					if (ModuleObject.IsValid()
+						&& ModuleObject->TryGetStringField(TEXT("Name"), ModuleName)
+						&& ModuleName == ProjectModuleName)
+					{
+						bFoundProjectModule = true;
+						break;
+					}
+				}
+			}
+			if (!bFoundProjectModule)
+			{
+				CompatibilityWarnings.Add(FString::Printf(
+					TEXT("No module named '%s' was found in the .uproject Modules array; verify target/project file generation manually."),
+					*ProjectModuleName));
+			}
+
+			const FString PluginDescriptorPath = FPaths::Combine(FPaths::ProjectPluginsDir(), TEXT("UnrealMcp"), TEXT("UnrealMcp.uplugin"));
+			TSharedPtr<FJsonObject> PluginJson;
+			if (FPaths::FileExists(PluginDescriptorPath) && EditorToolTryLoadJsonObjectFromFile(PluginDescriptorPath, PluginJson, FailureReason))
+			{
+				FString PluginEngineVersion;
+				if (PluginJson->TryGetStringField(TEXT("EngineVersion"), PluginEngineVersion)
+					&& EditorToolCompareVersionTriplets(TargetEngineVersion, PluginEngineVersion) < 0)
+				{
+					CompatibilityWarnings.Add(FString::Printf(
+						TEXT("UnrealMcp.uplugin declares EngineVersion %s, which is above requested target %s."),
+						*PluginEngineVersion,
+						*TargetEngineVersion));
+				}
+			}
+			else
+			{
+				CompatibilityWarnings.Add(TEXT("Could not read Plugins/UnrealMcp/UnrealMcp.uplugin to verify EngineVersion compatibility."));
+			}
+
+			if (!bDryRun)
+			{
+				ProjectJson->SetStringField(TEXT("EngineAssociation"), TargetEngineVersion);
+				if (!EditorToolTrySaveJsonObjectToFile(ProjectFilePath, ProjectJson.ToSharedRef(), FailureReason))
+				{
+					FinalizeArrays();
+					return MakeEditorToolStructuredError(TEXT("WRITE_FAILED"), FailureReason, StructuredContent);
+				}
+				StructuredContent->SetBoolField(TEXT("migrationApplied"), true);
+				StructuredContent->SetBoolField(TEXT("restartRecommended"), true);
+			}
+
+			FinalizeArrays();
+			return MakeExecutionResult(
+				FString::Printf(
+					TEXT("%s project EngineAssociation from '%s' to '%s'. warnings=%d"),
+					bDryRun ? TEXT("Dry run: would migrate") : TEXT("Migrated"),
+					CurrentEngineVersion.IsEmpty() ? TEXT("<unset>") : *CurrentEngineVersion,
+					*TargetEngineVersion,
+					CompatibilityWarnings.Num()),
+				StructuredContent,
+				false);
+		}
+
 		FUnrealMcpExecutionResult ExecuteTailLog(const FJsonObject& Arguments)
 		{
 			const int32 RequestedLines = FMath::Min(GetPositiveIntArgument(Arguments, TEXT("lines"), 120), 500);
@@ -419,7 +1276,7 @@ namespace UnrealMcp
 			return MakeExecutionResult(TailText, StructuredContent, false);
 		}
 
-		bool EditorToolIsEditorPlaying()
+		bool IsEditorPlaying()
 		{
 			return GEditor
 				&& (GEditor->PlayWorld != nullptr
@@ -427,7 +1284,7 @@ namespace UnrealMcp
 					|| GEditor->GetPlaySessionRequest().IsSet());
 		}
 
-		FUnrealMcpExecutionResult EditorToolMakePieBlockedResult(const FString& ToolName)
+		FUnrealMcpExecutionResult MakePieBlockedResult(const FString& ToolName)
 		{
 			return MakeExecutionResult(
 				FString::Printf(TEXT("Tool '%s' is blocked while Play In Editor is active or starting."), *ToolName),
@@ -598,7 +1455,7 @@ namespace UnrealMcp
 				return MakeExecutionResult(TEXT("GEditor is unavailable."), nullptr, true);
 			}
 
-			if (EditorToolIsEditorPlaying())
+			if (IsEditorPlaying())
 			{
 				return MakeExecutionResult(TEXT("A Play In Editor session is already active or queued."), nullptr, true);
 			}
@@ -923,9 +1780,9 @@ namespace UnrealMcp
 
 		FUnrealMcpExecutionResult ExecuteMapCheck(const FString& ToolName)
 		{
-			if (EditorToolIsEditorPlaying())
+			if (IsEditorPlaying())
 			{
-				return EditorToolMakePieBlockedResult(ToolName);
+				return MakePieBlockedResult(ToolName);
 			}
 
 			UWorld* EditorWorld = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
@@ -993,9 +1850,9 @@ namespace UnrealMcp
 
 		FUnrealMcpExecutionResult ExecuteOpenMap(const FString& ToolName, const FJsonObject& Arguments)
 		{
-			if (EditorToolIsEditorPlaying())
+			if (IsEditorPlaying())
 			{
-				return EditorToolMakePieBlockedResult(ToolName);
+				return MakePieBlockedResult(ToolName);
 			}
 
 			FString MapPath;
@@ -1102,9 +1959,9 @@ namespace UnrealMcp
 
 		FUnrealMcpExecutionResult ExecuteSaveDirtyPackages(const FString& ToolName, const FJsonObject& Arguments)
 		{
-			if (EditorToolIsEditorPlaying())
+			if (IsEditorPlaying())
 			{
-				return EditorToolMakePieBlockedResult(ToolName);
+				return MakePieBlockedResult(ToolName);
 			}
 
 			bool bSaveMaps = true;
@@ -1296,6 +2153,30 @@ namespace UnrealMcp
 		if (ToolName == TEXT("unreal.project_settings_get"))
 		{
 			OutResult = ExecuteProjectSettingsGet(Arguments);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.asset_move"))
+		{
+			OutResult = ExecuteAssetMove(ToolName, Arguments);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.redirector_fixup"))
+		{
+			OutResult = ExecuteRedirectorFixup(ToolName, Arguments);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.dependency_remap"))
+		{
+			OutResult = ExecuteDependencyRemap(ToolName, Arguments);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.project_version_migration"))
+		{
+			OutResult = ExecuteProjectVersionMigration(ToolName, Arguments);
 			return true;
 		}
 

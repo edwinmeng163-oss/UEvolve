@@ -36,6 +36,10 @@ Editor action tools:
 - `unreal.open_map`
 - `unreal.open_asset`
 - `unreal.sync_content_browser`
+- `unreal.asset_move`
+- `unreal.redirector_fixup`
+- `unreal.dependency_remap`
+- `unreal.project_version_migration`
 - `unreal.spawn_actor_basic`
 - `unreal.spawn_actor_batch_basic`
 - `unreal.spawn_static_mesh_actor`

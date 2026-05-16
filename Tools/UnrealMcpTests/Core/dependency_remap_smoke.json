@@ -1,0 +1,22 @@
+{
+  "name": "dependency_remap_smoke",
+  "description": "List-only smoke for replacing all references to one asset with another. The write call is not executed in CI.",
+  "category": "manual_smoke",
+  "expectToolListed": true,
+  "executeTool": false,
+  "expectToolCallError": false,
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 139,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.dependency_remap",
+      "arguments": {
+        "fromAssetPath": "/Game/__UEvolveMcpTest_Migration/SourceAsset",
+        "toAssetPath": "/Game/__UEvolveMcpTest_Migration/TargetAsset",
+        "dryRun": true,
+        "deleteSourceAfter": false
+      }
+    }
+  }
+}
