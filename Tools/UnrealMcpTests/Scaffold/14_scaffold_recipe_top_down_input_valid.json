@@ -1,0 +1,27 @@
+{
+  "name": "scaffold_recipe_top_down_input_valid",
+  "description": "Generate the high-level top-down input recipe without writing project memory.",
+  "category": "happy_path",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": false,
+  "expectToolCallStructuredFields": {
+    "action": "scaffold_recipe",
+    "recipeName": "top_down_input",
+    "memoryWritten": false
+  },
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 414,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.scaffold_recipe",
+      "arguments": {
+        "recipeName": "top_down_input",
+        "rootPath": "/Game/__UEvolveMcpTest/Recipes",
+        "writeMemory": false,
+        "includeToolCalls": true
+      }
+    }
+  }
+}

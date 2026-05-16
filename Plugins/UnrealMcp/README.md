@@ -384,6 +384,22 @@ High-level bounded recipe examples:
 /tool unreal.scaffold_recipe {"recipeName":"mcp_self_extension_pipeline","writeMemory":true}
 ```
 
+```text
+/tool unreal.scaffold_recipe {"recipeName":"rts_camera","rootPath":"/Game/MCPDemo","writeMemory":true}
+```
+
+```text
+/tool unreal.scaffold_recipe {"recipeName":"top_down_input","rootPath":"/Game/MCPDemo","writeMemory":true}
+```
+
+```text
+/tool unreal.scaffold_recipe {"recipeName":"hud_dashboard","rootPath":"/Game/MCPDemo","writeMemory":true}
+```
+
+```text
+/tool unreal.scaffold_recipe {"recipeName":"asset_naming_audit","rootPath":"/Game/MCPDemo","writeMemory":true}
+```
+
 Generic workflow composition example:
 
 ```text

@@ -382,8 +382,8 @@ v0.15 chunk 2b Blueprint macro/interface tools (`unreal.bp_add_macro_graph`,
 `unreal.bp_delete_macro_graph`, `unreal.bp_interface_add`, and
 `unreal.bp_interface_remove`). Earlier handoff text lagged at 119 entries.
 
-Current project status: v0.15 chunk 2b landed; Lane Z Blueprint refactor is
-complete. The previous Lane V
+Current project status: v0.15 chunk 3 landed; recipe catalog now lists 7 named
+recipes, and Lane Z Blueprint refactor is complete. The previous Lane V
 get/inspect-tool gap for actor property, actor transform, and project settings
 readback is done in C++; Blueprint delete + rename basics are done in C++,
 and macro + interface editing is now done in C++.

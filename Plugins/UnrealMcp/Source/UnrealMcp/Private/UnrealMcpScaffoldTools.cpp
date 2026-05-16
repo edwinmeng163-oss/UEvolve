@@ -1801,10 +1801,148 @@ namespace UnrealMcp
 					AddRecipeToolCall(ToolCalls, TEXT("unreal.mcp_extension_pipeline"), TEXT("Run the gated validate/dryRun/apply/build/test pipeline once scaffold is reviewed."), TEXT("{\"toolName\":\"unreal.my_tool\",\"mode\":\"auto\",\"enforceGate\":true,\"generateTests\":true,\"apply\":true,\"build\":true,\"runTest\":true,\"runTestSuite\":true}"));
 				}
 			}
+			else if (RecipeName == TEXT("rts_camera"))
+			{
+				Title = TEXT("RTS top-down camera recipe");
+				Objective = TEXT("Stand up a top-down camera setup with a pawn that strafes via WASD, edge-scrolls near screen borders, and zooms with the mouse wheel, suitable for an RTS / strategy gameplay prototype.");
+				SuggestedNextStep = TEXT("Inventory the current pawn/camera setup first, then create the RTS pawn, controller, and GameMode under the chosen root before wiring input.");
+				AddRecipeStep(
+					Steps,
+					TEXT("Inventory camera and pawn assets"),
+					TEXT("Inspect editor state, list existing assets under the target root, and read relevant actor properties before creating replacements."),
+					{ TEXT("unreal.editor_status"), TEXT("unreal.list_assets"), TEXT("unreal.actor_get_property") },
+					{ TEXT("Chosen root path is known."), TEXT("Existing pawn, controller, camera, or GameMode assets are identified."), TEXT("Any active camera actors or pawn defaults are documented.") },
+					TEXT("Do not assume the current map already uses a strategy camera; verify the existing possession path before editing."));
+				AddRecipeStep(
+					Steps,
+					TEXT("Create RTS Blueprint assets"),
+					TEXT("Create BP_RTSCameraPawn with SpringArm/Camera intent, BP_RTSPlayerController, and a matching GameMode under the chosen root."),
+					{ TEXT("unreal.create_blueprint_class"), TEXT("unreal.bp_add_variable"), TEXT("unreal.bp_compile_save") },
+					{ TEXT("BP_RTSCameraPawn parent class is /Script/Engine.Pawn."), TEXT("BP_RTSPlayerController parent class is /Script/Engine.PlayerController."), TEXT("Blueprint assets compile successfully.") },
+					TEXT("If component defaults cannot be expressed with Blueprint node tools, use one scoped execute_python call and verify with read-back tools."));
+				AddRecipeStep(
+					Steps,
+					TEXT("Add movement and zoom input"),
+					TEXT("Wire WASD strafe, screen-edge scrolling, and mouse-wheel zoom through existing Blueprint node tools or the execute_python fallback."),
+					{ TEXT("unreal.execute_python"), TEXT("unreal.bp_add_call_function_node"), TEXT("unreal.bp_connect_pins") },
+					{ TEXT("Movement speed, edge-scroll margin, zoom speed, and zoom clamp variables exist."), TEXT("Input execution paths reach movement and spring-arm length updates."), TEXT("Blueprint compile succeeds after wiring.") },
+					TEXT("Clamp zoom distance; otherwise the spring arm can collapse into the pawn or push the camera outside the useful framing range."));
+				AddRecipeStep(
+					Steps,
+					TEXT("Verify possession and framing"),
+					TEXT("Open the target map, start PIE when ready, confirm the RTS pawn is possessed, inspect the camera pawn transform, then stop PIE."),
+					{ TEXT("unreal.open_map"), TEXT("unreal.start_pie"), TEXT("unreal.editor_status"), TEXT("unreal.actor_get_transform"), TEXT("unreal.stop_pie") },
+					{ TEXT("PIE starts without compile errors."), TEXT("Possessed pawn class matches BP_RTSCameraPawn."), TEXT("Camera transform frames the intended playable area.") },
+					TEXT("If PIE verification is deferred, write the next step to project memory before pausing."));
+				if (bIncludeToolCalls)
+				{
+					AddRecipeToolCall(ToolCalls, TEXT("unreal.create_blueprint_class"), TEXT("Create the RTS camera pawn Blueprint."), FString::Printf(TEXT("{\"assetPath\":\"%s/Blueprints/RTSCamera/BP_RTSCameraPawn\",\"parentClass\":\"/Script/Engine.Pawn\",\"openAfterCreate\":false,\"compile\":true}"), *RootPath));
+					AddRecipeToolCall(ToolCalls, TEXT("unreal.create_blueprint_class"), TEXT("Create the RTS PlayerController Blueprint."), FString::Printf(TEXT("{\"assetPath\":\"%s/Blueprints/RTSCamera/BP_RTSPlayerController\",\"parentClass\":\"/Script/Engine.PlayerController\",\"openAfterCreate\":false,\"compile\":true}"), *RootPath));
+					AddRecipeToolCall(ToolCalls, TEXT("unreal.create_blueprint_class"), TEXT("Create the RTS GameMode Blueprint."), FString::Printf(TEXT("{\"assetPath\":\"%s/Blueprints/RTSCamera/BP_RTSGameMode\",\"parentClass\":\"/Script/Engine.GameModeBase\",\"openAfterCreate\":false,\"compile\":true}"), *RootPath));
+				}
+			}
+			else if (RecipeName == TEXT("top_down_input"))
+			{
+				Title = TEXT("Top-down click-to-move input recipe");
+				Objective = TEXT("Add click-to-move plus WASD-strafe input to an existing top-down Character using Enhanced Input or legacy PlayerInput axis mappings, and verify the navigation system projects clicks onto the navmesh.");
+				SuggestedNextStep = TEXT("Confirm the current Character, controller, input stack, and navmesh first; do not assume Enhanced Input is enabled.");
+				AddRecipeStep(
+					Steps,
+					TEXT("Verify navmesh and character setup"),
+					TEXT("Inspect editor state, list level actors, read target Character or controller properties, and run map check before changing input."),
+					{ TEXT("unreal.editor_status"), TEXT("unreal.list_level_actors"), TEXT("unreal.actor_get_property"), TEXT("unreal.map_check") },
+					{ TEXT("Target top-down Character is identified."), TEXT("NavMeshBoundsVolume or equivalent navigation setup is present."), TEXT("Map check has no blocking navigation or pawn errors.") },
+					TEXT("If no navmesh is present, add or fix navigation before wiring click-to-move logic."));
+				AddRecipeStep(
+					Steps,
+					TEXT("Wire input bindings"),
+					TEXT("Read the input project setting, then wire click and WASD behavior with scoped Python or Blueprint function-call nodes."),
+					{ TEXT("unreal.project_settings_get"), TEXT("unreal.execute_python"), TEXT("unreal.bp_add_call_function_node"), TEXT("unreal.bp_connect_pins") },
+					{ TEXT("Input stack is classified as Enhanced Input or legacy PlayerInput."), TEXT("Click handling projects the cursor hit location onto navigation."), TEXT("WASD paths add strafe movement without breaking click-to-move.") },
+					TEXT("Do not assume Enhanced Input is enabled; check project settings and existing assets first."));
+				AddRecipeStep(
+					Steps,
+					TEXT("Compile and verify movement"),
+					TEXT("Compile and save the edited Blueprint, save dirty packages, run PIE, verify movement changes the Character transform, then stop PIE."),
+					{ TEXT("unreal.bp_compile_save"), TEXT("unreal.save_dirty_packages"), TEXT("unreal.start_pie"), TEXT("unreal.actor_get_transform"), TEXT("unreal.stop_pie") },
+					{ TEXT("Blueprint compile succeeds."), TEXT("PIE starts without input setup errors."), TEXT("Click or WASD movement changes the Character transform as expected.") },
+					TEXT("For large input rewires, verify one binding at a time before adding the next."));
+				if (bIncludeToolCalls)
+				{
+					AddRecipeToolCall(ToolCalls, TEXT("unreal.project_settings_get"), TEXT("Read the legacy input class setting before deciding the wiring path."), TEXT("{\"category\":\"input\",\"key\":\"DefaultPlayerInputClass\"}"));
+					AddRecipeToolCall(ToolCalls, TEXT("unreal.bp_add_call_function_node"), TEXT("Add a navigation move-to call node in the controller or Character EventGraph."), FString::Printf(TEXT("{\"blueprintPath\":\"%s/Blueprints/TopDown/BP_TopDownController\",\"graphName\":\"EventGraph\",\"functionClassPath\":\"/Script/AIModule.AIBlueprintHelperLibrary\",\"functionName\":\"SimpleMoveToLocation\",\"x\":500,\"y\":120}"), *RootPath));
+				}
+			}
+			else if (RecipeName == TEXT("hud_dashboard"))
+			{
+				Title = TEXT("HUD dashboard widget recipe");
+				Objective = TEXT("Build a multi-panel Widget Blueprint dashboard with a status header, two metrics panels such as health and score, and a footer with two buttons, then verify layout and event binding.");
+				SuggestedNextStep = TEXT("Create the dashboard widget shell with compile=false, inspect the tree, then add panels and bind events before one final compile/save.");
+				AddRecipeStep(
+					Steps,
+					TEXT("Create dashboard widget shell"),
+					TEXT("Build a Widget Blueprint template for the dashboard root and inspect the resulting designer tree."),
+					{ TEXT("unreal.widget_build_template"), TEXT("unreal.widget_dump_tree") },
+					{ TEXT("Widget Blueprint exists."), TEXT("Root canvas or panel is present."), TEXT("Initial header/status widgets are visible in widget_dump_tree.") },
+					TEXT("Keep compile=false while composing the layout; compile once near the end."));
+				AddRecipeStep(
+					Steps,
+					TEXT("Add metric panels and variables"),
+					TEXT("Add health and score panels, set display properties, position their slots, and expose designer widgets as Blueprint variables."),
+					{ TEXT("unreal.widget_add"), TEXT("unreal.widget_set_property"), TEXT("unreal.widget_set_slot_layout"), TEXT("unreal.widget_bind_blueprint_variable") },
+					{ TEXT("widget_dump_tree shows the two metric panels and named children."), TEXT("Panel positions and sizes match the requested dashboard layout."), TEXT("Bound widget variables are exposed for Blueprint use.") },
+					TEXT("Use deterministic widget names so later binding and verification can target exact nodes."));
+				AddRecipeStep(
+					Steps,
+					TEXT("Wire footer buttons and compile"),
+					TEXT("Bind footer button click events, compile the Widget Blueprint, and save dirty packages."),
+					{ TEXT("unreal.widget_bind_event"), TEXT("unreal.bp_compile_save"), TEXT("unreal.save_dirty_packages") },
+					{ TEXT("Button OnClicked event nodes exist."), TEXT("Widget Blueprint compile succeeds."), TEXT("Saved packages include the dashboard widget package.") },
+					TEXT("Bind button events after exposing button widgets as variables; otherwise the generated event may not resolve."));
+				if (bIncludeToolCalls)
+				{
+					AddRecipeToolCall(ToolCalls, TEXT("unreal.widget_build_template"), TEXT("Create the dashboard widget shell."), FString::Printf(TEXT("{\"widgetBlueprintPath\":\"%s/Blueprints/UI/WBP_HUDDashboard\",\"templateName\":\"mcp_demo_hud\",\"title\":\"Dashboard\",\"replaceRoot\":true,\"compile\":false,\"savePackage\":false}"), *RootPath));
+					AddRecipeToolCall(ToolCalls, TEXT("unreal.widget_add"), TEXT("Add a footer button to the dashboard root canvas."), FString::Printf(TEXT("{\"widgetBlueprintPath\":\"%s/Blueprints/UI/WBP_HUDDashboard\",\"parentWidgetName\":\"Root\",\"widgetName\":\"FooterConfirmButton\",\"widgetClass\":\"Button\",\"index\":-1,\"isVariable\":true}"), *RootPath));
+					AddRecipeToolCall(ToolCalls, TEXT("unreal.widget_bind_event"), TEXT("Bind the footer button click event."), FString::Printf(TEXT("{\"widgetBlueprintPath\":\"%s/Blueprints/UI/WBP_HUDDashboard\",\"widgetName\":\"FooterConfirmButton\",\"eventName\":\"OnClicked\",\"functionName\":\"OnFooterConfirmClicked\",\"x\":300,\"y\":160,\"compile\":true}"), *RootPath));
+				}
+			}
+			else if (RecipeName == TEXT("asset_naming_audit"))
+			{
+				Title = TEXT("Asset naming convention audit recipe");
+				Objective = TEXT("Walk a project folder, list assets, classify by type, and flag assets whose names do not follow the project's prefix convention such as BP_, T_, M_, A_, etc. for batch rename triage.");
+				SuggestedNextStep = TEXT("List the target folder and read the team's naming-convention memory before generating a read-only classification report.");
+				AddRecipeStep(
+					Steps,
+					TEXT("List the target tree"),
+					TEXT("List assets and maps under the chosen root, and inspect relevant actor properties only when map actors are part of the audit context."),
+					{ TEXT("unreal.list_assets"), TEXT("unreal.list_maps"), TEXT("unreal.actor_get_property") },
+					{ TEXT("Target content tree has been enumerated."), TEXT("Map assets are separated from other asset classes."), TEXT("Any actor-specific audit scope is explicit.") },
+					TEXT("Keep this recipe read-only; asset renames are a separate migration pass."));
+				AddRecipeStep(
+					Steps,
+					TEXT("Read naming convention memory"),
+					TEXT("Read the team's naming convention from project memory or a project skill, and default to common UE Style Guide prefixes if no local convention is found."),
+					{ TEXT("unreal.project_memory_read"), TEXT("unreal.skill_read") },
+					{ TEXT("Convention source is documented."), TEXT("Prefix map covers the asset classes being audited."), TEXT("Fallback prefixes are clearly marked when memory is absent.") },
+					TEXT("Do not silently mix team-specific conventions with a generic style guide; report the source of the rule set."));
+				AddRecipeStep(
+					Steps,
+					TEXT("Report flagged assets"),
+					TEXT("Generate a read-only classification report with flagged asset names and optionally write a pause-trail memory entry when the result set is large."),
+					{ TEXT("unreal.list_assets"), TEXT("unreal.execute_python"), TEXT("unreal.project_memory_write") },
+					{ TEXT("Report groups assets by class or inferred type."), TEXT("Flagged assets include expected prefix and current name."), TEXT("No asset rename operation was performed.") },
+					TEXT("This recipe does not rename assets; use a reviewed migration workflow or future rename tools for the rename pass."));
+				if (bIncludeToolCalls)
+				{
+					AddRecipeToolCall(ToolCalls, TEXT("unreal.list_assets"), TEXT("List candidate assets under the audit root."), FString::Printf(TEXT("{\"path\":\"%s\",\"recursive\":true,\"limit\":500}"), *RootPath));
+					AddRecipeToolCall(ToolCalls, TEXT("unreal.project_memory_read"), TEXT("Read the team's asset prefix convention if one has been saved."), TEXT("{\"key\":\"asset.naming_convention\",\"includeContent\":true}"));
+					AddRecipeToolCall(ToolCalls, TEXT("unreal.execute_python"), TEXT("Generate a read-only asset-prefix classification report."), FString::Printf(TEXT("{\"command\":\"import unreal\\nroot = '%s'\\nprefix_by_class = {'Blueprint':'BP_', 'Texture2D':'T_', 'Material':'M_', 'AnimationSequence':'A_', 'SoundWave':'S_'}\\nregistry = unreal.AssetRegistryHelpers.get_asset_registry()\\nassets = registry.get_assets_by_path(root, recursive=True)\\nflagged = []\\nfor data in assets:\\n    name = str(data.asset_name)\\n    cls = str(data.asset_class_path.asset_name)\\n    expected = prefix_by_class.get(cls)\\n    if expected and not name.startswith(expected):\\n        flagged.append((str(data.package_name), cls, expected, name))\\nprint('Asset naming audit root:', root)\\nprint('Assets scanned:', len(assets))\\nprint('Flagged assets:', len(flagged))\\nfor package, cls, expected, name in flagged[:100]:\\n    print(f'{package}: class={cls} expected={expected} name={name}')\\nif len(flagged) > 100:\\n    print(f'... {len(flagged) - 100} more flagged assets')\",\"mode\":\"ExecuteFile\",\"unattended\":true}"), *RootPath));
+				}
+			}
 			else
 			{
 				return MakeExecutionResult(
-					TEXT("Unknown recipeName. Supported recipes: first_person_ground_character, widget_hud, mcp_self_extension_pipeline."),
+					TEXT("Unknown recipeName. Supported recipes: first_person_ground_character, widget_hud, mcp_self_extension_pipeline, rts_camera, top_down_input, hud_dashboard, asset_naming_audit."),
 					nullptr,
 					true);
 			}

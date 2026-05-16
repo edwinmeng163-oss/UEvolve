@@ -1,0 +1,27 @@
+{
+  "name": "scaffold_recipe_hud_dashboard_valid",
+  "description": "Generate the high-level HUD dashboard recipe without writing project memory.",
+  "category": "happy_path",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": false,
+  "expectToolCallStructuredFields": {
+    "action": "scaffold_recipe",
+    "recipeName": "hud_dashboard",
+    "memoryWritten": false
+  },
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 415,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.scaffold_recipe",
+      "arguments": {
+        "recipeName": "hud_dashboard",
+        "rootPath": "/Game/__UEvolveMcpTest/Recipes",
+        "writeMemory": false,
+        "includeToolCalls": true
+      }
+    }
+  }
+}
