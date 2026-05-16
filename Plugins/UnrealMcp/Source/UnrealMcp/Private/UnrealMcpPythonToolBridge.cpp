@@ -1,6 +1,7 @@
 #include "UnrealMcpPythonToolBridge.h"
 
 #include "UnrealMcpModule.h"
+#include "UnrealMcpSharedPathResolver.h"
 #include "UnrealMcpToolHandlerRegistry.h"
 
 #include "Dom/JsonObject.h"
@@ -195,13 +196,24 @@ namespace UnrealMcpPythonToolBridge
 			const FString& Action,
 			const FString& Reason,
 			const FString& AbsoluteHandlerPath,
-			const FString& ActualSha256)
+			const FString& ActualSha256,
+			const FToolsReadResolution* HandlerResolution = nullptr)
 		{
 			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
 			StructuredContent->SetStringField(TEXT("action"), Action);
 			StructuredContent->SetStringField(TEXT("handlerName"), HandlerEntry.HandlerName);
 			StructuredContent->SetStringField(TEXT("pythonHandlerPath"), HandlerEntry.PythonHandlerPath);
 			StructuredContent->SetStringField(TEXT("pythonHandlerAbsolutePath"), AbsoluteHandlerPath);
+			if (HandlerResolution)
+			{
+				StructuredContent->SetBoolField(TEXT("pythonHandlerFound"), HandlerResolution->bFound);
+				StructuredContent->SetStringField(TEXT("pythonHandlerSourceKind"), LexToString(HandlerResolution->SourceKind));
+				StructuredContent->SetArrayField(TEXT("pythonHandlerCandidates"), MakeToolsReadCandidateValues(*HandlerResolution));
+				if (!HandlerResolution->Warning.IsEmpty())
+				{
+					StructuredContent->SetStringField(TEXT("pythonHandlerResolutionWarning"), HandlerResolution->Warning);
+				}
+			}
 			StructuredContent->SetStringField(TEXT("pythonExpectedSha256"), HandlerEntry.PythonHandlerSha256);
 			StructuredContent->SetStringField(TEXT("pythonActualSha256"), ActualSha256);
 			StructuredContent->SetNumberField(TEXT("pythonImportAllowListSize"), HandlerEntry.PythonImportAllowList.Num());
@@ -214,6 +226,7 @@ namespace UnrealMcpPythonToolBridge
 			const FToolHandlerRegistryEntry& HandlerEntry,
 			const FString& AbsoluteHandlerPath,
 			const FString& ActualSha256,
+			const FToolsReadResolution& HandlerResolution,
 			bool bPythonExecutionSucceeded)
 		{
 			if (!StructuredContent.IsValid())
@@ -224,6 +237,13 @@ namespace UnrealMcpPythonToolBridge
 			StructuredContent->SetStringField(TEXT("handlerName"), HandlerEntry.HandlerName);
 			StructuredContent->SetStringField(TEXT("pythonHandlerPath"), HandlerEntry.PythonHandlerPath);
 			StructuredContent->SetStringField(TEXT("pythonHandlerAbsolutePath"), AbsoluteHandlerPath);
+			StructuredContent->SetBoolField(TEXT("pythonHandlerFound"), HandlerResolution.bFound);
+			StructuredContent->SetStringField(TEXT("pythonHandlerSourceKind"), LexToString(HandlerResolution.SourceKind));
+			StructuredContent->SetArrayField(TEXT("pythonHandlerCandidates"), MakeToolsReadCandidateValues(HandlerResolution));
+			if (!HandlerResolution.Warning.IsEmpty())
+			{
+				StructuredContent->SetStringField(TEXT("pythonHandlerResolutionWarning"), HandlerResolution.Warning);
+			}
 			StructuredContent->SetStringField(TEXT("pythonExpectedSha256"), HandlerEntry.PythonHandlerSha256);
 			StructuredContent->SetStringField(TEXT("pythonActualSha256"), ActualSha256);
 			StructuredContent->SetNumberField(TEXT("pythonImportAllowListSize"), HandlerEntry.PythonImportAllowList.Num());
@@ -243,11 +263,12 @@ namespace UnrealMcpPythonToolBridge
 			const FToolHandlerRegistryEntry& HandlerEntry,
 			const FString& Reason,
 			const FString& AbsoluteHandlerPath = FString(),
-			const FString& ActualSha256 = FString())
+			const FString& ActualSha256 = FString(),
+			const FToolsReadResolution* HandlerResolution = nullptr)
 		{
 			return MakeBridgeResult(
 				Reason,
-				MakeBridgeMetadataObject(HandlerEntry, TEXT("python_registered_tool_bridge_failed"), Reason, AbsoluteHandlerPath, ActualSha256),
+				MakeBridgeMetadataObject(HandlerEntry, TEXT("python_registered_tool_bridge_failed"), Reason, AbsoluteHandlerPath, ActualSha256, HandlerResolution),
 				true);
 		}
 
@@ -425,10 +446,10 @@ namespace UnrealMcpPythonToolBridge
 				TEXT("    if not _root or _root in _unreal_mcp_allowed_roots:\n")
 				TEXT("        return\n")
 				TEXT("    raise ImportError(\"Unreal MCP Python import denied: module '\" + str(_name) + \"' (root '\" + _root + \"') is not in the implicit stdlib/unreal set or pythonImportAllowList. Add '\" + _root + \"' to pythonImportAllowList for this tool if it is required.\")\n")
-				TEXT("def _unreal_mcp_import_hook(_name, _globals=None, _locals=None, _fromlist=(), _level=0):\n")
-				TEXT("    if _level == 0:\n")
-				TEXT("        _unreal_mcp_check_import(_name)\n")
-				TEXT("    return _unreal_mcp_original_import(_name, _globals, _locals, _fromlist, _level)\n")
+				TEXT("def _unreal_mcp_import_hook(name, globals=None, locals=None, fromlist=(), level=0):\n")
+				TEXT("    if level == 0:\n")
+				TEXT("        _unreal_mcp_check_import(name)\n")
+				TEXT("    return _unreal_mcp_original_import(name, globals, locals, fromlist, level)\n")
 				TEXT("def _unreal_mcp_import_module_hook(_name, _package=None):\n")
 				TEXT("    if not str(_name or '').startswith('.'):\n")
 				TEXT("        _unreal_mcp_check_import(_name)\n")
@@ -525,13 +546,18 @@ namespace UnrealMcpPythonToolBridge
 			return MakeBridgeError(HandlerEntry, FailureReason);
 		}
 
-		const FString AbsoluteHandlerPath = FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectDir(), NormalizedHandlerPath));
-		if (!FPaths::FileExists(AbsoluteHandlerPath))
+		const FToolsReadResolution HandlerResolution = ResolveToolsReadSubpath(
+			NormalizedHandlerPath,
+			{ TEXT("main.py") });
+		const FString AbsoluteHandlerPath = HandlerResolution.Path;
+		if (!HandlerResolution.bFound)
 		{
 			return MakeBridgeError(
 				HandlerEntry,
 				FString::Printf(TEXT("Python handler file does not exist: '%s'."), *AbsoluteHandlerPath),
-				AbsoluteHandlerPath);
+				AbsoluteHandlerPath,
+				FString(),
+				&HandlerResolution);
 		}
 
 		TArray<uint8> HandlerBytes;
@@ -540,7 +566,9 @@ namespace UnrealMcpPythonToolBridge
 			return MakeBridgeError(
 				HandlerEntry,
 				FString::Printf(TEXT("Failed to read Python handler file: '%s'."), *AbsoluteHandlerPath),
-				AbsoluteHandlerPath);
+				AbsoluteHandlerPath,
+				FString(),
+				&HandlerResolution);
 		}
 
 		const FString ActualSha256 = Sha256Bytes(HandlerBytes).ToLower();
@@ -555,7 +583,8 @@ namespace UnrealMcpPythonToolBridge
 					*ExpectedSha256,
 					*ActualSha256),
 				AbsoluteHandlerPath,
-				ActualSha256);
+				ActualSha256,
+				&HandlerResolution);
 		}
 
 		FString MatchedRecursionPath;
@@ -569,7 +598,8 @@ namespace UnrealMcpPythonToolBridge
 					*MatchedRecursionPath,
 					*MatchedRecursionValue),
 				AbsoluteHandlerPath,
-				ActualSha256);
+				ActualSha256,
+				&HandlerResolution);
 		}
 
 		FString ArgumentsJson;
@@ -579,7 +609,8 @@ namespace UnrealMcpPythonToolBridge
 				HandlerEntry,
 				TEXT("Failed to serialize Python registered tool arguments as JSON."),
 				AbsoluteHandlerPath,
-				ActualSha256);
+				ActualSha256,
+				&HandlerResolution);
 		}
 
 		IPythonScriptPlugin* PythonPlugin = LoadPythonScriptPlugin();
@@ -589,7 +620,8 @@ namespace UnrealMcpPythonToolBridge
 				HandlerEntry,
 				TEXT("PythonScriptPlugin is not loaded. Enable the Python Script Plugin for the editor and restart Unreal Editor."),
 				AbsoluteHandlerPath,
-				ActualSha256);
+				ActualSha256,
+				&HandlerResolution);
 		}
 
 		if (!PythonPlugin->IsPythonInitialized())
@@ -603,7 +635,8 @@ namespace UnrealMcpPythonToolBridge
 				HandlerEntry,
 				TEXT("Python support is not available in the current editor session."),
 				AbsoluteHandlerPath,
-				ActualSha256);
+				ActualSha256,
+				&HandlerResolution);
 		}
 
 		if (!PythonPlugin->IsPythonInitialized())
@@ -612,7 +645,8 @@ namespace UnrealMcpPythonToolBridge
 				HandlerEntry,
 				TEXT("Python is not initialized after requesting runtime enablement."),
 				AbsoluteHandlerPath,
-				ActualSha256);
+				ActualSha256,
+				&HandlerResolution);
 		}
 
 		FPythonCommandEx PythonCommand;
@@ -636,7 +670,8 @@ namespace UnrealMcpPythonToolBridge
 				TEXT("python_registered_tool_bridge_missing_sentinel"),
 				TEXT("Python registered tool output did not contain the required result sentinel."),
 				AbsoluteHandlerPath,
-				ActualSha256);
+				ActualSha256,
+				&HandlerResolution);
 			StructuredContent->SetBoolField(TEXT("pythonExecutionSucceeded"), bExecuted);
 			StructuredContent->SetStringField(TEXT("stdoutPreview"), PreviewString(Stdout));
 			StructuredContent->SetStringField(TEXT("stderrPreview"), PreviewString(Stderr));
@@ -655,7 +690,8 @@ namespace UnrealMcpPythonToolBridge
 				TEXT("python_registered_tool_bridge_parse_failed"),
 				TEXT("Python registered tool sentinel payload was not a JSON object."),
 				AbsoluteHandlerPath,
-				ActualSha256);
+				ActualSha256,
+				&HandlerResolution);
 			StructuredContent->SetStringField(TEXT("resultJsonPreview"), PreviewString(ResultJson));
 			StructuredContent->SetStringField(TEXT("stdoutPreview"), PreviewString(Stdout));
 			StructuredContent->SetStringField(TEXT("stderrPreview"), PreviewString(Stderr));
@@ -664,7 +700,7 @@ namespace UnrealMcpPythonToolBridge
 
 		bool bPythonReturnedError = false;
 		ParsedResult->TryGetBoolField(TEXT("isError"), bPythonReturnedError);
-		AddBridgeMetadata(ParsedResult, HandlerEntry, AbsoluteHandlerPath, ActualSha256, bExecuted);
+		AddBridgeMetadata(ParsedResult, HandlerEntry, AbsoluteHandlerPath, ActualSha256, HandlerResolution, bExecuted);
 
 		FString Text = FString::Printf(
 			TEXT("Python registered tool '%s' %s."),

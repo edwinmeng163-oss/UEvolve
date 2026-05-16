@@ -171,6 +171,102 @@ namespace UnrealMcp
 			return nullptr;
 		}
 
+		void AddUniqueAuditCandidate(TArray<FString>& Candidates, const FString& Candidate)
+		{
+			if (Candidate.IsEmpty())
+			{
+				return;
+			}
+
+			FString NormalizedCandidate = FPaths::ConvertRelativePathToFull(Candidate);
+			FPaths::NormalizeFilename(NormalizedCandidate);
+			FPaths::CollapseRelativeDirectories(NormalizedCandidate);
+			for (const FString& Existing : Candidates)
+			{
+				if (Existing.Equals(NormalizedCandidate, ESearchCase::IgnoreCase))
+				{
+					return;
+				}
+			}
+			Candidates.Add(NormalizedCandidate);
+		}
+
+		FToolsReadResolution ResolveDocsPathForAudit(const FString& DocsPath)
+		{
+			FToolsReadResolution Resolution;
+			FString DocsFilePath = DocsPath;
+			FString DocsAnchor;
+			if (DocsPath.Split(TEXT("#"), &DocsFilePath, &DocsAnchor))
+			{
+				// Keep only the versioned file path portion for existence checks.
+			}
+			DocsFilePath = DocsFilePath.TrimStartAndEnd();
+			if (DocsFilePath.IsEmpty())
+			{
+				return Resolution;
+			}
+
+			if (FPaths::IsRelative(DocsFilePath))
+			{
+				AddUniqueAuditCandidate(Resolution.Candidates, FPaths::Combine(FPaths::ProjectDir(), DocsFilePath));
+
+				const FToolsReadResolution ToolsRoot = ResolveToolsReadSubpath(FString(), TArray<FString>());
+				if (!ToolsRoot.Warning.IsEmpty())
+				{
+					Resolution.Warning = ToolsRoot.Warning;
+				}
+				for (const FString& ToolsCandidate : ToolsRoot.Candidates)
+				{
+					AddUniqueAuditCandidate(Resolution.Candidates, FPaths::Combine(FPaths::GetPath(ToolsCandidate), DocsFilePath));
+				}
+
+				const FToolsReadResolution PluginBaseDir = ResolvePluginBaseDir();
+				if (!PluginBaseDir.Path.IsEmpty())
+				{
+					AddUniqueAuditCandidate(Resolution.Candidates, FPaths::Combine(PluginBaseDir.Path, DocsFilePath));
+					if (DocsFilePath.Equals(TEXT("README.md"), ESearchCase::IgnoreCase)
+						|| DocsFilePath.EndsWith(TEXT("/README.md"), ESearchCase::IgnoreCase)
+						|| DocsFilePath.EndsWith(TEXT("\\README.md"), ESearchCase::IgnoreCase))
+					{
+						AddUniqueAuditCandidate(Resolution.Candidates, FPaths::Combine(PluginBaseDir.Path, TEXT("README.md")));
+					}
+				}
+			}
+			else
+			{
+				AddUniqueAuditCandidate(Resolution.Candidates, DocsFilePath);
+			}
+
+			const FToolsReadResolution PluginBaseDir = ResolvePluginBaseDir();
+			for (int32 CandidateIndex = 0; CandidateIndex < Resolution.Candidates.Num(); ++CandidateIndex)
+			{
+				if (!FPaths::FileExists(Resolution.Candidates[CandidateIndex]))
+				{
+					continue;
+				}
+
+				Resolution.Path = Resolution.Candidates[CandidateIndex];
+				Resolution.bFound = true;
+				if (!PluginBaseDir.Path.IsEmpty() && Resolution.Path.StartsWith(PluginBaseDir.Path, ESearchCase::IgnoreCase))
+				{
+					Resolution.SourceKind = FToolsReadResolution::ESource::PluginResources;
+				}
+				else
+				{
+					Resolution.SourceKind = CandidateIndex == 0
+						? FToolsReadResolution::ESource::ProjectLocal
+						: FToolsReadResolution::ESource::SharedRepoRoot;
+				}
+				return Resolution;
+			}
+
+			if (Resolution.Candidates.Num() > 0)
+			{
+				Resolution.Path = Resolution.Candidates[0];
+			}
+			return Resolution;
+		}
+
 		FUnrealMcpExecutionResult ValidateMcpToolSchema(
 			const FJsonObject& Arguments,
 			const TArray<TSharedPtr<FJsonValue>>& ToolsArray)
@@ -281,14 +377,8 @@ namespace UnrealMcp
 				const FToolRegistryEntry* RegistryEntry = FindToolRegistryEntry(Name);
 				const bool bHasExplicitRegistryEntry = RegistryEntry && RegistryEntry->bLoadedFromExplicitRegistry;
 				const FString DocsPath = RegistryEntry ? RegistryEntry->Policy.DocsPath : FString();
-				FString DocsFilePath = DocsPath;
-				FString DocsAnchor;
-				if (DocsPath.Split(TEXT("#"), &DocsFilePath, &DocsAnchor))
-				{
-					// Keep only the versioned file path portion for existence checks.
-				}
-				const bool bDocumented = !DocsFilePath.TrimStartAndEnd().IsEmpty()
-					&& FPaths::FileExists(FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectDir(), DocsFilePath)));
+				const FToolsReadResolution DocsResolution = ResolveDocsPathForAudit(DocsPath);
+				const bool bDocumented = DocsResolution.bFound;
 
 				const TSharedPtr<FJsonObject>* SchemaObject = nullptr;
 				TArray<TSharedPtr<FJsonValue>> Issues;
@@ -372,6 +462,13 @@ namespace UnrealMcp
 				ReportObject->SetStringField(TEXT("registryCategory"), RegistryEntry ? RegistryEntry->Category : TEXT(""));
 				ReportObject->SetStringField(TEXT("docsPath"), DocsPath);
 				ReportObject->SetBoolField(TEXT("docsPathFileExists"), bDocumented);
+				ReportObject->SetStringField(TEXT("docsPathResolvedPath"), DocsResolution.Path);
+				ReportObject->SetStringField(TEXT("docsPathSourceKind"), LexToString(DocsResolution.SourceKind));
+				ReportObject->SetArrayField(TEXT("docsPathCandidates"), MakeToolsReadCandidateValues(DocsResolution));
+				if (!DocsResolution.Warning.IsEmpty())
+				{
+					ReportObject->SetStringField(TEXT("docsPathResolutionWarning"), DocsResolution.Warning);
+				}
 				ReportObject->SetStringField(TEXT("documentationCheckSource"), TEXT("explicit_registry_docsPath"));
 				ReportObject->SetBoolField(TEXT("schemaCompatible"), bCompatible);
 				ReportObject->SetStringField(TEXT("schemaReason"), Reason);

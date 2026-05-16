@@ -181,11 +181,12 @@ FUnrealMcpExecutionResult FUnrealMcpModule::RunMcpExtensionPipeline(const FJsonO
 	FString ResolvedScaffoldDir;
 	FString ResolvedToolName;
 	FString ResolveFailure;
+	UnrealMcp::FToolsReadResolution ScaffoldResolution;
 	TSharedPtr<FJsonObject> ResolveArguments = MakeShared<FJsonObject>();
 	ResolveArguments->SetStringField(TEXT("toolName"), ToolName);
 	ResolveArguments->SetStringField(TEXT("scaffoldDir"), ScaffoldDir);
 	ResolveArguments->SetStringField(TEXT("outputRoot"), OutputRoot);
-	if (!UnrealMcp::ResolveMcpScaffoldDirectory(*ResolveArguments, ResolvedScaffoldDir, ResolvedToolName, ResolveFailure))
+	if (!UnrealMcp::ResolveMcpScaffoldDirectory(*ResolveArguments, ResolvedScaffoldDir, ResolvedToolName, ResolveFailure, &ScaffoldResolution))
 	{
 		Steps.Add(MakeShared<FJsonValueObject>(UnrealMcp::MakePipelineStepObject(TEXT("resolve_scaffold"), TEXT("failed"), ResolveFailure)));
 		StructuredContent->SetBoolField(TEXT("succeeded"), false);
@@ -211,6 +212,13 @@ FUnrealMcpExecutionResult FUnrealMcpModule::RunMcpExtensionPipeline(const FJsonO
 	StructuredContent->SetStringField(TEXT("toolName"), ToolName);
 	StructuredContent->SetStringField(TEXT("task"), Task);
 	StructuredContent->SetStringField(TEXT("scaffoldDir"), ResolvedScaffoldDir);
+	StructuredContent->SetBoolField(TEXT("scaffoldFound"), ScaffoldResolution.bFound);
+	StructuredContent->SetStringField(TEXT("scaffoldSourceKind"), UnrealMcp::LexToString(ScaffoldResolution.SourceKind));
+	StructuredContent->SetArrayField(TEXT("scaffoldCandidates"), UnrealMcp::MakeToolsReadCandidateValues(ScaffoldResolution));
+	if (!ScaffoldResolution.Warning.IsEmpty())
+	{
+		StructuredContent->SetStringField(TEXT("scaffoldResolutionWarning"), ScaffoldResolution.Warning);
+	}
 	StructuredContent->SetStringField(TEXT("testRequestPath"), TestRequestPath);
 	StructuredContent->SetStringField(TEXT("testsDir"), TestsDir);
 	Steps.Add(MakeShared<FJsonValueObject>(UnrealMcp::MakePipelineStepObject(

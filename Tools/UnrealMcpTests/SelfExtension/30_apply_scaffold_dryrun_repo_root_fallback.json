@@ -1,0 +1,23 @@
+{
+  "name": "apply_scaffold_dryrun_repo_root_fallback",
+  "description": "Apply dry-run resolves pre-staged repo-root scaffolds when the active project has no local scaffold copy.",
+  "category": "happy_path",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": false,
+  "expectToolCallStructuredFields": {
+    "canApply": true
+  },
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 330,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.mcp_apply_scaffold",
+      "arguments": {
+        "toolName": "unreal.fps.bootstrap",
+        "dryRun": true
+      }
+    }
+  }
+}

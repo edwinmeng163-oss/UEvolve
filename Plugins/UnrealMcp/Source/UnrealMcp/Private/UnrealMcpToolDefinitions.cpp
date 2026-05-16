@@ -1063,7 +1063,7 @@ void FUnrealMcpModule::AppendToolDefinitions(TArray<TSharedPtr<FJsonValue>>& Too
 		{
 			TSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
 			PropertiesObject->SetObjectField(TEXT("toolName"), UnrealMcp::MakeStringProperty(TEXT("MCP tool name whose scaffold should be inspected. Used when scaffoldDir is empty.")));
-			PropertiesObject->SetObjectField(TEXT("scaffoldDir"), UnrealMcp::MakeStringProperty(TEXT("Project-relative or absolute scaffold directory to inspect.")));
+			PropertiesObject->SetObjectField(TEXT("scaffoldDir"), UnrealMcp::MakeStringProperty(TEXT("Project-local scaffold directory to inspect. To inspect shared repo recipes, pass toolName and leave scaffoldDir empty.")));
 			PropertiesObject->SetObjectField(TEXT("outputRoot"), UnrealMcp::MakeStringProperty(TEXT("Project-relative scaffold root used with toolName."), TEXT("Tools/UnrealMcpToolScaffolds")));
 			PropertiesObject->SetObjectField(TEXT("includeFileText"), UnrealMcp::MakeBoolProperty(TEXT("Whether to include full file text for scaffold files."), false));
 			PropertiesObject->SetObjectField(TEXT("maxPreviewChars"), UnrealMcp::MakeNumberProperty(TEXT("Maximum per-file preview characters."), 2000.0));
@@ -1086,7 +1086,7 @@ void FUnrealMcpModule::AppendToolDefinitions(TArray<TSharedPtr<FJsonValue>>& Too
 			PropertiesObject->SetObjectField(TEXT("snippetText"), UnrealMcp::MakeStringProperty(TEXT("Legacy alias for patchText.")));
 			PropertiesObject->SetObjectField(TEXT("snippetName"), UnrealMcp::MakeStringProperty(TEXT("Legacy alias for patchName."), TEXT("ToolRegistrar.patch.cpp")));
 			PropertiesObject->SetObjectField(TEXT("toolName"), UnrealMcp::MakeStringProperty(TEXT("Expected MCP tool name for tool-name literal checks.")));
-			PropertiesObject->SetObjectField(TEXT("scaffoldDir"), UnrealMcp::MakeStringProperty(TEXT("Project-relative or absolute scaffold directory to read when snippetText is empty.")));
+			PropertiesObject->SetObjectField(TEXT("scaffoldDir"), UnrealMcp::MakeStringProperty(TEXT("Project-local scaffold directory to read when snippetText is empty. To validate shared repo recipes, pass toolName and leave scaffoldDir empty.")));
 			PropertiesObject->SetObjectField(TEXT("outputRoot"), UnrealMcp::MakeStringProperty(TEXT("Project-relative scaffold root used with toolName."), TEXT("Tools/UnrealMcpToolScaffolds")));
 
 			TSharedPtr<FJsonObject> InputSchema = UnrealMcp::MakeObjectSchema();
@@ -1110,7 +1110,7 @@ void FUnrealMcpModule::AppendToolDefinitions(TArray<TSharedPtr<FJsonValue>>& Too
 		{
 			TSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
 			PropertiesObject->SetObjectField(TEXT("toolName"), UnrealMcp::MakeStringProperty(TEXT("MCP tool name whose scaffold patch fragment should be patched. Used when scaffoldDir is empty.")));
-			PropertiesObject->SetObjectField(TEXT("scaffoldDir"), UnrealMcp::MakeStringProperty(TEXT("Project-relative or absolute scaffold directory containing the patch fragment.")));
+			PropertiesObject->SetObjectField(TEXT("scaffoldDir"), UnrealMcp::MakeStringProperty(TEXT("Project-local scaffold directory containing the patch fragment. To patch shared repo recipes, pass toolName and leave scaffoldDir empty only after copying to a project-local draft.")));
 			PropertiesObject->SetObjectField(TEXT("outputRoot"), UnrealMcp::MakeStringProperty(TEXT("Project-relative scaffold root used with toolName."), TEXT("Tools/UnrealMcpToolScaffolds")));
 			PropertiesObject->SetObjectField(TEXT("patchName"), UnrealMcp::MakeStringProperty(TEXT("Patch file or alias: ToolRegistrar.patch.cpp, ToolRegistrarCall.patch.cpp, CategoryHandlerFunction.patch.cpp, CategoryDispatcherBranch.patch.cpp, ChatCommand.patch.cpp, or legacy fragments LegacyToolDefinition.legacy.cpp / LegacyExecuteToolHandler.legacy.cpp.")));
 			PropertiesObject->SetObjectField(TEXT("snippetName"), UnrealMcp::MakeStringProperty(TEXT("Legacy alias for patchName.")));
@@ -1455,7 +1455,7 @@ void FUnrealMcpModule::AppendToolDefinitions(TArray<TSharedPtr<FJsonValue>>& Too
 			{
 				TSharedPtr<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
 			PropertiesObject->SetObjectField(TEXT("toolName"), UnrealMcp::MakeStringProperty(TEXT("Tool name whose scaffold should be applied. Used when scaffoldDir is empty.")));
-			PropertiesObject->SetObjectField(TEXT("scaffoldDir"), UnrealMcp::MakeStringProperty(TEXT("Project-relative or absolute scaffold directory containing generated descriptor-first patch files.")));
+			PropertiesObject->SetObjectField(TEXT("scaffoldDir"), UnrealMcp::MakeStringProperty(TEXT("Project-local scaffold directory containing generated descriptor-first patch files. To apply shared repo recipes, pass toolName and leave scaffoldDir empty.")));
 			PropertiesObject->SetObjectField(TEXT("outputRoot"), UnrealMcp::MakeStringProperty(TEXT("Project-relative scaffold root used with toolName."), TEXT("Tools/UnrealMcpToolScaffolds")));
 			PropertiesObject->SetObjectField(TEXT("dryRun"), UnrealMcp::MakeBoolProperty(TEXT("Preview changes without modifying source."), true));
 			PropertiesObject->SetObjectField(TEXT("applyChatCommand"), UnrealMcp::MakeBoolProperty(TEXT("Whether to apply optional ChatCommand.patch.cpp."), false));

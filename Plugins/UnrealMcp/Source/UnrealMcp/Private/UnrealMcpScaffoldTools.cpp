@@ -2,6 +2,7 @@
 
 #include "UnrealMcpMemoryTools.h"
 #include "UnrealMcpModule.h"
+#include "UnrealMcpSharedPathResolver.h"
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -961,6 +962,46 @@ namespace UnrealMcp
 
 		OutDirectory = ResolvedDirectory;
 		return true;
+	}
+
+	bool ResolveScaffoldReadDirectory(
+		const FString& ToolId,
+		FString& OutScaffoldDirectory,
+		FString& OutFailureReason,
+		FToolsReadResolution* OutResolution)
+	{
+		OutScaffoldDirectory.Reset();
+		OutFailureReason.Reset();
+		if (OutResolution)
+		{
+			*OutResolution = FToolsReadResolution();
+		}
+
+		const FString CleanToolId = SanitizeMcpToolIdForPath(ToolId).TrimStartAndEnd();
+		if (CleanToolId.IsEmpty())
+		{
+			OutFailureReason = TEXT("toolId must not be empty.");
+			return false;
+		}
+
+		FToolsReadResolution Resolution = ResolveToolsReadSubpath(
+			FPaths::Combine(TEXT("UnrealMcpToolScaffolds"), CleanToolId),
+			{ TEXT("ScaffoldMetadata.json") });
+		if (OutResolution)
+		{
+			*OutResolution = Resolution;
+		}
+		if (Resolution.bFound)
+		{
+			OutScaffoldDirectory = Resolution.Path;
+			return true;
+		}
+
+		OutFailureReason = FString::Printf(
+			TEXT("Could not find MCP scaffold '%s' with ScaffoldMetadata.json. Checked: %s."),
+			*CleanToolId,
+			*FString::Join(Resolution.Candidates, TEXT(", ")));
+		return false;
 	}
 
 	bool WriteMcpScaffoldFile(

@@ -8,6 +8,7 @@
 #include "Misc/Paths.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
+#include "UnrealMcpSharedPathResolver.h"
 
 namespace UnrealMcp
 {
@@ -18,9 +19,10 @@ namespace UnrealMcp
 
 		FString GetMcpModuleSourcePath()
 		{
-			return FPaths::ConvertRelativePathToFull(FPaths::Combine(
-				FPaths::ProjectDir(),
-				TEXT("Plugins/UnrealMcp/Source/UnrealMcp/Private/UnrealMcpModule.cpp")));
+			const FToolsReadResolution PluginSourceDirectory = ResolvePluginSourceRoot();
+			return !PluginSourceDirectory.bFound
+				? FString()
+				: FPaths::ConvertRelativePathToFull(FPaths::Combine(PluginSourceDirectory.Path, TEXT("UnrealMcp/Private/UnrealMcpModule.cpp")));
 		}
 
 		FString GetMcpExtensionBackupRoot()
@@ -55,9 +57,10 @@ namespace UnrealMcp
 
 		FString GetMcpModuleHeaderPath()
 		{
-			return FPaths::ConvertRelativePathToFull(FPaths::Combine(
-				FPaths::ProjectDir(),
-				TEXT("Plugins/UnrealMcp/Source/UnrealMcp/Public/UnrealMcpModule.h")));
+			const FToolsReadResolution PluginSourceDirectory = ResolvePluginSourceRoot();
+			return !PluginSourceDirectory.bFound
+				? FString()
+				: FPaths::ConvertRelativePathToFull(FPaths::Combine(PluginSourceDirectory.Path, TEXT("UnrealMcp/Public/UnrealMcpModule.h")));
 		}
 
 		FString GetProjectReadmePath()
@@ -67,7 +70,10 @@ namespace UnrealMcp
 
 		FString GetPluginReadmePath()
 		{
-			return FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectDir(), TEXT("Plugins/UnrealMcp/README.md")));
+			const FToolsReadResolution PluginBaseDir = ResolvePluginBaseDir();
+			return PluginBaseDir.Path.IsEmpty()
+				? FString()
+				: FPaths::ConvertRelativePathToFull(FPaths::Combine(PluginBaseDir.Path, TEXT("README.md")));
 		}
 
 		bool LoadJsonObjectFromFile(const FString& FilePath, TSharedPtr<FJsonObject>& OutObject, FString& OutFailureReason)
@@ -151,8 +157,18 @@ namespace UnrealMcp
 			return true;
 		}
 
-		bool ResolveMcpScaffoldDirectory(const FJsonObject& Arguments, FString& OutDirectory, FString& OutToolName, FString& OutFailureReason)
+		bool ResolveMcpScaffoldDirectory(
+			const FJsonObject& Arguments,
+			FString& OutDirectory,
+			FString& OutToolName,
+			FString& OutFailureReason,
+			FToolsReadResolution* OutResolution)
 		{
+			if (OutResolution)
+			{
+				*OutResolution = FToolsReadResolution();
+			}
+
 			FString ScaffoldDir;
 			FString ToolName;
 			FString OutputRoot;
@@ -167,6 +183,14 @@ namespace UnrealMcp
 				{
 					return false;
 				}
+				if (OutResolution)
+				{
+					OutResolution->Path = OutDirectory;
+					OutResolution->bFound = FPaths::DirectoryExists(OutDirectory);
+					OutResolution->SourceKind = FToolsReadResolution::ESource::ProjectLocal;
+					OutResolution->Candidates.Add(OutDirectory);
+					OutResolution->Warning = TEXT("Explicit scaffoldDir is project-local only; pass toolName with scaffoldDir empty to use shared repo recipe fallback.");
+				}
 			}
 			else
 			{
@@ -176,12 +200,30 @@ namespace UnrealMcp
 					return false;
 				}
 
-				FString ResolvedOutputRoot;
-				if (!ResolveProjectOutputDirectory(OutputRoot, ResolvedOutputRoot, OutFailureReason))
+				if (OutputRoot.TrimStartAndEnd().IsEmpty())
 				{
-					return false;
+					if (!ResolveScaffoldReadDirectory(SanitizeMcpToolIdForPath(ToolName), OutDirectory, OutFailureReason, OutResolution))
+					{
+						return false;
+					}
 				}
-				OutDirectory = FPaths::Combine(ResolvedOutputRoot, SanitizeMcpToolIdForPath(ToolName));
+				else
+				{
+					FString ResolvedOutputRoot;
+					if (!ResolveProjectOutputDirectory(OutputRoot, ResolvedOutputRoot, OutFailureReason))
+					{
+						return false;
+					}
+					OutDirectory = FPaths::Combine(ResolvedOutputRoot, SanitizeMcpToolIdForPath(ToolName));
+					if (OutResolution)
+					{
+						OutResolution->Path = OutDirectory;
+						OutResolution->bFound = FPaths::DirectoryExists(OutDirectory);
+						OutResolution->SourceKind = FToolsReadResolution::ESource::ProjectLocal;
+						OutResolution->Candidates.Add(OutDirectory);
+						OutResolution->Warning = TEXT("Explicit outputRoot is project-local only; omit outputRoot to use shared repo recipe fallback.");
+					}
+				}
 			}
 
 			FString TestRequestText;

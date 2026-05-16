@@ -171,14 +171,15 @@ namespace UnrealMcp
 					if (SourcePath.IsEmpty() || BackupPath.IsEmpty())
 					{
 						return MakeExecutionResult(TEXT("Manifest file entry is missing sourcePath or backupPath."), nullptr, true);
-					}
+						}
 
-					FString ResolvedSourcePath;
-					FString ResolvedBackupPath;
-					if (!ResolveProjectPathInsideProject(SourcePath, ResolvedSourcePath, FileFailureReason)
-						|| !ResolveProjectPathInsideProject(BackupPath, ResolvedBackupPath, FileFailureReason))
-					{
-						return MakeExecutionResult(FileFailureReason, nullptr, true);
+						FString ResolvedSourcePath;
+						FString ResolvedBackupPath;
+						FToolsReadResolution::ESource SourceKind = FToolsReadResolution::ESource::Unresolved;
+						if (!ResolvePathInsideTrustedSourceDomains(SourcePath, ResolvedSourcePath, SourceKind, FileFailureReason)
+							|| !ResolveProjectPathInsideProject(BackupPath, ResolvedBackupPath, FileFailureReason))
+						{
+							return MakeExecutionResult(FileFailureReason, nullptr, true);
 					}
 
 					FString CurrentSourceText;
@@ -205,9 +206,10 @@ namespace UnrealMcp
 							*ResolvedSourcePath);
 					}
 
-					TSharedPtr<FJsonObject> FileResult = MakeShared<FJsonObject>();
-					FileResult->SetStringField(TEXT("sourcePath"), ResolvedSourcePath);
-					FileResult->SetStringField(TEXT("backupPath"), ResolvedBackupPath);
+						TSharedPtr<FJsonObject> FileResult = MakeShared<FJsonObject>();
+						FileResult->SetStringField(TEXT("sourcePath"), ResolvedSourcePath);
+						FileResult->SetStringField(TEXT("sourcePathKind"), LexToString(SourceKind));
+						FileResult->SetStringField(TEXT("backupPath"), ResolvedBackupPath);
 					FileResult->SetBoolField(TEXT("currentReadable"), bCurrentReadable);
 					FileResult->SetStringField(TEXT("currentHash"), CurrentHash);
 					FileResult->SetStringField(TEXT("expectedAfterHash"), ExpectedAfterHash);
@@ -310,12 +312,13 @@ namespace UnrealMcp
 				return MakeExecutionResult(TEXT("Manifest is missing sourcePath or backupSourcePath."), nullptr, true);
 			}
 
-			FString ResolvedSourcePath;
-			FString ResolvedBackupPath;
-			if (!ResolveProjectPathInsideProject(SourcePath, ResolvedSourcePath, FailureReason)
-				|| !ResolveProjectPathInsideProject(BackupSourcePath, ResolvedBackupPath, FailureReason))
-			{
-				return MakeExecutionResult(FailureReason, nullptr, true);
+				FString ResolvedSourcePath;
+				FString ResolvedBackupPath;
+				FToolsReadResolution::ESource SourceKind = FToolsReadResolution::ESource::Unresolved;
+				if (!ResolvePathInsideTrustedSourceDomains(SourcePath, ResolvedSourcePath, SourceKind, FailureReason)
+					|| !ResolveProjectPathInsideProject(BackupSourcePath, ResolvedBackupPath, FailureReason))
+				{
+					return MakeExecutionResult(FailureReason, nullptr, true);
 			}
 
 			FString CurrentSourceText;
@@ -336,9 +339,10 @@ namespace UnrealMcp
 			TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
 			StructuredContent->SetStringField(TEXT("action"), TEXT("mcp_rollback_last_extension"));
 			StructuredContent->SetStringField(TEXT("toolName"), ToolName);
-			StructuredContent->SetStringField(TEXT("manifestPath"), ResolvedManifestPath);
-			StructuredContent->SetStringField(TEXT("sourcePath"), ResolvedSourcePath);
-			StructuredContent->SetStringField(TEXT("backupSourcePath"), ResolvedBackupPath);
+				StructuredContent->SetStringField(TEXT("manifestPath"), ResolvedManifestPath);
+				StructuredContent->SetStringField(TEXT("sourcePath"), ResolvedSourcePath);
+				StructuredContent->SetStringField(TEXT("sourcePathKind"), LexToString(SourceKind));
+				StructuredContent->SetStringField(TEXT("backupSourcePath"), ResolvedBackupPath);
 			StructuredContent->SetBoolField(TEXT("currentReadable"), bCurrentReadable);
 			StructuredContent->SetStringField(TEXT("currentHash"), CurrentHash);
 			StructuredContent->SetStringField(TEXT("expectedAfterHash"), ExpectedAfterHash);
@@ -400,17 +404,73 @@ namespace UnrealMcp
 			return NormalizedPath;
 		}
 
-		bool IsPathInsideDirectory(const FString& Path, const FString& Directory)
-		{
-			const FString NormalizedPath = NormalizeFullPathForCompare(Path);
-			FString NormalizedDirectory = NormalizeFullPathForCompare(Directory);
-			NormalizedDirectory.RemoveFromEnd(TEXT("/"));
-			const FString DirectoryPrefix = NormalizedDirectory + TEXT("/");
-			return NormalizedPath.Equals(NormalizedDirectory, ESearchCase::IgnoreCase)
-				|| NormalizedPath.StartsWith(DirectoryPrefix, ESearchCase::IgnoreCase);
-		}
+			bool IsPathInsideDirectory(const FString& Path, const FString& Directory)
+			{
+				const FString NormalizedPath = NormalizeFullPathForCompare(Path);
+				FString NormalizedDirectory = NormalizeFullPathForCompare(Directory);
+				NormalizedDirectory.RemoveFromEnd(TEXT("/"));
+				const FString DirectoryPrefix = NormalizedDirectory + TEXT("/");
+				return NormalizedPath.Equals(NormalizedDirectory, ESearchCase::IgnoreCase)
+					|| NormalizedPath.StartsWith(DirectoryPrefix, ESearchCase::IgnoreCase);
+			}
 
-		FString FileTimeToIsoString(const FDateTime& Time)
+			bool ResolvePathInsideTrustedSourceDomains(
+				const FString& RequestedPath,
+				FString& OutPath,
+				FToolsReadResolution::ESource& OutSourceKind,
+				FString& OutFailureReason)
+			{
+				OutPath.Reset();
+				OutSourceKind = FToolsReadResolution::ESource::Unresolved;
+				OutFailureReason.Reset();
+
+				const FString TrimmedPath = RequestedPath.TrimStartAndEnd();
+				if (TrimmedPath.IsEmpty())
+				{
+					OutFailureReason = TEXT("Path must not be empty.");
+					return false;
+				}
+
+				FString ResolvedPath = FPaths::IsRelative(TrimmedPath)
+					? FPaths::Combine(FPaths::ProjectDir(), TrimmedPath)
+					: TrimmedPath;
+				ResolvedPath = NormalizeFullPathForCompare(ResolvedPath);
+
+				const FToolsReadResolution PluginBaseDir = ResolvePluginBaseDir();
+				if (!PluginBaseDir.Path.IsEmpty() && IsPathInsideDirectory(ResolvedPath, PluginBaseDir.Path))
+				{
+					OutPath = ResolvedPath;
+					OutSourceKind = FToolsReadResolution::ESource::PluginResources;
+					return true;
+				}
+
+				const FToolsReadResolution ToolsRoot = ResolveToolsReadSubpath(FString(), TArray<FString>());
+				for (int32 CandidateIndex = 0; CandidateIndex < ToolsRoot.Candidates.Num(); ++CandidateIndex)
+				{
+					if (IsPathInsideDirectory(ResolvedPath, ToolsRoot.Candidates[CandidateIndex]))
+					{
+						OutPath = ResolvedPath;
+						OutSourceKind = CandidateIndex == 0
+							? FToolsReadResolution::ESource::ProjectLocal
+							: FToolsReadResolution::ESource::SharedRepoRoot;
+						return true;
+					}
+				}
+
+				if (IsPathInsideDirectory(ResolvedPath, FPaths::ProjectDir()))
+				{
+					OutPath = ResolvedPath;
+					OutSourceKind = FToolsReadResolution::ESource::ProjectLocal;
+					return true;
+				}
+
+				OutFailureReason = FString::Printf(
+					TEXT("Path '%s' resolves outside trusted rollback source domains (plugin base, shared Tools roots, or project directory)."),
+					*ResolvedPath);
+				return false;
+			}
+
+			FString FileTimeToIsoString(const FDateTime& Time)
 		{
 			return Time.GetTicks() > 0 ? Time.ToIso8601() : FString();
 		}

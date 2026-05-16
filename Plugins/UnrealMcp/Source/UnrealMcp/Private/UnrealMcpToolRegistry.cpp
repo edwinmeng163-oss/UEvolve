@@ -7,6 +7,7 @@
 #include "Misc/Paths.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
+#include "UnrealMcpSharedPathResolver.h"
 #include "UnrealMcpToolHandlerRegistry.h"
 #include "UnrealMcpToolRegistrar.h"
 
@@ -18,7 +19,16 @@ namespace UnrealMcp
 		{
 			TArray<FToolRegistryEntry> Entries;
 			FString SourcePath;
+			FToolsReadResolution::ESource SourceKind = FToolsReadResolution::ESource::Unresolved;
+			TArray<FString> SourceCandidates;
+			FString SourceWarning;
 			bool bLoadedExplicitRegistry = false;
+		};
+
+		struct FRegistryCandidatePath
+		{
+			FString Path;
+			FToolsReadResolution::ESource SourceKind = FToolsReadResolution::ESource::Unresolved;
 		};
 
 		EToolExposure ParseExposure(const FString& Value)
@@ -239,11 +249,16 @@ namespace UnrealMcp
 
 			TArray<FString> CandidatePaths;
 			if (FPaths::IsRelative(FilePart))
-			{
-				CandidatePaths.Add(FPaths::Combine(FPaths::ProjectDir(), FilePart));
-				CandidatePaths.Add(FPaths::Combine(FPaths::ProjectDir(), TEXT("Plugins/UnrealMcp"), FilePart));
+				{
+					CandidatePaths.Add(FPaths::Combine(FPaths::ProjectDir(), FilePart));
+					CandidatePaths.Add(FPaths::Combine(FPaths::ProjectDir(), TEXT("Plugins/UnrealMcp"), FilePart));
+					const FToolsReadResolution ToolsRoot = ResolveToolsReadSubpath(FString(), TArray<FString>());
+					for (const FString& ToolsCandidate : ToolsRoot.Candidates)
+					{
+						CandidatePaths.Add(FPaths::Combine(FPaths::GetPath(ToolsCandidate), FilePart));
+					}
 
-				const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("UnrealMcp"));
+					const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("UnrealMcp"));
 				if (Plugin.IsValid())
 				{
 					const FString PluginBaseDir = Plugin->GetBaseDir();
@@ -402,15 +417,67 @@ namespace UnrealMcp
 			};
 		}
 
-		void AddRegistryCandidatePaths(TArray<FString>& OutPaths)
+		void AddUniqueRegistryCandidate(
+			TArray<FRegistryCandidatePath>& OutPaths,
+			const FString& Path,
+			FToolsReadResolution::ESource SourceKind)
 		{
-			// Category C: ToolRegistry lookup intentionally checks the active project before the packaged plugin resource fallback.
-			OutPaths.Add(FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectDir(), TEXT("Tools/UnrealMcpToolRegistry/tools.json"))));
-
-			const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("UnrealMcp"));
-			if (Plugin.IsValid())
+			if (Path.IsEmpty())
 			{
-				OutPaths.Add(FPaths::ConvertRelativePathToFull(FPaths::Combine(Plugin->GetBaseDir(), TEXT("Resources/ToolRegistry/tools.json"))));
+				return;
+			}
+			FString NormalizedPath = FPaths::ConvertRelativePathToFull(Path);
+			FPaths::NormalizeFilename(NormalizedPath);
+			FPaths::CollapseRelativeDirectories(NormalizedPath);
+			for (const FRegistryCandidatePath& Existing : OutPaths)
+			{
+				if (Existing.Path.Equals(NormalizedPath, ESearchCase::IgnoreCase))
+				{
+					return;
+				}
+			}
+
+			FRegistryCandidatePath Candidate;
+			Candidate.Path = NormalizedPath;
+			Candidate.SourceKind = SourceKind;
+			OutPaths.Add(Candidate);
+		}
+
+		void AddRegistryCandidatePaths(
+			TArray<FRegistryCandidatePath>& OutPaths,
+			FToolsReadResolution& OutToolsResolution)
+		{
+			// Reader domain: ToolRegistry lookup checks project Tools, shared repo-root Tools, then packaged plugin resources.
+			OutToolsResolution = ResolveToolsReadSubpath(
+				TEXT("UnrealMcpToolRegistry/tools.json"),
+				{ TEXT("tools.json") });
+			if (OutToolsResolution.Candidates.Num() > 0)
+			{
+				AddUniqueRegistryCandidate(
+					OutPaths,
+					OutToolsResolution.Candidates[0],
+					FToolsReadResolution::ESource::ProjectLocal);
+			}
+			for (int32 CandidateIndex = 1; CandidateIndex < OutToolsResolution.Candidates.Num(); ++CandidateIndex)
+			{
+				if (!FPaths::FileExists(OutToolsResolution.Candidates[CandidateIndex]))
+				{
+					continue;
+				}
+				AddUniqueRegistryCandidate(
+					OutPaths,
+					OutToolsResolution.Candidates[CandidateIndex],
+					FToolsReadResolution::ESource::SharedRepoRoot);
+				break;
+			}
+
+			const FToolsReadResolution PluginBaseDir = ResolvePluginBaseDir();
+			if (!PluginBaseDir.Path.IsEmpty())
+			{
+				AddUniqueRegistryCandidate(
+					OutPaths,
+					FPaths::Combine(PluginBaseDir.Path, TEXT("Resources/ToolRegistry/tools.json")),
+					FToolsReadResolution::ESource::PluginResources);
 			}
 		}
 
@@ -498,18 +565,25 @@ namespace UnrealMcp
 		FLoadedToolRegistry LoadToolRegistry()
 		{
 			TArray<FToolRegistryEntry> DescriptorEntries = MakeDescriptorRegistryEntries();
-			TArray<FString> CandidatePaths;
-			AddRegistryCandidatePaths(CandidatePaths);
+			TArray<FRegistryCandidatePath> CandidatePaths;
+			FToolsReadResolution ToolsResolution;
+			AddRegistryCandidatePaths(CandidatePaths, ToolsResolution);
 
-			for (const FString& CandidatePath : CandidatePaths)
+			for (const FRegistryCandidatePath& CandidatePath : CandidatePaths)
 			{
 				TArray<FToolRegistryEntry> LoadedEntries;
-				if (LoadRegistryEntriesFromPath(CandidatePath, LoadedEntries))
+				if (LoadRegistryEntriesFromPath(CandidatePath.Path, LoadedEntries))
 				{
 					MergeRegistryOverrides(DescriptorEntries, LoadedEntries);
 					FLoadedToolRegistry Registry;
 					Registry.Entries = MoveTemp(DescriptorEntries);
-					Registry.SourcePath = FString::Printf(TEXT("<code descriptors> + %s"), *CandidatePath);
+					Registry.SourcePath = FString::Printf(TEXT("<code descriptors> + %s"), *CandidatePath.Path);
+					Registry.SourceKind = CandidatePath.SourceKind;
+					Registry.SourceWarning = ToolsResolution.Warning;
+					for (const FRegistryCandidatePath& Candidate : CandidatePaths)
+					{
+						Registry.SourceCandidates.Add(Candidate.Path);
+					}
 					Registry.bLoadedExplicitRegistry = true;
 					return Registry;
 				}
@@ -519,6 +593,12 @@ namespace UnrealMcp
 			const bool bHasDescriptorEntries = DescriptorEntries.Num() > 0;
 			Registry.Entries = bHasDescriptorEntries ? MoveTemp(DescriptorEntries) : MakeBuiltInFallbackEntries();
 			Registry.SourcePath = bHasDescriptorEntries ? TEXT("<code descriptors>") : TEXT("<built-in fallback>");
+			Registry.SourceKind = FToolsReadResolution::ESource::Unresolved;
+			Registry.SourceWarning = ToolsResolution.Warning;
+			for (const FRegistryCandidatePath& Candidate : CandidatePaths)
+			{
+				Registry.SourceCandidates.Add(Candidate.Path);
+			}
 			Registry.bLoadedExplicitRegistry = false;
 			return Registry;
 		}
@@ -818,10 +898,21 @@ namespace UnrealMcp
 			return Object;
 		};
 
-		TSharedPtr<FJsonObject> ValidationObject = MakeShared<FJsonObject>();
-		ValidationObject->SetBoolField(TEXT("complete"), Issues.Num() == 0);
-		ValidationObject->SetStringField(TEXT("sourcePath"), GetToolRegistrySourcePath());
-		ValidationObject->SetNumberField(TEXT("entryCount"), Entries.Num());
+			TSharedPtr<FJsonObject> ValidationObject = MakeShared<FJsonObject>();
+			ValidationObject->SetBoolField(TEXT("complete"), Issues.Num() == 0);
+			ValidationObject->SetStringField(TEXT("sourcePath"), GetToolRegistrySourcePath());
+			ValidationObject->SetStringField(TEXT("sourceKind"), LexToString(GetLoadedToolRegistry().SourceKind));
+			TArray<TSharedPtr<FJsonValue>> SourceCandidateValues;
+			for (const FString& SourceCandidate : GetLoadedToolRegistry().SourceCandidates)
+			{
+				SourceCandidateValues.Add(MakeShared<FJsonValueString>(SourceCandidate));
+			}
+			ValidationObject->SetArrayField(TEXT("sourceCandidates"), SourceCandidateValues);
+			if (!GetLoadedToolRegistry().SourceWarning.IsEmpty())
+			{
+				ValidationObject->SetStringField(TEXT("sourceResolutionWarning"), GetLoadedToolRegistry().SourceWarning);
+			}
+			ValidationObject->SetNumberField(TEXT("entryCount"), Entries.Num());
 		ValidationObject->SetNumberField(TEXT("explicitEntryCount"), ExplicitEntryCount);
 		ValidationObject->SetNumberField(TEXT("descriptorBackedCount"), DescriptorBackedCount);
 		ValidationObject->SetNumberField(TEXT("descriptorOnlyCount"), DescriptorOnlyCount);

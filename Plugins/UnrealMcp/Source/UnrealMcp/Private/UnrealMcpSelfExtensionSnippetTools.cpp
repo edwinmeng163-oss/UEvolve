@@ -930,6 +930,7 @@ namespace UnrealMcp
 
 			FString Source = TEXT("snippetText");
 			FString SnippetPath;
+			FToolsReadResolution ScaffoldResolution;
 			if (SnippetText.TrimStartAndEnd().IsEmpty())
 			{
 				TSharedPtr<FJsonObject> ResolveArguments = MakeShared<FJsonObject>();
@@ -938,7 +939,7 @@ namespace UnrealMcp
 				ResolveArguments->SetStringField(TEXT("outputRoot"), OutputRoot);
 				FString ResolvedScaffoldDir;
 				FString ResolvedToolName;
-				if (!ResolveMcpScaffoldDirectory(*ResolveArguments, ResolvedScaffoldDir, ResolvedToolName, FailureReason))
+				if (!ResolveMcpScaffoldDirectory(*ResolveArguments, ResolvedScaffoldDir, ResolvedToolName, FailureReason, &ScaffoldResolution))
 				{
 					return MakeExecutionResult(FailureReason, nullptr, true);
 				}
@@ -961,6 +962,13 @@ namespace UnrealMcp
 			{
 				StructuredContent->SetStringField(TEXT("patchPath"), SnippetPath);
 				StructuredContent->SetStringField(TEXT("snippetPath"), SnippetPath);
+				StructuredContent->SetBoolField(TEXT("scaffoldFound"), ScaffoldResolution.bFound);
+				StructuredContent->SetStringField(TEXT("scaffoldSourceKind"), LexToString(ScaffoldResolution.SourceKind));
+				StructuredContent->SetArrayField(TEXT("scaffoldCandidates"), MakeToolsReadCandidateValues(ScaffoldResolution));
+				if (!ScaffoldResolution.Warning.IsEmpty())
+				{
+					StructuredContent->SetStringField(TEXT("scaffoldResolutionWarning"), ScaffoldResolution.Warning);
+				}
 			}
 			StructuredContent->SetStringField(TEXT("patchName"), CanonicalSnippetName);
 
@@ -999,15 +1007,29 @@ namespace UnrealMcp
 			Arguments.TryGetStringField(TEXT("scaffoldDir"), ScaffoldDir);
 			Arguments.TryGetStringField(TEXT("outputRoot"), OutputRoot);
 
-			TSharedPtr<FJsonObject> ResolveArguments = MakeShared<FJsonObject>();
-			ResolveArguments->SetStringField(TEXT("toolName"), ToolName);
-			ResolveArguments->SetStringField(TEXT("scaffoldDir"), ScaffoldDir);
-			ResolveArguments->SetStringField(TEXT("outputRoot"), OutputRoot);
 			FString ResolvedScaffoldDir;
 			FString ResolvedToolName;
-			if (!ResolveMcpScaffoldDirectory(*ResolveArguments, ResolvedScaffoldDir, ResolvedToolName, FailureReason))
+			if (!ScaffoldDir.TrimStartAndEnd().IsEmpty())
 			{
-				return MakeExecutionResult(FailureReason, nullptr, true);
+				if (!ResolveProjectPathInsideProject(ScaffoldDir, ResolvedScaffoldDir, FailureReason))
+				{
+					return MakeExecutionResult(FailureReason, nullptr, true);
+				}
+				ResolvedToolName = ToolName;
+			}
+			else
+			{
+				if (ToolName.TrimStartAndEnd().IsEmpty())
+				{
+					return MakeExecutionResult(TEXT("Provide toolName or scaffoldDir."), nullptr, true);
+				}
+				FString ResolvedOutputRoot;
+				if (!ResolveProjectOutputDirectory(OutputRoot, ResolvedOutputRoot, FailureReason))
+				{
+					return MakeExecutionResult(FailureReason, nullptr, true);
+				}
+				ResolvedScaffoldDir = FPaths::Combine(ResolvedOutputRoot, SanitizeMcpToolIdForPath(ToolName));
+				ResolvedToolName = ToolName;
 			}
 			if (ToolName.TrimStartAndEnd().IsEmpty())
 			{

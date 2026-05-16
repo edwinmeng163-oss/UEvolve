@@ -95,8 +95,9 @@ namespace UnrealMcp
 
 				FString ResolvedSourcePath;
 				FString ResolveFailure;
+				FToolsReadResolution::ESource SourceKind = FToolsReadResolution::ESource::Unresolved;
 				const bool bResolved = !SourcePath.TrimStartAndEnd().IsEmpty()
-					&& ResolveProjectPathInsideProject(SourcePath, ResolvedSourcePath, ResolveFailure);
+					&& ResolvePathInsideTrustedSourceDomains(SourcePath, ResolvedSourcePath, SourceKind, ResolveFailure);
 
 				FString CurrentText;
 				FString CurrentHash;
@@ -116,6 +117,7 @@ namespace UnrealMcp
 				if (bResolved)
 				{
 					FileObject->SetStringField(TEXT("resolvedSourcePath"), ResolvedSourcePath);
+					FileObject->SetStringField(TEXT("sourcePathKind"), LexToString(SourceKind));
 				}
 				else if (!ResolveFailure.IsEmpty())
 				{

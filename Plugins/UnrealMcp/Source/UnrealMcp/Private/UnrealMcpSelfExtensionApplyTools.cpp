@@ -8,6 +8,7 @@
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "UnrealMcpActivityLog.h"
+#include "UnrealMcpSharedPathResolver.h"
 #include "UnrealMcpToolHandlerRegistry.h"
 #include "UnrealMcpToolRegistrar.h"
 #include "UnrealMcpToolRegistry.h"
@@ -249,24 +250,34 @@ namespace UnrealMcp
 		bool MakeApplySourcePath(const FString& RelativePrivateSourceFile, FString& OutSourcePath, FString& OutFailureReason)
 		{
 			const FString RelativeSourceFile = RelativePrivateSourceFile.TrimStartAndEnd();
-			FString PluginSourceDirectory = FPaths::ConvertRelativePathToFull(FPaths::Combine(
-				FPaths::ProjectDir(),
-				TEXT("Plugins/UnrealMcp/Source")));
+			const FToolsReadResolution PluginSourceRoot = ResolvePluginSourceRoot();
+			FString PluginSourceDirectory = PluginSourceRoot.Path;
+			if (!PluginSourceRoot.bFound)
+			{
+				OutFailureReason = PluginSourceRoot.Warning.IsEmpty()
+					? TEXT("UnrealMcp plugin source directory could not be resolved (IPluginManager not initialized).")
+					: PluginSourceRoot.Warning;
+				return false;
+			}
 			FPaths::NormalizeDirectoryName(PluginSourceDirectory);
 			FPaths::CollapseRelativeDirectories(PluginSourceDirectory);
+			FString PrivateSourceDirectory = FPaths::ConvertRelativePathToFull(FPaths::Combine(
+				PluginSourceDirectory,
+				TEXT("UnrealMcp/Private")));
+			FPaths::NormalizeDirectoryName(PrivateSourceDirectory);
+			FPaths::CollapseRelativeDirectories(PrivateSourceDirectory);
 
 			FString ResolvedSourcePath = FPaths::ConvertRelativePathToFull(FPaths::Combine(
-				FPaths::ProjectDir(),
-				TEXT("Plugins/UnrealMcp/Source/UnrealMcp/Private"),
+				PrivateSourceDirectory,
 				RelativeSourceFile));
 			FPaths::NormalizeFilename(ResolvedSourcePath);
 			FPaths::CollapseRelativeDirectories(ResolvedSourcePath);
 
-			const FString PluginSourceDirectoryPrefix = PluginSourceDirectory.EndsWith(TEXT("/"))
-				? PluginSourceDirectory
-				: PluginSourceDirectory + TEXT("/");
-			if (!ResolvedSourcePath.Equals(PluginSourceDirectory, ESearchCase::IgnoreCase)
-				&& !ResolvedSourcePath.StartsWith(PluginSourceDirectoryPrefix, ESearchCase::IgnoreCase))
+			const FString PrivateSourceDirectoryPrefix = PrivateSourceDirectory.EndsWith(TEXT("/"))
+				? PrivateSourceDirectory
+				: PrivateSourceDirectory + TEXT("/");
+			if (!ResolvedSourcePath.Equals(PrivateSourceDirectory, ESearchCase::IgnoreCase)
+				&& !ResolvedSourcePath.StartsWith(PrivateSourceDirectoryPrefix, ESearchCase::IgnoreCase))
 			{
 				OutFailureReason = FString::Printf(
 					TEXT("Source file path '%s' resolves outside allowed plugin source directory 'Plugins/UnrealMcp/Source'."),
@@ -280,9 +291,10 @@ namespace UnrealMcp
 
 		FString GetToolRegistryMirrorPath()
 		{
-			return FPaths::ConvertRelativePathToFull(FPaths::Combine(
-				FPaths::ProjectDir(),
-				TEXT("Plugins/UnrealMcp/Resources/ToolRegistry/tools.json")));
+			const FToolsReadResolution PluginBaseDir = ResolvePluginBaseDir();
+			return PluginBaseDir.Path.IsEmpty()
+				? FString()
+				: FPaths::ConvertRelativePathToFull(FPaths::Combine(PluginBaseDir.Path, TEXT("Resources/ToolRegistry/tools.json")));
 		}
 
 		FString GetCategorySourceFileForApply(const FString& Category)
@@ -351,14 +363,68 @@ namespace UnrealMcp
 			return TEXT("TryExecuteSelfExtensionTool");
 		}
 
+		bool TryMakeApplyRelativePathForDomain(
+			const FString& Path,
+			const FString& DomainRoot,
+			const FString& DomainPrefix,
+			FString& OutRelativePath)
+		{
+			if (DomainRoot.IsEmpty())
+			{
+				return false;
+			}
+
+			FString NormalizedPath = FPaths::ConvertRelativePathToFull(Path);
+			FString NormalizedRoot = FPaths::ConvertRelativePathToFull(DomainRoot);
+			FPaths::NormalizeFilename(NormalizedPath);
+			FPaths::NormalizeDirectoryName(NormalizedRoot);
+			FPaths::CollapseRelativeDirectories(NormalizedPath);
+			FPaths::CollapseRelativeDirectories(NormalizedRoot);
+
+			const FString RootPrefix = NormalizedRoot.EndsWith(TEXT("/")) ? NormalizedRoot : NormalizedRoot + TEXT("/");
+			if (!NormalizedPath.Equals(NormalizedRoot, ESearchCase::IgnoreCase)
+				&& !NormalizedPath.StartsWith(RootPrefix, ESearchCase::IgnoreCase))
+			{
+				return false;
+			}
+
+			FString RelativePath = NormalizedPath;
+			FPaths::MakePathRelativeTo(RelativePath, *NormalizedRoot);
+			OutRelativePath = DomainPrefix.IsEmpty()
+				? RelativePath
+				: FPaths::Combine(DomainPrefix, RelativePath);
+			FPaths::NormalizeFilename(OutRelativePath);
+			return true;
+		}
+
 		FString MakeApplyRelativePath(const FString& Path)
 		{
-			FString RelativePath = FPaths::ConvertRelativePathToFull(Path);
-			FString ProjectDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
-			FPaths::NormalizeFilename(RelativePath);
-			FPaths::NormalizeDirectoryName(ProjectDir);
-			FPaths::MakePathRelativeTo(RelativePath, *ProjectDir);
-			return RelativePath;
+			FString RelativePath;
+
+			const FToolsReadResolution PluginBaseDir = ResolvePluginBaseDir();
+			if (TryMakeApplyRelativePathForDomain(Path, PluginBaseDir.Path, TEXT("Plugins/UnrealMcp"), RelativePath))
+			{
+				return RelativePath;
+			}
+
+			const FToolsReadResolution ToolsRoot = ResolveToolsReadSubpath(FString(), TArray<FString>());
+			for (const FString& Candidate : ToolsRoot.Candidates)
+			{
+				if (TryMakeApplyRelativePathForDomain(Path, Candidate, TEXT("Tools"), RelativePath))
+				{
+					return RelativePath;
+				}
+			}
+
+			if (TryMakeApplyRelativePathForDomain(Path, FPaths::ProjectDir(), FString(), RelativePath))
+			{
+				return RelativePath;
+			}
+
+			FString AbsolutePath = FPaths::ConvertRelativePathToFull(Path);
+			FPaths::NormalizeFilename(AbsolutePath);
+			FPaths::CollapseRelativeDirectories(AbsolutePath);
+			return AbsolutePath;
 		}
 
 		struct FMcpScaffoldRequiredInclude
@@ -563,12 +629,20 @@ namespace UnrealMcp
 				return false;
 			}
 
-			const FString ProjectDirectory = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
-			const FString PluginModuleSourceDirectory = FPaths::ConvertRelativePathToFull(FPaths::Combine(
-				ProjectDirectory,
-				TEXT("Plugins/UnrealMcp/Source/UnrealMcp")));
+			const FToolsReadResolution PluginSourceRoot = ResolvePluginSourceRoot();
+			const FString PluginSourceDirectory = PluginSourceRoot.Path;
+			if (!PluginSourceRoot.bFound)
+			{
+				OutFailureReason = PluginSourceRoot.Warning.IsEmpty()
+					? TEXT("UnrealMcp plugin source directory could not be resolved (IPluginManager not initialized).")
+					: PluginSourceRoot.Warning;
+				return false;
+			}
+
+			const FString PluginModuleSourceDirectory = FPaths::ConvertRelativePathToFull(FPaths::Combine(PluginSourceDirectory, TEXT("UnrealMcp")));
 			const FString PrivateSourceDirectory = FPaths::ConvertRelativePathToFull(FPaths::Combine(PluginModuleSourceDirectory, TEXT("Private")));
 			const FString PublicSourceDirectory = FPaths::ConvertRelativePathToFull(FPaths::Combine(PluginModuleSourceDirectory, TEXT("Public")));
+			const FString ProjectRelativeSourcePrefix = TEXT("Plugins/UnrealMcp/Source/");
 			const FString ProjectRelativePrivatePrefix = TEXT("Plugins/UnrealMcp/Source/UnrealMcp/Private/");
 			const FString ProjectRelativePublicPrefix = TEXT("Plugins/UnrealMcp/Source/UnrealMcp/Public/");
 
@@ -578,7 +652,9 @@ namespace UnrealMcp
 				if (RelativeFile.StartsWith(ProjectRelativePrivatePrefix, ESearchCase::IgnoreCase)
 					|| RelativeFile.StartsWith(ProjectRelativePublicPrefix, ESearchCase::IgnoreCase))
 				{
-					ResolvedPath = FPaths::ConvertRelativePathToFull(FPaths::Combine(ProjectDirectory, RelativeFile));
+					ResolvedPath = FPaths::ConvertRelativePathToFull(FPaths::Combine(
+						PluginSourceDirectory,
+						RelativeFile.RightChop(ProjectRelativeSourcePrefix.Len())));
 				}
 				else if (RelativeFile.StartsWith(TEXT("Private/"), ESearchCase::IgnoreCase)
 					|| RelativeFile.StartsWith(TEXT("Public/"), ESearchCase::IgnoreCase))
@@ -611,9 +687,10 @@ namespace UnrealMcp
 
 		FString GetMcpBuildCsPath()
 		{
-			return FPaths::ConvertRelativePathToFull(FPaths::Combine(
-				FPaths::ProjectDir(),
-				TEXT("Plugins/UnrealMcp/Source/UnrealMcp/UnrealMcp.Build.cs")));
+			const FToolsReadResolution PluginSourceDirectory = ResolvePluginSourceRoot();
+			return !PluginSourceDirectory.bFound
+				? FString()
+				: FPaths::ConvertRelativePathToFull(FPaths::Combine(PluginSourceDirectory.Path, TEXT("UnrealMcp/UnrealMcp.Build.cs")));
 		}
 
 		bool IsSafeUnrealModuleName(const FString& ModuleName)
@@ -1374,6 +1451,7 @@ namespace UnrealMcp
 		{
 			const FJsonObject* Arguments = nullptr;
 			FString ScaffoldDirectory;
+			FToolsReadResolution ScaffoldResolution;
 			FString ToolName;
 		};
 
@@ -1594,7 +1672,8 @@ namespace UnrealMcp
 				return true;
 			}
 
-			return ResolveProjectOutputDirectory(FString(), OutDependencyRoot, OutFailureReason);
+			OutDependencyRoot = NormalizeScaffoldDirectoryForDependency(FPaths::GetPath(CurrentScaffoldDirectory));
+			return true;
 		}
 
 		bool ResolveScaffoldDependencyOrder(
@@ -1767,6 +1846,7 @@ namespace UnrealMcp
 		TSharedPtr<FJsonObject> MakeDependencyFailureContent(
 			const FString& ToolName,
 			const FString& ScaffoldDirectory,
+			const FToolsReadResolution& ScaffoldResolution,
 			const FString& DependencyRoot,
 			bool bDryRun,
 			const FString& FailureReason,
@@ -1790,6 +1870,13 @@ namespace UnrealMcp
 			StructuredContent->SetStringField(TEXT("toolName"), ToolName);
 			StructuredContent->SetStringField(TEXT("toolId"), SanitizeMcpToolIdForPath(ToolName));
 			StructuredContent->SetStringField(TEXT("scaffoldDir"), ScaffoldDirectory);
+			StructuredContent->SetBoolField(TEXT("scaffoldFound"), ScaffoldResolution.bFound);
+			StructuredContent->SetStringField(TEXT("scaffoldSourceKind"), LexToString(ScaffoldResolution.SourceKind));
+			StructuredContent->SetArrayField(TEXT("scaffoldCandidates"), MakeToolsReadCandidateValues(ScaffoldResolution));
+			if (!ScaffoldResolution.Warning.IsEmpty())
+			{
+				StructuredContent->SetStringField(TEXT("scaffoldResolutionWarning"), ScaffoldResolution.Warning);
+			}
 			StructuredContent->SetStringField(TEXT("dependencyRoot"), DependencyRoot);
 			StructuredContent->SetBoolField(TEXT("dryRun"), bDryRun);
 			StructuredContent->SetBoolField(TEXT("canApply"), false);
@@ -1810,6 +1897,7 @@ namespace UnrealMcp
 
 			const FJsonObject& Arguments = *Ctx.Arguments;
 			FString ScaffoldDirectory = Ctx.ScaffoldDirectory;
+			const FToolsReadResolution& ScaffoldResolution = Ctx.ScaffoldResolution;
 			FString ToolName = Ctx.ToolName;
 			FString FailureReason;
 
@@ -1826,7 +1914,7 @@ namespace UnrealMcp
 			const int32 TargetDiffPreviewLines = FMath::Min(GetPositiveIntArgument(Arguments, TEXT("targetDiffPreviewLines"), 120), 1000);
 
 			TArray<TSharedPtr<FJsonValue>> Issues;
-			auto MakeEarlyFailureContent = [&ToolName, &ScaffoldDirectory, &Issues](const FString& Reason, const FString& FirstStep, const FString& FirstTool)
+			auto MakeEarlyFailureContent = [&ToolName, &ScaffoldDirectory, &Issues, &ScaffoldResolution](const FString& Reason, const FString& FirstStep, const FString& FirstTool)
 			{
 				TSharedPtr<FJsonObject> RegistrationStatusObject = MakeShared<FJsonObject>();
 				RegistrationStatusObject->SetBoolField(TEXT("scaffoldExists"), FPaths::DirectoryExists(ScaffoldDirectory));
@@ -1845,6 +1933,13 @@ namespace UnrealMcp
 				StructuredContent->SetStringField(TEXT("applyMode"), TEXT("descriptor_first"));
 				StructuredContent->SetStringField(TEXT("toolName"), ToolName);
 				StructuredContent->SetStringField(TEXT("scaffoldDir"), ScaffoldDirectory);
+				StructuredContent->SetBoolField(TEXT("scaffoldFound"), ScaffoldResolution.bFound);
+				StructuredContent->SetStringField(TEXT("scaffoldSourceKind"), LexToString(ScaffoldResolution.SourceKind));
+				StructuredContent->SetArrayField(TEXT("scaffoldCandidates"), MakeToolsReadCandidateValues(ScaffoldResolution));
+				if (!ScaffoldResolution.Warning.IsEmpty())
+				{
+					StructuredContent->SetStringField(TEXT("scaffoldResolutionWarning"), ScaffoldResolution.Warning);
+				}
 				StructuredContent->SetBoolField(TEXT("canApply"), false);
 				StructuredContent->SetBoolField(TEXT("patchesSafe"), false);
 				StructuredContent->SetArrayField(TEXT("issues"), Issues);
@@ -1992,10 +2087,25 @@ namespace UnrealMcp
 				return MakeExecutionResult(FailureReason, StructuredContent, true);
 			}
 			const FString ModuleSourcePath = GetMcpModuleSourcePath();
-			// Category C: self-extension applies ToolRegistry patches to the active project's explicit registry mirror.
-			const FString RegistrySourcePath = FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectDir(), TEXT("Tools/UnrealMcpToolRegistry/tools.json")));
+			// Reader domain: registry source prefers project Tools and falls back to shared repo-root Tools.
+			const FToolsReadResolution RegistryResolution = ResolveToolsReadSubpath(
+				TEXT("UnrealMcpToolRegistry/tools.json"),
+				{ TEXT("tools.json") });
+			const FString RegistrySourcePath = FPaths::ConvertRelativePathToFull(RegistryResolution.Path);
 			const FString RegistryMirrorPath = GetToolRegistryMirrorPath();
 			const FString BuildCsPath = GetMcpBuildCsPath();
+			if (RegistryMirrorPath.IsEmpty())
+			{
+				return MakeExecutionResult(TEXT("UnrealMcp plugin base directory could not be resolved (IPluginManager not initialized)."), nullptr, true);
+			}
+			if (BuildRequirements.RequiredModules.Num() > 0 && BuildCsPath.IsEmpty())
+			{
+				return MakeExecutionResult(TEXT("UnrealMcp plugin source directory could not be resolved (IPluginManager not initialized)."), nullptr, true);
+			}
+			if (bApplyChatCommand && ModuleSourcePath.IsEmpty())
+			{
+				return MakeExecutionResult(TEXT("UnrealMcp module source path could not be resolved (IPluginManager not initialized)."), nullptr, true);
+			}
 			TMap<FString, FString> BuildRequirementIncludeTargets;
 			for (const FMcpScaffoldRequiredInclude& IncludeEntry : BuildRequirements.RequiredIncludes)
 			{
@@ -2407,6 +2517,21 @@ namespace UnrealMcp
 			StructuredContent->SetStringField(TEXT("toolName"), ToolName);
 			StructuredContent->SetStringField(TEXT("toolId"), SanitizeMcpToolIdForPath(ToolName));
 			StructuredContent->SetStringField(TEXT("scaffoldDir"), ScaffoldDirectory);
+			StructuredContent->SetBoolField(TEXT("scaffoldFound"), ScaffoldResolution.bFound);
+			StructuredContent->SetStringField(TEXT("scaffoldSourceKind"), LexToString(ScaffoldResolution.SourceKind));
+			StructuredContent->SetArrayField(TEXT("scaffoldCandidates"), MakeToolsReadCandidateValues(ScaffoldResolution));
+			if (!ScaffoldResolution.Warning.IsEmpty())
+			{
+				StructuredContent->SetStringField(TEXT("scaffoldResolutionWarning"), ScaffoldResolution.Warning);
+			}
+			StructuredContent->SetStringField(TEXT("registrySourcePath"), RegistrySourcePath);
+			StructuredContent->SetBoolField(TEXT("registrySourceFound"), RegistryResolution.bFound);
+			StructuredContent->SetStringField(TEXT("registrySourceKind"), LexToString(RegistryResolution.SourceKind));
+			StructuredContent->SetArrayField(TEXT("registrySourceCandidates"), MakeToolsReadCandidateValues(RegistryResolution));
+			if (!RegistryResolution.Warning.IsEmpty())
+			{
+				StructuredContent->SetStringField(TEXT("registryResolutionWarning"), RegistryResolution.Warning);
+			}
 			StructuredContent->SetStringField(TEXT("category"), Category);
 			StructuredContent->SetStringField(TEXT("categorySourceFile"), CategorySourceFile);
 			StructuredContent->SetStringField(TEXT("categoryTryExecute"), TryExecuteName);
@@ -2896,7 +3021,8 @@ namespace UnrealMcp
 			FString ScaffoldDirectory;
 			FString ToolName;
 			FString FailureReason;
-			if (!ResolveMcpScaffoldDirectory(Arguments, ScaffoldDirectory, ToolName, FailureReason))
+			FToolsReadResolution RootScaffoldResolution;
+			if (!ResolveMcpScaffoldDirectory(Arguments, ScaffoldDirectory, ToolName, FailureReason, &RootScaffoldResolution))
 			{
 				return MakeExecutionResult(FailureReason, nullptr, true);
 			}
@@ -2928,6 +3054,7 @@ namespace UnrealMcp
 				FScaffoldApplyContext SingleCtx;
 				SingleCtx.Arguments = &Arguments;
 				SingleCtx.ScaffoldDirectory = RootNode.ScaffoldDirectory;
+				SingleCtx.ScaffoldResolution = RootScaffoldResolution;
 				SingleCtx.ToolName = ToolName;
 				ApplyResolvedScaffold(SingleCtx, SingleResult);
 				return SingleResult.ExecutionResult;
@@ -2938,20 +3065,20 @@ namespace UnrealMcp
 			{
 				TArray<TSharedPtr<FJsonValue>> Issues;
 				Issues.Add(MakeShared<FJsonValueObject>(MakeDependencyIssue(TEXT("dependency_root_invalid"), FailureReason)));
-				return MakeExecutionResult(
-					FailureReason,
-					MakeDependencyFailureContent(ToolName, ScaffoldDirectory, DependencyRoot, bDryRun, FailureReason, Issues, TArray<TSharedPtr<FJsonValue>>()),
-					true);
+					return MakeExecutionResult(
+						FailureReason,
+						MakeDependencyFailureContent(ToolName, ScaffoldDirectory, RootScaffoldResolution, DependencyRoot, bDryRun, FailureReason, Issues, TArray<TSharedPtr<FJsonValue>>()),
+						true);
 			}
 
 			TArray<FResolvedScaffoldDependency> ApplyOrder;
 			TArray<TSharedPtr<FJsonValue>> DependencyIssues;
 			if (!ResolveScaffoldDependencyOrder(RootNode, DependencyRoot, ApplyOrder, DependencyIssues, FailureReason))
 			{
-				return MakeExecutionResult(
-					FailureReason,
-					MakeDependencyFailureContent(ToolName, RootNode.ScaffoldDirectory, DependencyRoot, bDryRun, FailureReason, DependencyIssues, TArray<TSharedPtr<FJsonValue>>()),
-					true);
+					return MakeExecutionResult(
+						FailureReason,
+						MakeDependencyFailureContent(ToolName, RootNode.ScaffoldDirectory, RootScaffoldResolution, DependencyRoot, bDryRun, FailureReason, DependencyIssues, TArray<TSharedPtr<FJsonValue>>()),
+						true);
 			}
 
 			TArray<TSharedPtr<FJsonValue>> DependencyChain;
@@ -2962,6 +3089,10 @@ namespace UnrealMcp
 				FScaffoldApplyContext NodeCtx;
 				NodeCtx.Arguments = &Arguments;
 				NodeCtx.ScaffoldDirectory = Node.ScaffoldDirectory;
+				NodeCtx.ScaffoldResolution.Path = Node.ScaffoldDirectory;
+				NodeCtx.ScaffoldResolution.bFound = FPaths::DirectoryExists(Node.ScaffoldDirectory);
+				NodeCtx.ScaffoldResolution.SourceKind = RootScaffoldResolution.SourceKind;
+				NodeCtx.ScaffoldResolution.Candidates.Add(Node.ScaffoldDirectory);
 				NodeCtx.ToolName = Node.ToolName;
 
 				FApplyResult NodeResult;
@@ -2975,10 +3106,11 @@ namespace UnrealMcp
 					if (!NodeResult.StructuredContent.IsValid())
 					{
 						TArray<TSharedPtr<FJsonValue>> EmptyIssues;
-						NodeResult.StructuredContent = MakeDependencyFailureContent(
-							ToolName,
-							RootNode.ScaffoldDirectory,
-							DependencyRoot,
+							NodeResult.StructuredContent = MakeDependencyFailureContent(
+								ToolName,
+								RootNode.ScaffoldDirectory,
+								RootScaffoldResolution,
+								DependencyRoot,
 							bDryRun,
 							NodeResult.ExecutionResult.Text,
 							EmptyIssues,

@@ -131,8 +131,14 @@ namespace UnrealMcp
 			const FJsonObject& Arguments,
 			FString& OutDirectory,
 			FString& OutToolName,
-			FString& OutFailureReason)
+			FString& OutFailureReason,
+			FToolsReadResolution* OutResolution = nullptr)
 		{
+			if (OutResolution)
+			{
+				*OutResolution = FToolsReadResolution();
+			}
+
 			FString ScaffoldDir;
 			FString ToolName;
 			FString OutputRoot;
@@ -148,6 +154,14 @@ namespace UnrealMcp
 				{
 					return false;
 				}
+				if (OutResolution)
+				{
+					OutResolution->Path = OutDirectory;
+					OutResolution->bFound = FPaths::DirectoryExists(OutDirectory);
+					OutResolution->SourceKind = FToolsReadResolution::ESource::ProjectLocal;
+					OutResolution->Candidates.Add(OutDirectory);
+					OutResolution->Warning = TEXT("Explicit scaffoldDir is project-local only; pass toolName with scaffoldDir empty to use shared repo recipe fallback.");
+				}
 			}
 			else
 			{
@@ -157,12 +171,30 @@ namespace UnrealMcp
 					return false;
 				}
 
-				FString ResolvedOutputRoot;
-				if (!ResolveProjectOutputDirectory(OutputRoot, ResolvedOutputRoot, OutFailureReason))
+				if (OutputRoot.TrimStartAndEnd().IsEmpty())
 				{
-					return false;
+					if (!ResolveScaffoldReadDirectory(SanitizeMcpToolIdForPath(ToolName), OutDirectory, OutFailureReason, OutResolution))
+					{
+						return false;
+					}
 				}
-				OutDirectory = FPaths::Combine(ResolvedOutputRoot, SanitizeMcpToolIdForPath(ToolName));
+				else
+				{
+					FString ResolvedOutputRoot;
+					if (!ResolveProjectOutputDirectory(OutputRoot, ResolvedOutputRoot, OutFailureReason))
+					{
+						return false;
+					}
+					OutDirectory = FPaths::Combine(ResolvedOutputRoot, SanitizeMcpToolIdForPath(ToolName));
+					if (OutResolution)
+					{
+						OutResolution->Path = OutDirectory;
+						OutResolution->bFound = FPaths::DirectoryExists(OutDirectory);
+						OutResolution->SourceKind = FToolsReadResolution::ESource::ProjectLocal;
+						OutResolution->Candidates.Add(OutDirectory);
+						OutResolution->Warning = TEXT("Explicit outputRoot is project-local only; omit outputRoot to use shared repo recipe fallback.");
+					}
+				}
 			}
 
 			OutToolName = ToolName;
@@ -423,13 +455,21 @@ namespace UnrealMcp
 			FString ScaffoldDirectory;
 			FString ToolName;
 			FString FailureReason;
-			if (!ResolveMcpScaffoldForInspection(Arguments, ScaffoldDirectory, ToolName, FailureReason))
+			FToolsReadResolution ScaffoldResolution;
+			if (!ResolveMcpScaffoldForInspection(Arguments, ScaffoldDirectory, ToolName, FailureReason, &ScaffoldResolution))
 			{
 				return MakeExecutionResult(FailureReason, nullptr, true);
 			}
 
 			TSharedPtr<FJsonObject> InspectionObject = InspectMcpScaffoldDirectory(ScaffoldDirectory, ToolName, ToolsArray, bIncludeFileText, MaxPreviewChars);
 			InspectionObject->SetStringField(TEXT("action"), TEXT("mcp_inspect_scaffold"));
+			InspectionObject->SetBoolField(TEXT("scaffoldFound"), ScaffoldResolution.bFound);
+			InspectionObject->SetStringField(TEXT("scaffoldSourceKind"), LexToString(ScaffoldResolution.SourceKind));
+			InspectionObject->SetArrayField(TEXT("scaffoldCandidates"), MakeToolsReadCandidateValues(ScaffoldResolution));
+			if (!ScaffoldResolution.Warning.IsEmpty())
+			{
+				InspectionObject->SetStringField(TEXT("scaffoldResolutionWarning"), ScaffoldResolution.Warning);
+			}
 			const bool bReadyForApply = InspectionObject->GetBoolField(TEXT("readyForApply"));
 			FString InspectedToolName;
 			InspectionObject->TryGetStringField(TEXT("toolName"), InspectedToolName);

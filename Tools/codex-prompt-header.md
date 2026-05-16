@@ -156,11 +156,26 @@ whichever `.uproject` the editor was launched against:
   `<ProjectDir>` = example project, so scaffold lands at
   `Examples/UEvolveExample57/Tools/UnrealMcpToolScaffolds/`.
 
-Do NOT route the scaffold writer through `UnrealMcpSharedPathResolver` to walk
-up to the repo root. That resolver is for CATEGORY A (skills / tests /
-knowledge), not CATEGORY B (scaffolds, `Saved/UnrealMcp/*`, `SkillDrafts`).
-Walking up breaks the per-project draft isolation that lets each editor
-session iterate on its own scaffold drafts.
+### Self-extension path resolution domains
+
+- READER domain (versioned `Tools` assets such as PyTools, registry source,
+  scaffold recipes, skills, tests, and knowledge): use the Tools reader
+  resolver. Project-local `Tools` may override shared repo-root `Tools`; always
+  surface `sourceKind` and `candidates` in structured results when a reader
+  path is user-visible.
+- WRITER domain (generated drafts, session output, backups, manifests, logs,
+  and locks): use `<ProjectDir>` / `<ProjectSavedDir>` paths such as
+  `ResolveProjectOutputDirectory`. Do NOT use SharedPathResolver or walk up to
+  the repo root. Walking up breaks the per-project draft isolation that lets
+  each editor session iterate on its own scaffold drafts.
+- PLUGIN SOURCE domain (plugin C++ source and plugin Resources writes): use
+  `IPluginManager::FindPlugin("UnrealMcp")->GetBaseDir()` through
+  `ResolvePluginSourceRoot()` / `ResolvePluginBaseDir()`. Never assume
+  `<ProjectDir>/Plugins/UnrealMcp`; example projects can load the plugin
+  through `AdditionalPluginDirectories`.
+- Apply scaffold crosses all three domains: READ scaffold content through the
+  READER domain, WRITE `.cpp` / `.h` source through the PLUGIN SOURCE domain,
+  and WRITE backups/manifests/logs through the WRITER domain.
 
 Hand-merging a scaffold's `.patch.cpp` content into the main module DOES NOT
 create a manifest. The tool will run, but the toolchain cannot roll it back,

@@ -397,7 +397,10 @@ server + client + packaged), recipe catalog lists 7 named recipes, and Lane Z
 Blueprint refactor is complete. The previous Lane V get/inspect-tool gap for
 actor property, actor transform, and project settings readback is done in C++;
 Blueprint delete + rename basics are done in C++, and macro + interface editing
-is now done in C++.
+is now done in C++. Tier 2 path resolution is fixed: example projects can host
+the plugin through `AdditionalPluginDirectories` while Python bridge handlers,
+ToolRegistry reads, and scaffold apply/inspect/validate readers fall back to
+repo-root shared content with per-project drafts taking precedence.
 
 `unreal.configure_fps_settings` and
 `unreal.bp_add_input_axis_event_node` were moved back to scaffold-only status

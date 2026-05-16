@@ -33,6 +33,25 @@ Shared contracts:
 - Real apply manifests follow [Extension Manifest Schema](ManifestSchema.md).
 - Restart handoff is documented in [External Supervisor](Supervisor.md).
 
+## Path Resolution
+
+Scaffold writers are project-local by design. `unreal.scaffold_mcp_tool` and
+other draft/Saved creators write under the active `<ProjectDir>` so multiple
+host projects can keep isolated drafts.
+
+Reader-side tools use project-first fallback. `unreal.mcp_apply_scaffold`,
+`unreal.mcp_inspect_scaffold`, `unreal.mcp_validate_*`, Python bridge handler
+resolution, and ToolRegistry reads check active-project `Tools/` content first,
+then walk up to the shared repo-root `Tools/` tree. This lets example projects
+loaded through `AdditionalPluginDirectories` use canonical repo-root handlers,
+registry metadata, and pre-staged scaffolds while still allowing per-project
+overrides.
+
+Applier source writes use the loaded plugin location from `IPluginManager`,
+not `<ProjectDir>/Plugins/UnrealMcp`. Example projects can therefore apply
+patches to the real plugin source even when the plugin is imported through
+`AdditionalPluginDirectories`.
+
 ## Normal Flow
 
 1. Search or recommend tools with `unreal.knowledge_search`,
