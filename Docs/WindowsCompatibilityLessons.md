@@ -382,3 +382,345 @@ See #8 for the diagnostic signal (runtime response missing your new structured-c
 ## Issue thread
 
 [github.com/edwinmeng163-oss/UEvolve/issues/2](https://github.com/edwinmeng163-oss/UEvolve/issues/2) — Windows UE 5.6 validation report. Closed after 4 retest rounds + 1 schema-symlink follow-up. Comments preserve the diagnostic trail.
+
+---
+
+# Codex Desktop bridge troubleshooting (Windows)
+
+> **用 v0.14.0-python-track Windows full-experience zip (SHA `9f80bdde...`) 的用户，
+> Codex Desktop / Chat 面板报 "Failed to connect to Codex App Server bridge at
+> ws://127.0.0.1:8766/uevolve" 时按这个顺序排查。**
+>
+> Tier 4 (commit `e08a995`) 已经把已知的所有 Windows-specific failure modes 修了，
+> 但用户机器可能还有 environment-specific 状态（Codex 没装/没登录、端口占用、
+> 自定义环境变量、自定义 Codex 安装路径等）。下面是按概率排序的手动 unblock 步骤。
+
+## 0. 前提确认（5 秒）
+
+```pwsh
+# UE editor 是否在跑 + UnrealMcp 是否 listening on 8765
+Get-Process -Name "UnrealEditor*" -ErrorAction SilentlyContinue | Select-Object Id, MainWindowTitle
+Get-NetTCPConnection -State Listen -LocalPort 8765 -ErrorAction SilentlyContinue
+
+# Bridge 是否在跑 + listening on 8766
+Get-NetTCPConnection -State Listen -LocalPort 8766 -ErrorAction SilentlyContinue
+```
+
+期望：
+
+- 至少 1 个 `UnrealEditor*` 进程在跑
+- `127.0.0.1:8765` LISTEN（UE MCP）
+- `127.0.0.1:8766` LISTEN（bridge）
+
+如果 8765 没 LISTEN：UE editor 没启动 / UnrealMcp plugin 没启用 / 端口被占。打开 `Window > Unreal MCP Workbench` 确认插件已加载，看 `Output Log` 找 `LogUnrealMcp` 日志。
+
+如果 8766 没 LISTEN：bridge daemon 没跑（最常见）。继续看下面。
+
+## 1. 手动起 bridge — 最常见的 unblock
+
+很多时候 bridge 没自动跟随 UE editor 启动。手动起一遍看错误：
+
+```pwsh
+cd "<UserProject>"  # 你解压 zip 的项目根
+.\Tools\UnrealMcpCodexBridge\start-bridge.ps1
+```
+
+bridge 启动正常时输出大致：
+
+```text
+Bun version: 1.x.x
+Codex binary: C:\Users\<you>\AppData\Local\OpenAI\Codex\bin\<hash>\codex.exe
+unrealmcp already current in C:\Users\<you>\.codex\config.toml
+Registered MCP server 'unrealmcp' with Codex; ...
+UEvolve Codex Bridge listening at ws://127.0.0.1:8766/uevolve
+Codex app-server transport=stdio endpoint=stdio://
+Codex app-server args: app-server --listen stdio:// ...
+```
+
+健康检查（在另一个 PowerShell 窗口）：
+
+```pwsh
+# WebSocket 健康检查（用 PowerShell 7+ 自带的 client）
+$ws = [System.Net.WebSockets.ClientWebSocket]::new()
+$ws.ConnectAsync([Uri]"ws://127.0.0.1:8766/uevolve", [Threading.CancellationToken]::None).GetAwaiter().GetResult()
+$ws.State  # 期望 Open
+```
+
+或更简单：浏览器开 http://127.0.0.1:8766/ — bridge 会返回简单 health text。
+
+## 2. 各类常见错误 → 手动修复
+
+### 2.1 `bun: command not found` 或类似
+
+**症状**：bridge 启动报 "bun not recognized" 或 ".cmd 找不到 bun"。
+
+**根因**：launcher 没找到 bundled `runtime/bun.exe`，回退到 PATH 也没有。
+
+**修复**:
+
+```pwsh
+# 检查 bundled bun 是否存在
+Get-Item Tools\UnrealMcpCodexBridge\runtime\bun.exe
+# 期望: 存在，几十 MB 的 .exe
+
+# 如果丢失：从 zip 重新解压 Tools\UnrealMcpCodexBridge\runtime\ 子目录
+# 或者临时用环境变量指定别的 bun:
+$env:UEVOLVE_BUN_BIN = "C:\path\to\your\bun.exe"
+.\Tools\UnrealMcpCodexBridge\start-bridge.ps1
+```
+
+### 2.2 `EPERM: operation not permitted, uv_spawn` 指向 WindowsApps 路径
+
+**症状**：
+
+```text
+Error: spawn EPERM
+  errno: -4048,
+  syscall: 'spawn',
+  path: 'C:\Program Files\WindowsApps\OpenAI.Codex_<ver>\app\resources\codex.exe'
+```
+
+**根因**：`where codex` 返回了 WindowsApps store 路径，Bun 没权限 spawn 那个 protected namespace。Tier 4 已经加了自动 skip + 优先 user-mode install，但用户机器可能：
+
+- 只装了 WindowsApps 版的 Codex（没装 user-mode）
+- 或者 `UEVOLVE_CODEX_BIN` env var 显式指向了 WindowsApps 路径
+
+**修复**:
+
+```pwsh
+# 检查现有 Codex 二进制
+Get-ChildItem "$env:LOCALAPPDATA\OpenAI\Codex\bin" -Recurse -Filter codex.exe -ErrorAction SilentlyContinue
+# 期望: 至少一个 user-mode codex.exe
+
+# 如果只在 WindowsApps 下面：装 user-mode Codex
+# 方案 A: 卸载 WindowsApps 版 → 装 Codex Desktop installer (从 OpenAI 官方)
+# 方案 B: 保留 WindowsApps 版，但显式跑 codex 一次让它 cache 到 user-mode 路径
+codex --version   # 第一次跑可能 trigger user-mode install
+Get-ChildItem "$env:LOCALAPPDATA\OpenAI\Codex\bin" -Recurse -Filter codex.exe
+# 再重启 bridge
+
+# 如果你 UEVOLVE_CODEX_BIN 设错了：
+Remove-Item Env:UEVOLVE_CODEX_BIN -ErrorAction SilentlyContinue
+.\Tools\UnrealMcpCodexBridge\start-bridge.ps1
+```
+
+### 2.3 Codex app-server 报 `unsupported --listen URL` 拒绝 `ws://`
+
+**症状**：
+
+```text
+error: invalid value 'ws://127.0.0.1:<port>' for '--listen <URL>':
+unsupported --listen URL ...; expected `stdio://`, `unix://`, `unix://PATH`, or `off`
+```
+
+**根因**：用户显式设了 `UEVOLVE_CODEX_TRANSPORT=ws`，但当前 Codex 构建只支持 stdio。
+
+**修复**:
+
+```pwsh
+Remove-Item Env:UEVOLVE_CODEX_TRANSPORT -ErrorAction SilentlyContinue
+.\Tools\UnrealMcpCodexBridge\start-bridge.ps1
+# Bridge 应该自动选 stdio (Win 默认)
+```
+
+### 2.4 端口 8766 已被占用
+
+**症状**：
+
+```text
+EADDRINUSE: address already in use 127.0.0.1:8766
+```
+
+**根因**：
+
+- 之前一个 bridge 实例没干净退出
+- 用户改了 `UEVOLVE_CODEX_BRIDGE_PORT` 跟另一个工具冲突
+- 或者真有别的 daemon 占用 8766
+
+**修复**:
+
+```pwsh
+# 看是谁占用
+Get-NetTCPConnection -LocalPort 8766 -State Listen -ErrorAction SilentlyContinue |
+  ForEach-Object {
+    $proc = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue
+    "[$($_.OwningProcess)] $($proc.Name) $($proc.Path)"
+  }
+
+# 如果是 bun.exe / node.exe 的孤儿进程：kill
+Stop-Process -Name bun -Force -ErrorAction SilentlyContinue
+Stop-Process -Id <PID> -Force
+
+# 或者换端口
+$env:UEVOLVE_CODEX_BRIDGE_PORT = 8866
+.\Tools\UnrealMcpCodexBridge\start-bridge.ps1
+# 注意：UE plugin provider 配置里的 BaseUrl 也要同步改
+```
+
+### 2.5 UE plugin 找不到 / 端口 8765 不 LISTEN
+
+**症状**：UE editor 开了但 `Get-NetTCPConnection -LocalPort 8765` 返空。
+
+**根因**：
+
+- UnrealMcp plugin 没 enabled
+- Plugin 装错位置（不在 `<UserProject>\Plugins\UnrealMcp\`）
+- Plugin 编译失败但 editor 没报（rare）
+
+**修复**:
+
+```pwsh
+# 确认 plugin 文件位置 + uplugin 启用
+Get-Item "<UserProject>\Plugins\UnrealMcp\UnrealMcp.uplugin"
+Get-Content "<UserProject>\Plugins\UnrealMcp\UnrealMcp.uplugin" | Select-String "Enabled"
+
+# 项目的 .uproject Plugins 数组是否启用了 UnrealMcp
+Get-Content "<UserProject>\<YourProject>.uproject" | Select-String -Pattern "UnrealMcp" -Context 0,3
+
+# UE editor 启动后看输出
+# Window > Output Log > 过滤 "LogUnrealMcp"
+# 应该看到 "Unreal MCP listening on http://127.0.0.1:8765/mcp"
+```
+
+如果 plugin 真的没编译进来：编辑器右下角通常会有 "Plugin failed to build" 提示，让 UE 重新 Build 一次（或重启 editor 时勾选 "Yes" rebuild）。
+
+### 2.6 UE 项目的 provider 配置 BaseUrl 错
+
+**症状**：bridge 起来了、health 通了，但 UE Chat 面板还说连不上。
+
+**根因**：`<UserProject>\Config\DefaultEngine.ini` 或 `Saved\Config\WindowsEditor\` 下 UnrealMcp provider 的 BaseUrl 不是 `ws://127.0.0.1:8766/uevolve`。
+
+**修复**:
+
+```pwsh
+# 看现有配置
+Select-String -Path "<UserProject>\Config\DefaultEngine.ini","<UserProject>\Saved\Config\WindowsEditor\Game.ini" -Pattern "BaseUrl"
+```
+
+应该有这样一行：
+
+```ini
++Providers=(Id="codex",DisplayName="codex",Kind=CodexAppServer,BaseUrl="ws://127.0.0.1:8766/uevolve",ApiKey="",Model="gpt-5.5",ReasoningEffort="xhigh",MaxOutputTokens=4096,CodexBinaryPath="",CodexExtraArgs="")
+```
+
+如果 `BaseUrl` 是别的端口 / scheme 错 / 路径错：编辑 ini 改成上面这行，或者在 UE editor 里 `Edit > Project Settings > Unreal MCP > Providers` 改 Codex provider 的 BaseUrl，保存。
+
+### 2.7 Codex Desktop 没登录 / token 过期
+
+**症状**：bridge 启动 OK 但 Chat 面板里发请求后 Codex 报 "unauthorized" / "not signed in"。
+
+**修复**:
+
+```pwsh
+# 看 Codex auth 状态
+codex auth status
+# 或者
+Get-Content "$env:USERPROFILE\.codex\auth.json" -ErrorAction SilentlyContinue | Select-String -Pattern "expires|token" -SimpleMatch | Select-Object -First 3
+```
+
+如果显示未登录或 token 过期：
+
+```pwsh
+codex login
+# 跟随浏览器登录流，登 ChatGPT account（不是 OpenAI API key）
+```
+
+登录后重启 bridge。
+
+### 2.8 路径含空格的 cmd/ps1 调用失败
+
+**症状**：从 cmd 双击 `.cmd` 启动 bridge，但路径含 "Unreal Projects" / "OneDrive\ドキュメント"，bridge 报 "Cannot find module" 或 "ENOENT" 错。
+
+**根因**：Tier 4 已经在所有路径参数加 quote，但用户自己包装的 `.bat` / 第三方启动器可能没。
+
+**修复**:
+
+```pwsh
+# 用 .ps1 launcher（已经处理 quoting），不要用裸 .cmd 串
+.\Tools\UnrealMcpCodexBridge\start-bridge.ps1
+
+# 或如果一定要 cmd: 自己 quote 路径
+cd "C:\path with space\UserProject"
+"C:\path with space\UserProject\Tools\UnrealMcpCodexBridge\start-bridge.cmd"
+```
+
+### 2.9 Firewall 阻止 localhost loopback
+
+**症状**：罕见。bridge 起来了 LISTEN 但 health check 在另一个 PowerShell 报 connection refused。
+
+**修复**:
+
+```pwsh
+# 看 Windows Defender Firewall 规则
+Get-NetFirewallRule -DisplayName "*loopback*","*UnrealMcp*","*bun*","*UnrealEditor*" -ErrorAction SilentlyContinue
+```
+
+通常 localhost loopback 不会被默认 firewall 拦。如果真有：
+
+```pwsh
+# 临时允许 outbound + inbound 127.0.0.1:8766 (需要管理员)
+# 或者关掉某个第三方 firewall / 安全软件 测试一次
+```
+
+## 3. 重置一切（核选项）
+
+如果上面都试过仍不行，干净重置 bridge 状态：
+
+```pwsh
+# 1. 杀所有 bridge / bun 残留
+Stop-Process -Name bun -Force -ErrorAction SilentlyContinue
+Stop-Process -Name codex -Force -ErrorAction SilentlyContinue
+
+# 2. 删 bridge 临时状态（不影响 UE 工作 — 这些是 bridge 自己的 cache）
+Remove-Item -Recurse -Force "$env:LOCALAPPDATA\UEvolveCodexBridge" -ErrorAction SilentlyContinue
+
+# 3. 清所有 UEVOLVE_* 环境变量（确保从 launcher 默认值开始）
+Get-ChildItem env: | Where-Object Name -like "UEVOLVE_*" | ForEach-Object { Remove-Item "env:$($_.Name)" }
+
+# 4. 关 UE editor + 重新打开 (让 plugin re-register the Codex provider config)
+
+# 5. 跑 bridge
+.\Tools\UnrealMcpCodexBridge\start-bridge.ps1
+```
+
+## 4. 收集日志给 PM（如果还是不行）
+
+如果 step 3 后仍不行，把以下信息打包给 PM：
+
+```pwsh
+# Bridge 启动日志（让它跑完整 60 秒收集 stderr）
+$env:UEVOLVE_BRIDGE_LOG_TO_FILE = "C:\Temp\uevolve-bridge.log"
+.\Tools\UnrealMcpCodexBridge\start-bridge.ps1 2>&1 | Tee-Object -FilePath C:\Temp\uevolve-bridge.log
+# Ctrl+C 60 秒后停
+
+# UE Editor 的 LogUnrealMcp 段
+Get-Content "<UserProject>\Saved\Logs\<YourProject>.log" | Select-String -Pattern "LogUnrealMcp" | Tee-Object C:\Temp\ue-mcp.log
+
+# 环境快照
+@{
+  OS = (Get-CimInstance Win32_OperatingSystem).Version
+  Bun = & "$env:LOCALAPPDATA\UEvolveCodexBridge\bun.exe" --version 2>$null
+  Codex = & codex --version 2>$null
+  CodexBin = (Get-ChildItem "$env:LOCALAPPDATA\OpenAI\Codex\bin" -Recurse -Filter codex.exe -ErrorAction SilentlyContinue).FullName
+  Port8765 = (Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue).OwningProcess
+  Port8766 = (Get-NetTCPConnection -LocalPort 8766 -State Listen -ErrorAction SilentlyContinue).OwningProcess
+  CodexProviderConfig = (Select-String -Path "<UserProject>\Config\DefaultEngine.ini" -Pattern "BaseUrl|CodexAppServer" -ErrorAction SilentlyContinue).Line
+} | ConvertTo-Json -Depth 5 | Out-File C:\Temp\uevolve-env.json
+```
+
+把 3 个文件（`uevolve-bridge.log` / `ue-mcp.log` / `uevolve-env.json`）打包发给 PM。
+
+## 5. 根本原因索引（按报错关键词查）
+
+| 报错关键词 | 章节 | 根因 |
+|---|---|---|
+| `bun: command not found` / `bun not recognized` | 2.1 | bundled bun.exe 缺失或 launcher 错 |
+| `EPERM: operation not permitted, uv_spawn` | 2.2 | Codex 在 WindowsApps 受保护路径 |
+| `unsupported --listen URL` | 2.3 | UEVOLVE_CODEX_TRANSPORT=ws override 错 |
+| `EADDRINUSE: 127.0.0.1:8766` | 2.4 | 端口被占 |
+| `Failed to connect to ws://...:8765` | 2.5 | UE plugin 没起 |
+| Chat 面板报 "connection refused" 但 bridge OK | 2.6 | UE provider BaseUrl 配置错 |
+| Codex 返 `unauthorized` / `401` | 2.7 | Codex Desktop 未登录或 token 过期 |
+| `ENOENT: ... start-bridge.cmd` | 2.8 | 路径含空格没 quote |
+| LISTEN 但 connect refused | 2.9 | Firewall（罕见） |
+| 全都对但仍不行 | 3 / 4 | 干净重置 + 收集日志给 PM |
