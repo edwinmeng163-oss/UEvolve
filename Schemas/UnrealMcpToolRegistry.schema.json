@@ -1,1 +1,206 @@
-../Tools/UnrealMcpToolRegistry/schema.json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/edwinmeng163-oss/UEvolve/Tools/UnrealMcpToolRegistry/schema.json",
+  "title": "UEvolve MCP Tool Registry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "registryVersion",
+    "description",
+    "tools"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "registryVersion": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tools": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "category",
+          "handlerName",
+          "exposure",
+          "riskLevel",
+          "requiresWrite",
+          "requiresBuild",
+          "requiresExternalProcess",
+          "requiresRestart",
+          "requiresProjectMemory",
+          "requiresLock",
+          "dryRunSupport",
+          "preflightSupport",
+          "postcheckSupport",
+          "testCoverage",
+          "owner",
+          "docsPath",
+          "reason"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^unreal\\.[a-z0-9_\\.]+$"
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "actors",
+              "blueprint",
+              "editor",
+              "memory",
+              "scaffold",
+              "self-extension",
+              "skills",
+              "widget"
+            ]
+          },
+          "handlerName": {
+            "type": "string",
+            "pattern": "^unreal\\.[a-z0-9_\\.]+$"
+          },
+          "implementationTrack": {
+            "type": "string",
+            "enum": [
+              "cpp",
+              "python"
+            ],
+            "default": "cpp"
+          },
+          "pythonHandlerPath": {
+            "type": "string",
+            "pattern": "^Tools/UnrealMcpPyTools/[^/]+/main\\.py$"
+          },
+          "pythonHandlerSha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "pythonImportAllowList": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+            },
+            "default": []
+          },
+          "exposure": {
+            "type": "string",
+            "enum": [
+              "visible",
+              "legacy_hidden"
+            ]
+          },
+          "riskLevel": {
+            "type": "string",
+            "enum": [
+              "read_only",
+              "low",
+              "medium",
+              "high",
+              "critical"
+            ]
+          },
+          "requiresWrite": {
+            "type": "boolean"
+          },
+          "requiresBuild": {
+            "type": "boolean"
+          },
+          "requiresExternalProcess": {
+            "type": "boolean"
+          },
+          "requiresRestart": {
+            "type": "boolean"
+          },
+          "requiresProjectMemory": {
+            "type": "boolean"
+          },
+          "requiresLock": {
+            "type": "boolean"
+          },
+          "dryRunSupport": {
+            "type": "boolean"
+          },
+          "preflightSupport": {
+            "type": "boolean"
+          },
+          "postcheckSupport": {
+            "type": "boolean"
+          },
+          "testCoverage": {
+            "type": "string",
+            "enum": [
+              "missing",
+              "core",
+              "category",
+              "manual",
+              "external"
+            ]
+          },
+          "owner": {
+            "type": "string",
+            "minLength": 1
+          },
+          "docsPath": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "summaryTemplate": {
+            "type": "string",
+            "description": "Human-readable template interpolating {args.*} and {result.*} fields for the Chat panel tool card header."
+          },
+          "inputSchema": {
+            "type": "object"
+          },
+          "outputSchema": {
+            "type": "object"
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "implementationTrack": {
+                  "const": "python"
+                }
+              },
+              "required": [
+                "implementationTrack"
+              ]
+            },
+            "then": {
+              "required": [
+                "pythonHandlerPath",
+                "pythonHandlerSha256"
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+}
