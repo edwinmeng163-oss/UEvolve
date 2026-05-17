@@ -106,6 +106,17 @@ Plugins/UnrealMcp/README.md
 Tools/install_unrealmcp_to_project.py
 ```
 
+If the task is about Windows compatibility / Win build / Win packaging / a "works on Mac but breaks on Win" bug:
+
+```text
+Docs/WindowsCompatibilityLessons.md
+Docs/Stage2WindowsVerify.md
+Tools/package_plugin.ps1
+Tools/UnrealMcpCodexBridge/start-bridge.ps1
+```
+
+`WindowsCompatibilityLessons.md` indexes 20 hard-won failure modes from the issue #2 saga (commits 57ce634 / fe65d25 / 9fd70ac / e08a995 / 088d056 / 8917f99). Grep your symptom against it before re-deriving.
+
 If the task is about self-extension:
 
 ```text
@@ -160,9 +171,11 @@ Docs/
   Roadmap.md
   SecurityModel.md
   SelfExtensionPipeline.md
+  Stage2WindowsVerify.md
   Supervisor.md
   ToolNaming.md
   UnrealTaskRecipes.md
+  WindowsCompatibilityLessons.md
 
 Plugins/UnrealMcp/
   UnrealMcp.uplugin

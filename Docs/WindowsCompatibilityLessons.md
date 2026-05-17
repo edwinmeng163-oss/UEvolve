@@ -1,0 +1,384 @@
+# Windows Compatibility Lessons (UE 5.6.1)
+
+> Hard-won knowledge from the **issue #2 saga (2026-05-16 → 2026-05-17)**: 4
+> Windows tester retest rounds + a packaging follow-up + a schema-symlink
+> follow-up. Six commits, five "tiers", one production Windows release.
+>
+> This doc exists so the next person debugging "it works on my Mac but not on
+> Windows" can grep for symptoms instead of re-deriving the diagnosis. Each
+> entry: **Symptom · Root cause · Fix · Prevention/test**.
+
+## Quick index
+
+| # | Class | Symptom (Windows side) | Fix commit |
+|---|---|---|---|
+| 1 | C++ compile | UE 5.6 MSVC C4459 `LogType` shadow → error | `57ce634` |
+| 2 | C++ compile | UE 5.6 MSVC misses `#include` that clang resolved transitively | various |
+| 3 | Python bridge | `__import__` hook rejects `fromlist=` kwarg | `e08a995` (and earlier in Tier 2) |
+| 4 | Python bridge | stdlib import blocked by `pythonImportAllowList` | `57ce634` |
+| 5 | Path resolution | `<ProjectDir>/Tools/...` empty on example-host mode (AdditionalPluginDirectories) | `fe65d25` |
+| 6 | Path resolution | `<ProjectDir>/Plugins/UnrealMcp/...` wrong when plugin is external | `fe65d25` |
+| 7 | Path resolution | Apply scaffold can't find `fps_bootstrap` on fresh clone (gitignored Scaffolds) | `9fd70ac` |
+| 8 | Build hygiene | Stale plugin-level dylib shadows fresh UBT output | (documented, no code fix) |
+| 9 | Git cross-platform | `Schemas/UnrealMcpToolRegistry.schema.json` symlink → 42-byte stub on Win | `8917f99` |
+| 10 | Example projects | `.uproject` hard-requires third-party plugin (`AIAssistant`) | `57ce634` |
+| 11 | Example projects | Scaffold metadata `dependsOn` drift between Starters and Scaffolds | `57ce634` |
+| 12 | Codex bridge | bundled `runtime/bun.exe` ignored, launcher uses PATH | `e08a995` |
+| 13 | Codex bridge | `where codex` returns WindowsApps path → Bun `uv_spawn EPERM` | `e08a995` |
+| 14 | Codex bridge | Codex app-server rejects `--listen ws://...` | `e08a995` |
+| 15 | Codex bridge | Win launcher doesn't quote paths with spaces | `e08a995` |
+| 16 | Tool quality | `project_settings_get` returns config default ignoring PIE override | `088d056` |
+| 17 | Tool quality | `bp_list_graph_nodes` rejects short package path | `088d056` |
+| 18 | Tool quality | `tail_log` single-candidate read fails flaky | `088d056` |
+| 19 | Tool quality | `save_dirty_packages` returns `saved=false` with no skip reason | `088d056` |
+| 20 | Tool quality | `capture_project_snapshot` silently misses actors, diff looks insane | `088d056` |
+
+---
+
+## 1. UE 5.6 Windows MSVC C4459 `LogType` shadow
+
+**Symptom**: UBT on Win64 UE 5.6 fails with C4459 (declaration shadows global) being treated as error. The shadowed name is `LogType` — a global `FName` defined in UE's `UObject/UnrealType.h`. Mac clang issues no warning so it slipped through every Mac build.
+
+**Root cause**: A local variable named `LogType` inside `UnrealMcpPythonToolBridge.cpp`'s `CollectPythonCommandOutput`.
+
+**Fix** (`57ce634`): Rename local to `LogEntryType`. Added a code comment near the rename pointing at this lesson.
+
+**Prevention**:
+- Any local variable named `LogType` / `LogCategory` / similar UE-ubiquitous global names is a smell.
+- `check_ue56_compat.py` would catch this if we added a denylist, but the file currently focuses on `#if ENGINE_*_VERSION` placement, not local-name shadows. Future improvement: add C4459-style scan.
+- **Always do a Windows UE 5.6 build before declaring a C++ change "ready"** — Mac/clang silently accepts code that Win/MSVC rejects.
+
+## 2. UE 5.6 MSVC needs explicit `#include` that clang resolved transitively
+
+**Symptom**: `'AGameModeBase' incomplete type 'AGameModeBase' named in nested name specifier` when using `TSubclassOf<AGameModeBase>` after pulling in `GameFramework/WorldSettings.h` but NOT `GameFramework/GameModeBase.h`. Mac clang resolves it through some transitive include chain.
+
+**Root cause**: PowerShell/MSVC stricter about transitive includes than clang on macOS.
+
+**Fix** (Tier 5 PM fix on top of `088d056`): explicit `#include "GameFramework/GameModeBase.h"` in `UnrealMcpEditorTools.cpp` before using `WorldSettings->DefaultGameMode.Get()`.
+
+**Prevention**:
+- When using `TSubclassOf<X>` or any UE class member access on a typedef'd subclass, add the include for `X` even if you think a parent header pulls it in.
+- This is a recurring class of bug — also expect `FProperty`, `UDeveloperSettings`, `IConsoleManager` to need their own explicit includes on MSVC.
+
+## 3. Python `__import__` hook signature must match CPython kwargs
+
+**Symptom**: Calling any Python stdlib function that internally re-imports (e.g. `platform.platform()` calls `__import__('subprocess', ..., fromlist=...)`) raises `_unreal_mcp_import_hook() got an unexpected keyword argument 'fromlist'`.
+
+**Root cause**: Our `__import__` hook signature used internal names `(name, _globals=None, _locals=None, _fromlist=(), _level=0)` (underscore prefix). CPython's actual `__import__(name, globals=None, locals=None, fromlist=(), level=0)` callers — including stdlib — pass `fromlist=` by keyword.
+
+**Fix** (`e08a995` and earlier in Tier 4): rename hook kwargs to match CPython exactly (no underscore prefix).
+
+**Prevention**:
+- Any custom `__import__` hook MUST mirror CPython's standard signature character-for-character. The `level=0` final arg is also kwarg-callable.
+- Test the hook against `platform.platform()` — it's the most common stdlib function that exercises kwarg passthrough.
+
+## 4. Python stdlib imports blocked by `pythonImportAllowList`
+
+**Symptom**: A Python tool that calls `platform.platform()` fails with import-blocked error pointing at `subprocess` (which `platform` internally needs on POSIX/macOS) or `os.path` etc.
+
+**Root cause**: Tool's `pythonImportAllowList` in `Tools/UnrealMcpToolRegistry/tools.json` only listed `["unreal"]`. Stdlib transitive imports (`sys`, `platform`, `subprocess`, `os`) all need explicit allow.
+
+**Fix** (`57ce634`): `unreal.editor.python_runtime_info` allow-list became `["unreal", "sys", "platform", "subprocess"]`.
+
+**Prevention**:
+- For any new Python-track tool, enumerate every stdlib module the script transitively touches (use `python -c 'import sys; ...; print(sorted(sys.modules))'` to dump).
+- Add a CI check that runs Python-track tools' `main.py` and dumps `sys.modules` keys, then asserts they're a subset of `pythonImportAllowList`. (Not yet implemented; tracking as backlog.)
+
+## 5. `<ProjectDir>/Tools/...` is wrong path on example-host mode
+
+**Symptom**: `unreal.editor.python_runtime_info` and `unreal.mcp_apply_scaffold` report "handler file not found" / "scaffold metadata not found" when the active project is `Examples/UEvolveExample57.uproject` (which loads the plugin via `AdditionalPluginDirectories: ["../../Plugins"]`).
+
+**Root cause**: Pre-Tier-2 code used `FPaths::ProjectDir()` to resolve `Tools/...`, which under example-host mode points at `Examples/UEvolveExample57/Tools/` (empty, no canonical content), not the repo root `Tools/` (where canonical lives).
+
+**Fix** (`fe65d25`): Four-domain Path Resolution Policy (AGENTS.md § "Path Resolution Policy"):
+- **READER** (Tools/...): new `ResolveToolsReadSubpath` walks up via `IPluginManager::FindPlugin("UnrealMcp")->GetBaseDir()` anchor.
+- **WRITER** (project-local drafts): unchanged, stays in `<ProjectDir>/Tools/UnrealMcpToolScaffolds/<id>`.
+- **PLUGIN SOURCE** (apply target): new `ResolvePluginSourceRoot` via `IPluginManager`.
+- **SAVED** (`Saved/UnrealMcp/`): unchanged, `FPaths::ProjectSavedDir()`.
+
+Reader returns structured `FToolsReadResolution {Path, bFound, SourceKind (ProjectLocal / SharedRepoRoot / CanonicalStarter / PluginResources), Candidates, Warning}` so callers can surface in tool response which candidate won.
+
+**Prevention**:
+- Any new code touching `Tools/...` or `Plugins/UnrealMcp/...` paths MUST use the four-domain resolver, not `FPaths::ProjectDir()` directly. AGENTS.md § "Path Resolution Policy" is the canonical contract.
+- Pure-function tests at `Plugins/UnrealMcp/Source/UnrealMcp/Private/Tests/UnrealMcpSharedPathResolverTests.cpp` cover 9 cases including example-host mode + 5 root-host invariants.
+- Test example-host smokes (`Examples/UEvolveExample57/UEvolveExample57.uproject`) explicitly — they catch this regression class.
+
+## 6. Plugin source directory must come from `IPluginManager`, not `<ProjectDir>`
+
+**Symptom**: Apply scaffold writes `.cpp` patches to `<ProjectDir>/Plugins/UnrealMcp/Source/...` which doesn't exist when the plugin is mounted via `AdditionalPluginDirectories`. Write fails or, worse, succeeds writing to a wrong path.
+
+**Root cause**: Same as #5 — `FPaths::ProjectDir()` assumption.
+
+**Fix** (`fe65d25`): `ResolvePluginSourceRoot()` returns `IPluginManager::Get().FindPlugin("UnrealMcp")->GetBaseDir() + "/Source"`. Always correct regardless of which `.uproject` loaded the plugin.
+
+**Prevention**: see #5.
+
+## 7. Fresh-clone scaffold lookup needs `Starters` fallback
+
+**Symptom**: On a Win UE 5.6 fresh clone (no prior MCP edits), `unreal.mcp_apply_scaffold {toolName: "unreal.fps.bootstrap"}` reports "scaffold not found" listing 5 walked-up candidates under `Tools/UnrealMcpToolScaffolds/fps_bootstrap` — none exist because that whole tree is `.gitignore`d.
+
+**Root cause**: `/Tools/UnrealMcpToolScaffolds/` is gitignored by design (per-project draft isolation, CATEGORY B). The actually-committed canonical scaffold sources are under `Tools/UnrealMcpToolScaffoldStarters/<id>/`. Tier 2 reader only checked Scaffolds, not Starters.
+
+**Fix** (`9fd70ac`): `ResolveScaffoldReadDirectory` now adds two more candidates after the Scaffolds candidates:
+1. `<ProjectDir>/Tools/UnrealMcpToolScaffoldStarters/<toolId>/`
+2. walked-up `Tools/UnrealMcpToolScaffoldStarters/<toolId>/`
+
+New `CanonicalStarter` value on `FToolsReadResolution::ESource` lets responses surface which trust domain the scaffold came from. Writer side (`ResolveProjectOutputDirectory`) untouched — drafts still land at project-local Scaffolds dir.
+
+**Prevention**:
+- Any new "find canonical X" reader must check **committed** locations (Starters / Resources) as fallback after **draft** locations (Scaffolds / Saved).
+- E2E fixture `Tools/UnrealMcpTests/SelfExtension/31_apply_scaffold_dryrun_starter_fallback.json` asserts the resolver picks Starters when Scaffolds is absent.
+
+## 8. Stale plugin-level dylib shadows fresh UBT output
+
+**Symptom**: After editing plugin C++ code and running UBT against an example host, the editor's runtime responses still look exactly like pre-edit behavior. New structured-content fields you just added are missing from responses. You're confused because UBT reported `Result: Succeeded`.
+
+**Root cause**: UBT writes the freshly-built dylib to `Examples/<X>/Binaries/<Platform>/`, but the editor mount path for the externally-loaded plugin keeps loading the OLD `Plugins/UnrealMcp/Binaries/<Platform>/UnrealEditor-UnrealMcp.{dylib,dll}` from a previous dev-host build (e.g. when you originally ran the root `UEvolve.uproject`).
+
+**Fix** (no code change; documented as canonical practice in AGENTS.md § "Stale plugin-level binary trap"): **before any example-host smoke after a plugin code change**:
+
+```bash
+# macOS
+rm -rf Plugins/UnrealMcp/Binaries Plugins/UnrealMcp/Intermediate
+"<UE>/Engine/Build/BatchFiles/Mac/Build.sh" MyProjectEditor Mac Development \
+  -project="$REPO_ROOT/Examples/UEvolveExample57/UEvolveExample57.uproject" -WaitMutex
+```
+
+```pwsh
+# Windows
+Remove-Item -Recurse -Force Plugins\UnrealMcp\Binaries, Plugins\UnrealMcp\Intermediate -ErrorAction SilentlyContinue
+& "C:\Program Files\Epic Games\UE_5.6\Engine\Build\BatchFiles\Build.bat" `
+  MyProjectEditor Win64 Development `
+  -Project="$pwd\Examples\UEvolveExample\UEvolveExample.uproject" `
+  -WaitMutex
+```
+
+Diagnostic signal: runtime response of a tool you just changed lacks any new structured-content key you added in the patch.
+
+**Prevention**:
+- Treat `rm -rf Plugins/UnrealMcp/Binaries Plugins/UnrealMcp/Intermediate` as a **mandatory pre-smoke step** any time you UBT-rebuild against a different `.uproject` than the one you last built.
+- The AGENTS.md Release Verification SOP has a sub-section "Stale plugin-level binary trap" with the canonical cleanup snippet.
+
+## 9. `Schemas/UnrealMcpToolRegistry.schema.json` git symlink doesn't survive Win clone
+
+**Symptom**: `Tools/package_plugin.ps1` on Windows fails with "schema differs from canonical" — `Schemas/UnrealMcpToolRegistry.schema.json` is 42 bytes (literal text `../Tools/UnrealMcpToolRegistry/schema.json`) instead of the real 5074-byte JSON. Hash comparison fails.
+
+**Root cause**: The file was a git symlink (`120000` mode) pointing at the canonical schema. macOS git transparently follows it; Windows git defaults to `core.symlinks=false` and materializes the symlink as a text stub. Even with `core.symlinks=true`, only Developer Mode lets non-admin Windows accounts create symlinks at clone time.
+
+**Fix** (`8917f99`): replace symlink with a real file byte-identical to the canonical. Git diff shows `mode change 120000 => 100644`. Drift detection lives at `Tools/validate_tool_registry.py:326` (`SCHEMA_ALIAS_PATH.read_bytes() == SCHEMA_PATH.read_bytes()` → `issueCount` bump on divergence). Verified by deliberately corrupting the alias and confirming validator catches.
+
+**Prevention**:
+- **No git symlinks in this repo, ever.** `git ls-files -s | awk '$1=="120000"'` should always return empty.
+- If you need two files to share content, ship them as two real-file copies and add a validator byte-equality check.
+- `.gitattributes` defenses (`* binary` or symlink-specific) are NOT enough; symlinks at the git-object level still pull through.
+
+## 10. Example `.uproject` hard-requires `AIAssistant` plugin
+
+**Symptom**: Win clone, no `AIAssistant` plugin installed (it's third-party / not bundled with stock UE). Editor refuses to load the project with "Failed to load plugin AIAssistant: plugin not found".
+
+**Root cause**: `Examples/UEvolveExample{,57}/.uproject` had:
+
+```json
+{ "Name": "AIAssistant", "Enabled": true }
+```
+
+The plugin is useful when present but isn't required for UEvolve itself.
+
+**Fix** (`57ce634`):
+
+```json
+{ "Name": "AIAssistant", "Enabled": true, "Optional": true }
+```
+
+UE silently skips optional plugins that aren't installed.
+
+**Prevention**:
+- Any plugin in an example `.uproject`'s `Plugins[]` that isn't in `Engine/Plugins/` or `<repo>/Plugins/` should have `"Optional": true`.
+- Mac users with the plugin installed still get its functionality; Win/Linux users without it can still open the project.
+
+## 11. Scaffold metadata `dependsOn` drift between Starters and Scaffolds
+
+**Symptom**: `apply_scaffold dryRun` succeeds on the Mac dev host but fails on Win fresh clone with "dependency chain incomplete" — even though both look at the same `fps_bootstrap` toolId.
+
+**Root cause**: Two copies of `ScaffoldMetadata.json` existed:
+- `Tools/UnrealMcpToolScaffoldStarters/fps_bootstrap/ScaffoldMetadata.json` (canonical, in git) with `dependsOn: []`
+- `Tools/UnrealMcpToolScaffolds/fps_bootstrap/ScaffoldMetadata.json` (working copy, `.gitignore`d) with `dependsOn: ["unreal.simulation.verify_input_drives_pawn"]`
+
+The Tier 2 path resolver fell back to whichever one existed, so the Mac dev host (which had the working copy from a prior session) saw a different dep chain than fresh-clone Win.
+
+**Fix** (`57ce634`): synced `Tools/UnrealMcpToolScaffoldStarters/fps_bootstrap/ScaffoldMetadata.json` `dependsOn` to match the working copy. Future scaffold edits should update BOTH copies if both exist.
+
+**Prevention**:
+- When editing a scaffold metadata under `Tools/UnrealMcpToolScaffolds/<id>/` (working copy), also update the matching Starter under `Tools/UnrealMcpToolScaffoldStarters/<id>/`.
+- Pre-commit hook could enforce byte-equality between Starters and a (locally-existing) working copy; not currently implemented.
+
+## 12-15. Codex App Server bridge (issue #2 comment 8)
+
+Tier 4 (`e08a995`) fixed four bridge issues simultaneously. See full diagnosis in github.com/edwinmeng163-oss/UEvolve/issues/2#issuecomment-... (by edwinmeng163-oss, 2026-05-16T23:18Z):
+
+### 12. Bundled `runtime/bun.exe` ignored
+
+**Symptom**: `start-bridge.ps1` / `.cmd` fail with "bun: command not found" on a fresh Win box that doesn't have Bun on PATH, even though the projectroot zip ships `Tools/UnrealMcpCodexBridge/runtime/bun.exe`.
+
+**Fix**: launchers now prefer `$PSScriptRoot\runtime\bun.exe` / `%~dp0runtime\bun.exe` if present, fall back to `$env:UEVOLVE_BUN_BIN`, then PATH `bun`.
+
+### 13. WindowsApps Codex path → `uv_spawn EPERM`
+
+**Symptom**: `where codex` returns `C:\Program Files\WindowsApps\OpenAI.Codex_<ver>\app\resources\codex.exe`. Bun's `child_process.spawn` against that path fails with `EPERM uv_spawn` because the WindowsApps store namespace is protected.
+
+**Fix**: Codex binary discovery order:
+1. `UEVOLVE_CODEX_BIN` env override
+2. `%LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\codex.exe` (user-mode install)
+3. `where codex` fallback
+4. Reject any candidate under `C:\Program Files\WindowsApps\` with structured warning
+
+### 14. Codex app-server `--listen ws://...` rejected
+
+**Symptom**: Bridge spawns `codex app-server --listen ws://127.0.0.1:8766` and Codex exits with error: `unsupported --listen URL`; only `stdio://`, `unix://`, `unix://PATH`, or `off` are accepted.
+
+**Fix**: Bridge transport widened to `"unix" | "ws" | "stdio"`. Windows default is now `stdio` (newline-delimited JSON over child stdin/stdout). macOS/Linux default stays `unix`. **The UE-facing inbound listener stays WebSocket** (`ws://127.0.0.1:8766/uevolve`) regardless of outbound transport.
+
+### 15. Win paths with spaces don't survive cmd/PowerShell
+
+**Symptom**: `start-bridge.cmd` invoked from `C:\Users\edwin\OneDrive\ドキュメント\Unreal Projects\...` splits on the space in "Unreal Projects" → can't find the bridge script.
+
+**Fix**: Every path argument in `start-bridge.{ps1,cmd}` is now quoted. Same fix in `start-bridge.sh` for symmetry.
+
+**Prevention** (covers all 12-15):
+- Test the bridge on a clean Win box with no Bun on PATH, no `UEVOLVE_*` env overrides, default user-mode Codex install, and a project path containing a space. If all four work without manual config, the bridge is OK.
+- Document the policy in `Tools/codex-prompt-header.md` § "Path resolution / Plugin source domain" extension.
+
+## 16. `project_settings_get` returns config default ignoring PIE override
+
+**Symptom**: `unreal.project_settings_get {category: "game", key: "GlobalDefaultGameMode"}` returns `/Script/Engine.GameModeBase` but the actual running PIE world is using `BP_FPSGameMode`.
+
+**Root cause**: Tool read `UDeveloperSettings`/`GConfig` default value, ignoring runtime PIE override that lives in `GEditor->PlayWorld->GetWorldSettings()->DefaultGameMode`.
+
+**Fix** (`088d056`): added `effective: bool` input flag (default false to preserve old behavior). When `effective=true` AND editor is in PIE, reads the PIE world settings. Structured content adds `effective` (echo), `runtimeSource` (`pie_world_settings` / `developer_settings` / `ini_section`), `defaultValue` (when divergent).
+
+**Prevention**:
+- Any settings-read tool should expose default-vs-effective when UE has a runtime override path.
+- Document in tool description so callers know to ask for `effective=true` when they care about runtime state.
+
+## 17. `bp_list_graph_nodes` rejects short package path
+
+**Symptom**: `unreal.bp_list_graph_nodes {blueprintPath: "/Game/FPS/BP_FPSCharacter"}` fails with "asset not found"; the same call with `/Game/FPS/BP_FPSCharacter.BP_FPSCharacter` (full object path) works.
+
+**Root cause**: `LoadAssetFromAnyPath` passed the package path to `LoadObject<>` which expects a full object path. UE asset paths are `<package>.<objectName>` and `<objectName>` defaults to the trailing path segment.
+
+**Fix** (`088d056`): added `NormalizeBlueprintAssetPath` helper. If `InputPath` starts with `/Game/`/`/Engine/`/`/Script/` AND has no `.`, append `.<lastSegment>`. Wired into `LoadAssetFromAnyPath` so all Blueprint tools benefit, not just `bp_list_graph_nodes`.
+
+**Prevention**:
+- Any tool that takes an "asset path" input should normalize package → object form before `LoadObject`.
+- AI clients commonly emit package paths because that's what the Content Browser displays.
+
+## 18. `tail_log` single-candidate read is flaky
+
+**Symptom**: `unreal.tail_log` intermittently returns "log file not found" even though the editor is clearly writing logs.
+
+**Root cause**: `FGenericPlatformOutputDevices::GetAbsoluteLogFilename()` returns the path UE registered at boot, but `Saved/Logs/` rotation can move the file between boot and the read.
+
+**Fix** (`088d056`): 4-candidate fallback chain:
+1. raw absolute log filename
+2. normalized + `ConvertRelativePathToFull` of (1)
+3. `<ProjectLogDir>/<ProjectName>.log`
+4. newest `*.log` under `ProjectLogDir`
+
+Structured content adds `attemptedLogPaths`, `selectedLogPath`, `rawLogPath`. Error case includes the full candidate list for diagnosis.
+
+**Prevention**: any log/state file read in the editor should have at least 2 candidates with a "find newest" fallback.
+
+## 19. `save_dirty_packages` returns `saved=false` with no explanation
+
+**Symptom**: User saves project, gets `saved=false`. No indication which package failed or why. Tester thought the tool was broken when it was actually correctly refusing to save a `/Temp/Untitled_1` placeholder map.
+
+**Root cause**: Tool only returned the `saveDirtyPackages` boolean, which is false when ANY package can't be saved (e.g. unnamed maps).
+
+**Fix** (`088d056`): enumerate dirty packages before + after save; classify remaining-dirty ones by `skipReason`:
+- `TEMP_OR_UNSAVED_MAP` — names start with `/Temp/`, no on-disk file
+- `READONLY` — source-control read-only
+- `UNKNOWN` — anything else
+
+Structured content adds `dirtyPackagesBefore`, `skippedPackages: [{path, reason}]`, `savedPackages` (count). Text payload calls out the dominant skipReason when `saved=false`.
+
+**Prevention**: any boolean-result tool that can fail for multiple reasons MUST return structured per-item reasons, not just the boolean.
+
+## 20. `capture_project_snapshot` silently misses actors, diff looks insane
+
+**Symptom**: `diff_project_snapshot` reports `before=0 actors, after=201`. The "before" snapshot was taken in a non-empty world so 0 is implausible.
+
+**Root cause**: `AddActorSnapshotArray` skipped actor capture when `UEditorActorSubsystem` was unavailable (some editor states), but the result still set `actors: []`. Diff treated the empty array as a real "0 actors" instead of "couldn't capture".
+
+**Fix** (`088d056`): added `actorCaptureAvailable` / `actorCaptureStatus` (`captured` / `empty_world` / `subsystem_unavailable` / `iterator_fallback`) / `actorSnapshotCount` to snapshot. Diff adds `beforeAvailable` / `afterAvailable` / `comparable` flag. When either side has `actorCaptureAvailable=false`, diff stops reporting added/removed totals as meaningful and surfaces a `caveat`. New `TActorIterator<AActor>` fallback walks the editor world when subsystem is unavailable.
+
+**Prevention**: any snapshot/diff tool MUST distinguish "absent because zero" from "absent because not captured". Use an explicit `available` flag, not the array length.
+
+---
+
+## Cross-cutting defenses
+
+### Validators that catch regressions
+
+- **`Tools/validate_tool_registry.py`** — checks canonical tools.json + plugin mirror byte-equality, schema mirror byte-equality, schema alias byte-equality, dispatch coverage, schema validity. Run before every commit that touches the registry. See line 326 for the schema-symlink defense added after `8917f99`.
+- **`Tools/check_ue56_compat.py`** — scans for `#if ENGINE_*_VERSION` outside `UnrealMcpEngineCompat.h`. Add new compat-related scans (LogType-shadow denylist, missing-include patterns) here if a recurring class shows up.
+
+### Required pre-dispatch / pre-PR checks for Windows-affecting changes
+
+1. `python3 Tools/validate_tool_registry.py` — issueCount=0
+2. `python3 Tools/check_ue56_compat.py` — 0 errors / 0 warnings
+3. `cmp -s Tools/UnrealMcpToolRegistry/tools.json Plugins/UnrealMcp/Resources/ToolRegistry/tools.json` — byte-identical
+4. `cmp -s Tools/UnrealMcpToolRegistry/schema.json Schemas/UnrealMcpToolRegistry.schema.json` — byte-identical (the schema-symlink defense)
+5. `git ls-files -s | awk '$1=="120000"'` — empty (no symlinks)
+6. UE 5.7 Mac UBT build against example host — `Result: Succeeded`
+7. UE 5.6 Windows UBT build against example host — `Result: Succeeded` (if you have a Win box; otherwise hand off to a Windows tester before declaring done)
+8. If touching Python bridge: confirm `pythonImportAllowList` covers all stdlib transitively imported modules; confirm `__import__` hook signature matches CPython kwargs
+
+### Required Windows e2e smoke set (post-build, per release)
+
+The canonical example-host smoke is run from a fresh clone with `Examples/UEvolveExample/UEvolveExample.uproject` (UE 5.6) or `UEvolveExample57.uproject` (UE 5.7). Three smokes:
+
+1. `tools/list` → expect >= 110 visible tools, includes `unreal.editor.python_runtime_info` + `unreal.mcp_apply_scaffold`
+2. `unreal.editor.python_runtime_info {}` → expect `isError=false`, `pythonHandlerSourceKind` in (`SharedRepoRoot`, `ProjectLocal`)
+3. `unreal.mcp_apply_scaffold {toolName: "unreal.fps.bootstrap", dryRun: true}` → expect `isError=false`, `canApply=true`, `scaffoldSourceKind` in (`SharedRepoRoot`, `CanonicalStarter`, `ProjectLocal`)
+
+If smoke 2 fails on a clean clone, see #5 / #6. If smoke 3 fails, see #5 / #7. If bridge smoke (port 8766) fails, see #12-15.
+
+### Stale plugin-level binary cleanup (MANDATORY pre-smoke)
+
+Before any example-host smoke after a plugin code change:
+
+```pwsh
+# Win
+Remove-Item -Recurse -Force Plugins\UnrealMcp\Binaries, Plugins\UnrealMcp\Intermediate -ErrorAction SilentlyContinue
+# (then rebuild)
+```
+
+```bash
+# Mac
+rm -rf Plugins/UnrealMcp/Binaries Plugins/UnrealMcp/Intermediate
+# (then rebuild)
+```
+
+See #8 for the diagnostic signal (runtime response missing your new structured-content fields).
+
+---
+
+## Commit reference index
+
+| Tier | Commit | Lessons covered |
+|---|---|---|
+| 1 | `57ce634` | #1, #4, #10, #11 |
+| 2 | `fe65d25` | #3 (partial), #5, #6 |
+| 3 | `9fd70ac` | #7 |
+| 4 | `e08a995` | #3 (complete), #12, #13, #14, #15 |
+| 5 | `088d056` | #2, #16, #17, #18, #19, #20 |
+| — | `8917f99` | #9 |
+
+## Public releases shipped from this saga
+
+- `v0.14.0-python-track-mac` (macOS UE 5.6/5.7, source-only projectroot zip, ~542 KB, SHA `0eaf8c8f...`) — published 2026-05-16
+- `v0.14.0-python-track` (Windows UE 5.6.1, full-experience with prebuilt Win64 binaries, ~75 MB, SHA `9f80bdde2f66889415e672662ceecd27cd9eeb02f586bcbef87e9320e74c8338`) — published 2026-05-17
+
+## Issue thread
+
+[github.com/edwinmeng163-oss/UEvolve/issues/2](https://github.com/edwinmeng163-oss/UEvolve/issues/2) — Windows UE 5.6 validation report. Closed after 4 retest rounds + 1 schema-symlink follow-up. Comments preserve the diagnostic trail.
