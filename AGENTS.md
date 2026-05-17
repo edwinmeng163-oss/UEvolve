@@ -36,7 +36,7 @@ Current plugin metadata:
 ```text
 Plugins/UnrealMcp/UnrealMcp.uplugin
 FriendlyName: Unreal MCP
-VersionName: 0.12.0-pilot
+VersionName: 0.15.0
 EngineVersion: 5.6.0
 Type: Editor plugin
 Required plugin: PythonScriptPlugin

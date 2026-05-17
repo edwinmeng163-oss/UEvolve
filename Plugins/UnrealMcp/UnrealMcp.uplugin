@@ -1,7 +1,7 @@
 {
 	"FileVersion": 3,
-	"Version": 15,
-	"VersionName": "0.12.0-pilot",
+	"Version": 16,
+	"VersionName": "0.15.0",
 	"FriendlyName": "Unreal MCP",
 	"Description": "Runs an MCP server inside the Unreal Editor, exposes editor automation, batch editing, Python scripting, debugging, and AI-assisted tool use over localhost, and includes an in-editor copilot-style command and chat window.",
 	"Category": "AI",
