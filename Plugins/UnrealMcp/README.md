@@ -17,6 +17,7 @@ Read-only and context tools:
 - `unreal.actor_get_property`
 - `unreal.actor_get_transform`
 - `unreal.project_settings_get`
+- `unreal.install_doctor`
 
 Editor action tools:
 

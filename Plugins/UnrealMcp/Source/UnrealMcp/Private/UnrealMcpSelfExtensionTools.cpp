@@ -7,6 +7,7 @@
 #include "Misc/App.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "UnrealMcpInstallDoctor.h"
 #include "UnrealMcpToolHandlerRegistry.h"
 #include "UnrealMcpToolRegistry.h"
 
@@ -183,6 +184,12 @@ namespace UnrealMcp
 		if (ToolName == TEXT("unreal.mcp_workbench_status"))
 		{
 			OutResult = WorkbenchStatus(Arguments, ToolsArray);
+			return true;
+		}
+
+		if (ToolName == TEXT("unreal.install_doctor"))
+		{
+			OutResult = InstallDoctor(Arguments);
 			return true;
 		}
 

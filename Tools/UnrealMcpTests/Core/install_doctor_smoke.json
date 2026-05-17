@@ -1,0 +1,26 @@
+{
+  "name": "install_doctor_smoke",
+  "description": "Run the read-only runtime install doctor with details and a fresh cache update.",
+  "category": "happy_path",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": false,
+  "expectToolCallStructuredFields": {
+    "mode": "editor-runtime",
+    "validatorVersion": "0.15.0-c5-1b",
+    "scope": "editor"
+  },
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 460,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.install_doctor",
+      "arguments": {
+        "includeDetails": true,
+        "refresh": true,
+        "deepScanEnginePlugins": false
+      }
+    }
+  }
+}

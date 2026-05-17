@@ -80,6 +80,7 @@ EXPECTED_NON_STANDARD_DISPATCH: set[str] = {
     "unreal.tools.export_package",  # Forwarded by UnrealMcpSelfExtensionTools.cpp into UnrealMcpToolPackager.cpp.
     "unreal.tools.list_exportable",  # Forwarded by UnrealMcpSelfExtensionTools.cpp into UnrealMcpToolPackager.cpp.
     "unreal.tools.import_package",  # Forwarded by UnrealMcpSelfExtensionTools.cpp into UnrealMcpToolPackager.cpp.
+    "unreal.install_doctor",  # Forwarded by UnrealMcpSelfExtensionTools.cpp into UnrealMcpInstallDoctor.cpp.
     "unreal.knowledge_index_refresh",  # Forwarded by UnrealMcpSelfExtensionTools.cpp into UnrealMcpKnowledgeTools.cpp.
     "unreal.knowledge_search",  # Forwarded by UnrealMcpSelfExtensionTools.cpp into UnrealMcpKnowledgeTools.cpp.
     "unreal.tool_recommend",  # Forwarded by UnrealMcpSelfExtensionTools.cpp into UnrealMcpKnowledgeTools.cpp.

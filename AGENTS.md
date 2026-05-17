@@ -375,7 +375,7 @@ Tools/UnrealMcpToolRegistry/schema.json
 Schemas/UnrealMcpToolRegistry.schema.json
 ```
 
-At the time this file was written, the registry contained 140 entries across:
+At the time this file was written, the registry contained 141 entries across:
 
 - actors
 - blueprint
@@ -399,7 +399,8 @@ tools (`unreal.mcp_build_game`, `unreal.mcp_build_server`,
 `unreal.mcp_build_client`, and `unreal.mcp_build_packaged`), and the four
 v0.15 chunk 5 migration tools (`unreal.asset_move`,
 `unreal.redirector_fixup`, `unreal.dependency_remap`, and
-`unreal.project_version_migration`). Earlier handoff text lagged at 119
+`unreal.project_version_migration`), and the C5 runtime install doctor
+(`unreal.install_doctor`). Earlier handoff text lagged at 119
 entries.
 
 Current project status: v0.15 chunk 5 landed; migration toolchain is complete

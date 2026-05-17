@@ -5,6 +5,7 @@
 #include "Providers/IAssistantProvider.h"
 #include "ToolMenus.h"
 #include "UnrealMcpAssistantRun.h"
+#include "UnrealMcpInstallDoctor.h"
 #include "UnrealMcpSession.h"
 #include "UnrealMcpSkillTools.h"
 #include "Runtime/Launch/Resources/Version.h"
@@ -64,6 +65,7 @@ void FUnrealMcpModule::StartupModule()
 	UE_LOG(LogUnrealMcp, Display, TEXT("UnrealMcp plugin built against UE %d.%d.%d (built-time engine version)"),
 		ENGINE_MAJOR_VERSION, ENGINE_MINOR_VERSION, ENGINE_PATCH_VERSION);
 	SkillActivityTickerHandle = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateRaw(this, &FUnrealMcpModule::TickSkillActivity), 60.0f);
+	UnrealMcp::ScheduleInstallDoctorFirstRun();
 	RegisterTabSpawner();
 	UToolMenus::Get()->RegisterStartupCallback(FSimpleMulticastDelegate::FDelegate::CreateRaw(this, &FUnrealMcpModule::RegisterMenus));
 }

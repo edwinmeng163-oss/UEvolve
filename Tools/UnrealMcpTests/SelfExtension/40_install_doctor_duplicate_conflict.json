@@ -1,0 +1,42 @@
+{
+  "name": "install_doctor_duplicate_conflict",
+  "description": "Run the install doctor duplicate detector with injected candidate paths.",
+  "category": "error_path",
+  "expectToolListed": true,
+  "executeTool": true,
+  "expectToolCallError": false,
+  "expectToolCallStructuredFields": {
+    "mode": "editor-runtime",
+    "validatorVersion": "0.15.0-c5-1b",
+    "scope": "editor",
+    "overallSeverity": "error",
+    "blockingIssueCount": 1
+  },
+  "expectationNote": "The current fixture runner asserts scalar structured fields but cannot address checks array elements. The hidden injected candidates exercise duplicate_plugin_conflict, and blockingIssueCount=1 captures the injected conflict without exposing the hidden hook in the public schema.",
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 461,
+    "method": "tools/call",
+    "params": {
+      "name": "unreal.install_doctor",
+      "arguments": {
+        "includeDetails": true,
+        "refresh": true,
+        "deepScanEnginePlugins": false,
+        "_testMountedPluginPath": "/Repo/Plugins/UnrealMcp",
+        "_testDuplicatePluginCandidates": [
+          {
+            "path": "/Repo/Plugins/UnrealMcp",
+            "exists": true,
+            "hasPluginDescriptor": true
+          },
+          {
+            "path": "/UE/Engine/Plugins/Marketplace/UnrealMcp",
+            "exists": true,
+            "hasPluginDescriptor": true
+          }
+        ]
+      }
+    }
+  }
+}

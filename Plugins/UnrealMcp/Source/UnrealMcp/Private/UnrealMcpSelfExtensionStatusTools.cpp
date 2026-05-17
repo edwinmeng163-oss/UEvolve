@@ -7,6 +7,7 @@
 #include "Misc/App.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "UnrealMcpInstallDoctor.h"
 #include "UnrealMcpSharedPathResolver.h"
 #include "UnrealMcpToolRegistry.h"
 
@@ -265,6 +266,9 @@ namespace UnrealMcp
 
 		FString LatestSupervisorLogPath;
 		const bool bHasSupervisorLog = FindNewestFile(FPaths::Combine(GetUnrealMcpSavedRoot(), TEXT("SupervisorLogs")), TEXT("*.log"), LatestSupervisorLogPath);
+		TSharedPtr<FJsonObject> InstallDoctorSummary;
+		FString InstallDoctorLatestPath;
+		const bool bInstallDoctorFound = LoadLatestInstallDoctorSummary(InstallDoctorSummary, InstallDoctorLatestPath);
 
 		TSharedPtr<FJsonObject> StructuredContent = MakeShared<FJsonObject>();
 		StructuredContent->SetStringField(TEXT("action"), TEXT("mcp_workbench_status"));
@@ -284,6 +288,9 @@ namespace UnrealMcp
 		{
 			StructuredContent->SetObjectField(TEXT("latestSupervisorLog"), MakeFileInfoObject(LatestSupervisorLogPath));
 		}
+		StructuredContent->SetBoolField(TEXT("installDoctorFound"), bInstallDoctorFound);
+		StructuredContent->SetObjectField(TEXT("installDoctorSummary"), InstallDoctorSummary.IsValid() ? InstallDoctorSummary : MakeShared<FJsonObject>());
+		StructuredContent->SetStringField(TEXT("installDoctorLatestPath"), InstallDoctorLatestPath);
 		AddToolRegistryStatus(StructuredContent);
 
 		const bool bFunctionalHealthy = SchemaIncompatibleCount <= 0.0

@@ -678,6 +678,27 @@ namespace UnrealMcp
 
 			{
 				TSharedPtr<FJsonObject> Properties = MakeShared<FJsonObject>();
+				Properties->SetObjectField(TEXT("includeDetails"), MakeBoolProperty(TEXT("Include full per-check details and recommended fixes when available."), false));
+				Properties->SetObjectField(TEXT("refresh"), MakeBoolProperty(TEXT("Run checks now instead of using a recent cached result."), false));
+				Properties->SetObjectField(TEXT("deepScanEnginePlugins"), MakeBoolProperty(TEXT("Opt in to a bounded two-level scan under Engine/Plugins for duplicate UnrealMcp copies."), false));
+				TSharedPtr<FJsonObject> Schema = MakeObjectSchema();
+				Schema->SetObjectField(TEXT("properties"), Properties);
+
+				FUnrealMcpToolDescriptor Descriptor = MakeDescriptor(
+					TEXT("unreal.install_doctor"),
+					TEXT("Run Install Doctor"),
+					TEXT("Runs read-only runtime install checks for registry mirrors, schemas, Python plugin state, MCP ports, and duplicate UnrealMcp plugin copies."),
+					TEXT("self-extension"),
+					TEXT("UnrealMcpInstallDoctor.cpp"),
+					EUnrealMcpToolRisk::Low);
+				Descriptor.TestCoverage = EUnrealMcpToolTestCoverage::Core;
+				Descriptor.DocsPath = TEXT("Docs/DeploymentTroubleshooting.md");
+				Descriptor.Reason = TEXT("Descriptor: read-only runtime install diagnostics for mirrors, plugin state, ports, and duplicate plugin copies.");
+				Registrar.Add(Descriptor, Schema);
+			}
+
+			{
+				TSharedPtr<FJsonObject> Properties = MakeShared<FJsonObject>();
 				Properties->SetObjectField(TEXT("toolName"), MakeStringProperty(TEXT("MCP tool name to export. Portable exports require a matching scaffold under Tools/UnrealMcpToolScaffolds or Saved/UnrealMcp/TestScaffolds."), FString()));
 				Properties->SetObjectField(TEXT("version"), MakeStringProperty(TEXT("Optional package version suffix. Defaults to a UTC timestamp."), FString()));
 				Properties->SetObjectField(TEXT("packagePath"), MakeStringProperty(TEXT("Optional project-relative package zip path. Defaults to Saved/UnrealMcp/Packages/<toolName>-<version>.zip."), FString()));
